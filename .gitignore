@@ -14,6 +14,8 @@ tools/inputs.xlsm
 __pycache__/
 *.pyc
 .venv/
+.ruff_cache/
+.pytest_cache/
 
 # --- Runtime data / outputs ---
 *.csv
