@@ -1,0 +1,35 @@
+# --- Secrets / real config (templates live in configs/*.example) ---
+configs/ebay_rest.json
+configs/app.yaml
+configs/gcp.json
+configs/ebay_legacy.json
+
+# --- Real business data (samples are committed instead) ---
+# Keep your real workbooks locally; only the *.sample.xlsx templates are tracked.
+tools/checklist_parallel_metadata.xlsm
+tools/inputs.xlsm
+
+# --- Python build/artifacts ---
+*.egg-info/
+__pycache__/
+*.pyc
+.venv/
+
+# --- Runtime data / outputs ---
+*.csv
+*.jsonl
+*.log
+logs/
+exports/
+data/*
+
+# --- Local tooling / editor / caches ---
+.claude/
+.vscode/
+.streamlit_sql_cache/
+CLAUDE.md
+CLAUDE.bat
+
+# --- OS / misc ---
+*.DS_Store
+**/~$*

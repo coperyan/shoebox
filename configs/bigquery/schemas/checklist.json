@@ -1,0 +1,44 @@
+[
+  {
+    "name": "set_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Card set name (e.g. 2023 Topps Chrome)"
+  },
+  {
+    "name": "subset_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Subset or insert name (e.g. Base, Future Stars)"
+  },
+  {
+    "name": "subset_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Subset type (Base or Insert)"
+  },
+  {
+    "name": "card_number",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Card number as printed (string to support SPs)"
+  },
+  {
+    "name": "player",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Player name"
+  },
+  {
+    "name": "team",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Team name"
+  },
+  {
+    "name": "note",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Additional notes (RC, SP, etc.)"
+  }
+]

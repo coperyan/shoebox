@@ -1,0 +1,32 @@
+[
+  {
+    "name": "set_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Card set name (e.g. 2023 Topps Chrome)"
+  },
+  {
+    "name": "subset_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Subset or insert name (e.g. Base, Future Stars)"
+  },
+  {
+    "name": "parallel_variety",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Subset type (Base or Insert)"
+  },
+  {
+    "name": "print_run",
+    "type": "INTEGER",
+    "mode": "NULLABLE",
+    "description": "Serial number"
+  },
+  {
+    "name": "other_note",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Other notes (RC, SP, etc.)"
+  }
+]

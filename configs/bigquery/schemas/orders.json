@@ -1,0 +1,61 @@
+[
+  { "name": "order_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "seller_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "sales_record_reference", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "order_creation_date", "type": "TIMESTAMP", "mode": "NULLABLE" },
+  {
+    "name": "order_last_modified_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  { "name": "order_payment_status", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "order_fulfillment_status", "type": "STRING", "mode": "NULLABLE" },
+  {
+    "name": "ebay_collect_and_remit_tax",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE"
+  },
+  { "name": "buyer_username", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buyer_full_name", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buyer_email", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buyer_city", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buyer_state", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buyer_postal_code", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "buyer_country", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "line_item_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "sku", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "legacy_item_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "legacy_variation_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "title", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "quantity", "type": "INTEGER", "mode": "NULLABLE" },
+  { "name": "sold_format", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "listing_marketplace_id", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "purchase_marketplace_id", "type": "STRING", "mode": "NULLABLE" },
+  {
+    "name": "line_item_fulfillment_status",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  { "name": "variation_aspects_json", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "variation_aspects_insert", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "variation_card", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "item_price", "type": "NUMERIC", "mode": "NULLABLE" },
+  { "name": "item_currency", "type": "STRING", "mode": "NULLABLE" },
+  { "name": "shipping_price", "type": "NUMERIC", "mode": "NULLABLE" },
+  { "name": "tax_total", "type": "NUMERIC", "mode": "NULLABLE" },
+  { "name": "line_item_total", "type": "NUMERIC", "mode": "NULLABLE" },
+  { "name": "ship_by_date", "type": "TIMESTAMP", "mode": "NULLABLE" },
+  {
+    "name": "min_estimated_delivery_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "max_estimated_delivery_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  { "name": "sold_via_ad_campaign", "type": "BOOLEAN", "mode": "NULLABLE" },
+  { "name": "buyer_protection", "type": "BOOLEAN", "mode": "NULLABLE" },
+  { "name": "file_date", "type": "TIMESTAMP", "mode": "NULLABLE" }
+]

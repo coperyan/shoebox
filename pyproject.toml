@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shoebox"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+  "beautifulsoup4",
+  "chrome_version",
+  "ebay_rest",
+  "google-api-python-client",
+  "google-auth",
+  "google-cloud-bigquery",
+  "google-cloud-storage",
+  "numpy",
+  "openpyxl",
+  "pandas",
+  "pydantic",
+  "slack-bolt",
+  "aiohttp",
+  "pyyaml",
+  "requests",
+  "rich",
+  "selenium",
+  "streamlit",
+  "undetected-chromedriver",
+  "unidecode",
+  "xmltodict"
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "pre-commit>=3.7",
+  "types-PyYAML",
+]
+
+[project.scripts]
+shoebox = "shoebox.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files intentionally re-export names for the public API.
+"__init__.py" = ["F401"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

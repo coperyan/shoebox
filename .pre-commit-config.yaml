@@ -1,0 +1,17 @@
+# Run the same ruff checks CI enforces, before each commit.
+# Setup:  pip install -e ".[dev]" && pre-commit install
+# Uses the ruff already installed in your environment (language: system), so the
+# hook version always matches the ruff CI runs.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check
+        entry: ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        types: [python]

@@ -1,0 +1,106 @@
+# Template for configs/app.yaml (gitignored -- holds real credentials).
+# Copy this file to configs/app.yaml and fill in your values, or point the
+# SHOEBOX_CONFIG_PATH env var at a config elsewhere.
+#
+# Schema is validated by shoebox/settings.py (extra keys are rejected).
+
+gcp:
+  project_id: my-gcp-project
+  # Path to a service-account json file. Prefer ADC/Secret Manager in production.
+  service_account_json: configs/gcp.json
+
+bigquery:
+  checklist_dataset: checklist
+  ebay_dataset: ebay
+  images_dataset: images
+
+gcs:
+  image_bucket: my-image-bucket
+  metadata_bucket: my-metadata-bucket
+  ebay_bucket: my-ebay-bucket
+  image_log_bucket: my-image-log-bucket
+
+paths:
+  data_dir: data
+  # Must point at the repo's SQL files or BigQueryClient.run_query raises FileNotFoundError.
+  query_dir: configs/bigquery/queries
+  exports_dir: exports
+  scans_dir: scans
+  set_images_dir: set_images
+  tools_dir: tools
+  # How your scanner/camera names files. A bare scan number entered in the UI
+  # or queue workbook is resolved to:
+  #   scans_dir/<scan_prefix><number zero-padded to scan_number_padding><scan_extension>
+  # e.g. prefix "SCAN_", padding 4, extension ".jpg" -> scans/SCAN_0123.jpg
+  #      prefix "IMG",   padding 5, extension ".png" -> scans/IMG00123.png
+  scan_prefix: "SCAN_"
+  scan_number_padding: 4
+  scan_extension: ".jpg"
+
+ebay:
+  # application/user/header name the entries to use in ebay_rest.json
+  # (see configs/ebay_rest.json.example and the ebay_rest package docs:
+  # https://github.com/matecsaj/ebay_rest).
+  application: production_1
+  user: production_1
+  header: US
+  # Directory containing ebay_rest.json (overridable via EBAY_REST_CONFIG_PATH).
+  path: configs
+  # Default promoted-listings campaign for new listings.
+  campaign_id: "123456789"
+
+slack:
+  # Bot User OAuth Token (OAuth & Permissions page). Scopes: chat:write,
+  # channels:history (groups:history for private channels), reactions:read.
+  bot_token: xoxb-your-bot-token
+  # App-level token with connections:write, for Socket Mode.
+  app_token: xapp-your-app-token
+  # Channel IDs (not names): channel details -> copy ID at the bottom.
+  # The bot must be invited to each channel (/invite @YourBot).
+  notify_channel: C0123456789   # pipeline status + order summaries
+  pricing_channel: C0123456789  # price confirmation/approval prompts
+  command_channel: C0123456789  # chat-triggered CLI commands (slack-bot service)
+  # Slack user IDs allowed to run commands in command_channel; empty = anyone
+  # in the channel. Find yours: Slack profile -> "..." -> Copy member ID.
+  allowed_user_ids: []
+  # allowed_user_ids: ["U0123456789"]
+
+google_calendar:
+  # Target calendar for the Topps release sync.
+  calendar_id: your-calendar-id@group.calendar.google.com
+
+# Store-specific identity + eBay account values used when building listings.
+# Every field has a safe placeholder default in settings.py, so this whole
+# section is optional for the app to *load* -- but you must set real values
+# before creating live listings, or eBay will reject the offers.
+store:
+  # Public store name shown in the listing description footer.
+  name: "Your Store Name"
+  # eBay inventory location key (Account -> Business info -> Locations).
+  merchant_location_key: "YOUR_LOCATION_KEY"
+  # eBay leaf category ID (261328 = Sports Trading Cards -> Singles).
+  category_id: "261328"
+  # Item condition enum for single-card listings.
+  condition: "USED_VERY_GOOD"
+  # Message attached to seller-initiated best offers (negotiation API).
+  offer_message: "Enjoy the discount on this card! Valid for the next 24 hours. Thank you!"
+  # Single-card listings <= this price use the "low" fulfillment policy.
+  fulfillment_low_max_price: 19.99
+  # eBay business policy IDs (Account -> Business policies).
+  policies:
+    payment_policy_id: "0000000000"
+    return_policy_id: "0000000000"
+    fulfillment_policy_id_low: "0000000000"        # single cards <= fulfillment_low_max_price
+    fulfillment_policy_id_high: "0000000000"       # single cards above it
+    fulfillment_policy_id_variation: "0000000000"  # "You Pick" / variation listings
+  # Promoted-listings campaigns. Resolution: by_sport -> by_set ->
+  # current-year default -> default.
+  ad_campaigns:
+    default: "0000000000"
+    # current_year: "2025"              # sets starting with this use current_year_default
+    # current_year_default: "0000000000"
+    by_sport:
+      Basketball: "0000000000"
+      Football: "0000000000"
+    by_set: {}
+      # "2025 Topps Chrome": "0000000000"

@@ -1,0 +1,77 @@
+[
+  {
+    "name": "item_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "title",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "sku",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "listing_status",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "quantity",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "quantity_sold",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "price",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "currency",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "start_time",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "end_time",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "watchers",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "view_item_url",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "impression_count",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "view_count",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "file_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  }
+]

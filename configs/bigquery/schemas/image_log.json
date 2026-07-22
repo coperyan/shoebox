@@ -1,0 +1,80 @@
+[
+  {
+    "name": "set_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Checklist set name"
+  },
+  {
+    "name": "subset_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Checklist subset name"
+  },
+  {
+    "name": "parallel_variety",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Parallel/variety (nullable)"
+  },
+  {
+    "name": "card_number",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Card number"
+  },
+  {
+    "name": "side",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "front|back|other"
+  },
+  {
+    "name": "local_path",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Original local file path"
+  },
+  {
+    "name": "original_filename",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Original filename"
+  },
+  {
+    "name": "content_type",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "image/jpeg, image/png, image/webp"
+  },
+  {
+    "name": "gcs_bucket",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "GCS bucket"
+  },
+  {
+    "name": "gcs_object",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "GCS object path"
+  },
+  {
+    "name": "public_url",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Public URL when made public"
+  },
+  {
+    "name": "uploaded_at_utc",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "Upload timestamp (UTC)"
+  },
+  {
+    "name": "cache_key",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Deterministic cache key (bucket|metadata|side|filename)"
+  }
+]

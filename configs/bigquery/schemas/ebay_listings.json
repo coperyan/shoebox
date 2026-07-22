@@ -1,0 +1,62 @@
+[
+  {
+    "name": "card_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "ListingQueueRow.card_id"
+  },
+  {
+    "name": "sku",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Internal SKU used for Inventory API"
+  },
+  {
+    "name": "created_at_utc",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the listing creation was attempted"
+  },
+  {
+    "name": "inventory_item_group_key",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Inventory item group key (optional)"
+  },
+  {
+    "name": "offer_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Offer ID returned by eBay"
+  },
+  {
+    "name": "listing_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Listing ID when published"
+  },
+  {
+    "name": "success",
+    "type": "BOOLEAN",
+    "mode": "REQUIRED",
+    "description": "Whether the flow succeeded"
+  },
+  {
+    "name": "error_message",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Error message if failed"
+  },
+  {
+    "name": "request",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "Raw request payloads"
+  },
+  {
+    "name": "response",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "Raw response payloads"
+  }
+]
