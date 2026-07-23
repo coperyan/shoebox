@@ -33,13 +33,18 @@ def update_csvs():
     for s in ["Checklist", "Parallels"]:
         df = pd.read_excel(master_path, sheet_name=s)
         df.rename(
-            columns={c: c.replace(" ", "_").replace("/", "_").lower() for c in df.columns.values},
+            columns={
+                c: c.replace(" ", "_").replace("/", "_").lower()
+                for c in df.columns.values
+            },
             inplace=True,
         )
         with open(f"configs/bigquery/schemas/{s.lower()}.json") as f:
             schema = json.load(f)
         df.drop(
-            columns=[c for c in df.columns.values if c not in [s["name"] for s in schema]],
+            columns=[
+                c for c in df.columns.values if c not in [s["name"] for s in schema]
+            ],
             inplace=True,
         )
         if s == "Parallels":
@@ -48,6 +53,7 @@ def update_csvs():
             )
         if s == "Checklist":
             df["player"] = df["player"].astype(str)
+            df["player"] = df["player"].fillna("")
             df["player"] = df["player"].apply(lambda x: unidecode(x, "utf-8"))
         df.to_csv(Path(settings.paths.data_dir) / f"{s.lower()}.csv", index=False)
 
