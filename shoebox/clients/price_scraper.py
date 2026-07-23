@@ -5,9 +5,10 @@ import time
 from datetime import datetime
 from typing import Any
 
-import chrome_version
+# import chrome_version
 import pandas as pd
-import undetected_chromedriver as uc
+
+# import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -93,7 +94,9 @@ def search_helper(
     if not parallel_variety:
         ex_terms.extend([x for x in parallel_terms if x.lower() not in title.lower()])
     else:
-        ex_terms.extend([x for x in parallel_terms if x.lower() not in parallel_variety.lower()])
+        ex_terms.extend(
+            [x for x in parallel_terms if x.lower() not in parallel_variety.lower()]
+        )
     if "Auto".lower() not in subset_name.lower():
         ex_terms.extend([x for x in auto_terms])
     if "Relic".lower() not in subset_name.lower():
@@ -120,6 +123,9 @@ class PriceScraper:
     def start(self) -> None:
         if self.driver is not None:
             return
+        import chrome_version
+        import undetected_chromedriver as uc
+
         chrome_v = chrome_version.get_chrome_version()
         self.driver = uc.Chrome(
             headless=self.headless,
@@ -193,7 +199,9 @@ class PriceScraper:
             if iqr == 0:
                 mask = pd.Series(True, index=d.index)
             else:
-                mask = (d[price_col] >= q1 - iqr_k * iqr) & (d[price_col] <= q3 + iqr_k * iqr)
+                mask = (d[price_col] >= q1 - iqr_k * iqr) & (
+                    d[price_col] <= q3 + iqr_k * iqr
+                )
         else:
             med = float(d[price_col].median())
             abs_dev = (d[price_col] - med).abs()
@@ -209,7 +217,9 @@ class PriceScraper:
             "raw_mean": raw_mean,
             "raw_median": raw_median,
             "trimmed_mean": float(trimmed[price_col].mean()) if len(trimmed) else None,
-            "trimmed_median": (float(trimmed[price_col].median()) if len(trimmed) else None),
+            "trimmed_median": (
+                float(trimmed[price_col].median()) if len(trimmed) else None
+            ),
             "n_total": n_total,
             "n_used": len(trimmed),
             "n_outliers": n_total - len(trimmed),
@@ -274,14 +284,18 @@ class PriceScraper:
         search_el = None
         for sel in selectors:
             try:
-                search_el = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
+                search_el = wait.until(
+                    EC.element_to_be_clickable((By.CSS_SELECTOR, sel))
+                )
                 break
             except Exception:
                 continue
         if search_el is None:
             raise RuntimeError("Could not locate search input on 130point.")
 
-        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", search_el)
+        self.driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});", search_el
+        )
         time.sleep(0.2)
         try:
             search_el.click()
@@ -307,7 +321,9 @@ class PriceScraper:
         p["url"] = anchor.get("href")
 
         img = card.find("img")
-        title = img.get("alt", "").strip() if img else card.get_text(" ", strip=True)[:200]
+        title = (
+            img.get("alt", "").strip() if img else card.get_text(" ", strip=True)[:200]
+        )
         p["title"] = title or None
 
         # Price: data-price attr → child element attr → $ text scan (never bare numbers)
@@ -381,7 +397,9 @@ class PriceScraper:
         wait.until(EC.presence_of_element_located((By.ID, "sold-results-panel")))
         try:
             wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#sold-results-panel a[href]"))
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, "#sold-results-panel a[href]")
+                )
             )
         except Exception:
             pass
@@ -428,7 +446,9 @@ class PriceScraper:
         days: int | None = None,
     ) -> dict[str, Any]:
         df = self.search(query, exclude_strs=exclude_strs, rows_per_page=rows_per_page)
-        averages_all = self.price_averages_with_outliers(df, price_col=price_col, method=method)
+        averages_all = self.price_averages_with_outliers(
+            df, price_col=price_col, method=method
+        )
 
         df_filtered = df
         if days is not None and "days_ago" in df.columns:
@@ -442,12 +462,17 @@ class PriceScraper:
             df_filtered_2["excluded"] = df_filtered_2.apply(
                 lambda x: (
                     1
-                    if any(exc.lower() in (x.get("title") or "").lower() for exc in excluded_terms)
+                    if any(
+                        exc.lower() in (x.get("title") or "").lower()
+                        for exc in excluded_terms
+                    )
                     else 0
                 ),
                 axis=1,
             )
-            df_filtered_2 = df_filtered_2[df_filtered_2["excluded"] == 0].reset_index(drop=True)
+            df_filtered_2 = df_filtered_2[df_filtered_2["excluded"] == 0].reset_index(
+                drop=True
+            )
         else:
             df_filtered_2["excluded"] = 0
 
