@@ -15,7 +15,9 @@ def main() -> None:
     ## Sync Metadata
     sub.add_parser("sync-metadata", help="Load checklist/parallels into GCS & BigQuery")
 
-    sub.add_parser("end-oos-listings", help="Ends active listings with no stock available.")
+    sub.add_parser(
+        "end-oos-listings", help="Ends active listings with no stock available."
+    )
 
     ## Create listing queue from excel
     sub.add_parser(
@@ -27,21 +29,27 @@ def main() -> None:
     sub.add_parser("ui", help="Opens streamlit UI to create new listings..")
 
     ## Create Listings
-    p_list = sub.add_parser("create-listings", help="Create/update offers and publish listings")
+    p_list = sub.add_parser(
+        "create-listings", help="Create/update offers and publish listings"
+    )
     p_list.add_argument("--dry-run", action="store_true")
     p_list.add_argument("--publish", action="store_true")
     p_list.add_argument("--schedule", action="store_true")
     p_list.add_argument("--scrape-prices", action="store_true")
 
     ## Orders Awaiting Shipment
-    orders = sub.add_parser("orders-awaiting-shipment", help="Display orders awaiting shipment")
+    orders = sub.add_parser(
+        "orders-awaiting-shipment", help="Display orders awaiting shipment"
+    )
     orders.add_argument("--pull-order", action="store_true")
     orders.add_argument("--buyer-order", action="store_true")
     orders.add_argument("--display", action="store_true")
     orders.add_argument("--message", action="store_true")
 
     ##Active Listings
-    sub.add_parser("sync-active-listings", help="Update active listings in GCS/BigQuery..")
+    sub.add_parser(
+        "sync-active-listings", help="Update active listings in GCS/BigQuery.."
+    )
 
     # Active Listing Details
     sub.add_parser(
@@ -70,7 +78,9 @@ def main() -> None:
     p_var.add_argument("--schedule", action="store_true")
     p_var.add_argument("--in-stock-only", action="store_true")
     p_var.add_argument("--images-dir", help="Directory of per-card scans (optional)")
-    p_var.add_argument("--default-image-path", help="Hero image for the listing (optional)")
+    p_var.add_argument(
+        "--default-image-path", help="Hero image for the listing (optional)"
+    )
 
     # Relist listings
     p_relist = sub.add_parser(
@@ -81,7 +91,9 @@ def main() -> None:
     p_relist.add_argument("--dry-run", action="store_true")
 
     # Send offers to watchers
-    p_offers = sub.add_parser("send-offers", help="Send negotiation offers to eligible watchers")
+    p_offers = sub.add_parser(
+        "send-offers", help="Send negotiation offers to eligible watchers"
+    )
     p_offers.add_argument("--dry-run", action="store_true")
     p_offers.add_argument(
         "--max-price",
@@ -142,7 +154,9 @@ def main() -> None:
             schedule=args.schedule,
             in_stock_only=args.in_stock_only,
             images_dir=Path(args.images_dir) if args.images_dir else None,
-            default_image_path=(Path(args.default_image_path) if args.default_image_path else None),
+            default_image_path=(
+                Path(args.default_image_path) if args.default_image_path else None
+            ),
         )
         return
 
