@@ -35,3 +35,9 @@ CLAUDE.bat
 # --- OS / misc ---
 *.DS_Store
 **/~$*
+!*.gitkeep
+
+## Exclude non-sample tools
+tools/*
+!tools/README.md
+!tools/checklist_parallel_metadata.sample.xlsx
