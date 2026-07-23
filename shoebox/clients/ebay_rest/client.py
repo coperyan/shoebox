@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -35,6 +36,38 @@ class EbayClient:
         self.inventory = InventoryClient(self.session)
         self.marketing = MarketingClient(self.session)
         self.negotiation = NegotiationClient(self.session)
+
+    def _call_with_retry(
+        self,
+        fn: Callable[[], Any],
+        *,
+        label: str,
+        max_tries: int = 3,
+    ) -> Any:
+        """
+        Invoke ``fn()``, retrying on eBay's transient errorId 25001
+        ("Core Inventory Service internal error", HTTP 500) with linear backoff
+        (5s, 10s, ...). Any other error, or 25001 on the final attempt, is raised.
+
+        ``label`` identifies the call in log messages (e.g. "publish sku=ABC").
+        """
+        for attempt in range(1, max_tries + 1):
+            try:
+                return fn()
+            except self.session.Error as e:
+                error_details = self.session.parse_error(e)
+                if error_details.get("errorId") == 25001 and attempt < max_tries:
+                    wait = attempt * 5
+                    logger.warning(
+                        "eBay transient 500 (25001) on %s (attempt %d/%d), retrying in %ds...",
+                        label,
+                        attempt,
+                        max_tries,
+                        wait,
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
 
     def _search_existing_offers(self, sku: str) -> dict[str, Any] | None:
         resp = self.api.sell_inventory_get_offers(sku=sku)
@@ -102,33 +135,15 @@ class EbayClient:
     ) -> dict[str, Any]:
         out: dict[str, Any] = {}
 
-        # eBay's inventory API occasionally returns transient 500s (errorId 25001).
-        # Retry up to 3 times with backoff before giving up.
-        max_inv_tries = 3
-        for attempt in range(1, max_inv_tries + 1):
-            try:
-                out["inventory_item"] = self.api.sell_inventory_create_or_replace_inventory_item(
-                    body=inventory_item,
-                    content_language="en-US",
-                    content_type="application/json",
-                    sku=sku,
-                )
-                break
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                error_id = error_details.get("errorId")
-                # 25001 = Core Inventory Service internal error (transient 500)
-                if error_id == 25001 and attempt < max_inv_tries:
-                    logger.warning(
-                        "eBay inventory 500 for sku=%s (attempt %d/%d), retrying in %ds...",
-                        sku,
-                        attempt,
-                        max_inv_tries,
-                        attempt * 5,
-                    )
-                    time.sleep(attempt * 5)
-                else:
-                    raise
+        out["inventory_item"] = self._call_with_retry(
+            lambda: self.api.sell_inventory_create_or_replace_inventory_item(
+                body=inventory_item,
+                content_language="en-US",
+                content_type="application/json",
+                sku=sku,
+            ),
+            label=f"inventory upsert sku={sku}",
+        )
 
         try:
             existing = self._search_existing_offers(sku)
@@ -185,7 +200,10 @@ class EbayClient:
                     f"Offer create/update response did not contain offer_id: {out['offer']}"
                 )
 
-            out["publish"] = self.api.sell_inventory_publish_offer(offer_id=offer_id)
+            out["publish"] = self._call_with_retry(
+                lambda: self.api.sell_inventory_publish_offer(offer_id=offer_id),
+                label=f"publish sku={sku}",
+            )
             logger.info(
                 "Published offer sku=%s offer_id=%s listing_id=%s",
                 sku,
@@ -223,29 +241,15 @@ class EbayClient:
             except Exception as e:
                 logger.warning("Failed to delete ad ad_id=%s: %s", existing_ad_id, e)
 
-        max_inv_tries = 3
-        for attempt in range(1, max_inv_tries + 1):
-            try:
-                out["inventory_item"] = self.api.sell_inventory_create_or_replace_inventory_item(
-                    body=inventory_item_body,
-                    content_language="en-US",
-                    content_type="application/json",
-                    sku=sku,
-                )
-                break
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if error_details.get("errorId") == 25001 and attempt < max_inv_tries:
-                    logger.warning(
-                        "eBay inventory 500 sku=%s (attempt %d/%d), retrying in %ds...",
-                        sku,
-                        attempt,
-                        max_inv_tries,
-                        attempt * 5,
-                    )
-                    time.sleep(attempt * 5)
-                else:
-                    raise
+        out["inventory_item"] = self._call_with_retry(
+            lambda: self.api.sell_inventory_create_or_replace_inventory_item(
+                body=inventory_item_body,
+                content_language="en-US",
+                content_type="application/json",
+                sku=sku,
+            ),
+            label=f"inventory upsert sku={sku}",
+        )
 
         self.api.sell_inventory_withdraw_offer(offer_id=existing_offer_id)
         self.api.sell_inventory_delete_offer(offer_id=existing_offer_id)
@@ -314,36 +318,24 @@ class EbayClient:
         logger.info("[%s] Step 1/4: Upserting %d inventory items...", group_key, total_items)
         out["inventory_items"] = {}
         for idx, (sku, payload) in enumerate(sku_item_map.items(), 1):
-            for attempt in range(1, 4):
-                try:
-                    out["inventory_items"][sku] = (
-                        self.api.sell_inventory_create_or_replace_inventory_item(
-                            body=payload,
-                            content_language="en-US",
-                            content_type="application/json",
-                            sku=sku,
-                        )
+            out["inventory_items"][sku] = self._call_with_retry(
+                lambda payload=payload, sku=sku: (
+                    self.api.sell_inventory_create_or_replace_inventory_item(
+                        body=payload,
+                        content_language="en-US",
+                        content_type="application/json",
+                        sku=sku,
                     )
-                    logger.info(
-                        "[%s] Step 1/4: [%d/%d] Upserted inventory item sku=%s",
-                        group_key,
-                        idx,
-                        total_items,
-                        sku,
-                    )
-                    break
-                except self.session.Error as e:
-                    error_details = self.session.parse_error(e)
-                    if error_details.get("errorId") == 25001 and attempt < 3:
-                        logger.warning(
-                            "eBay inventory 500 for sku=%s (attempt %d/3), retrying in %ds…",
-                            sku,
-                            attempt,
-                            attempt * 5,
-                        )
-                        time.sleep(attempt * 5)
-                    else:
-                        raise
+                ),
+                label=f"inventory upsert sku={sku}",
+            )
+            logger.info(
+                "[%s] Step 1/4: [%d/%d] Upserted inventory item sku=%s",
+                group_key,
+                idx,
+                total_items,
+                sku,
+            )
         logger.info("[%s] Step 1/4 done — %d inventory items upserted", group_key, total_items)
 
         # Step 2 — inventory item group
@@ -422,30 +414,16 @@ class EbayClient:
         # Step 4 — publish the entire group as one variation listing
         if publish:
             logger.info("[%s] Step 4/4: Publishing variation listing...", group_key)
-            max_pub_tries = 3
-            for attempt in range(1, max_pub_tries + 1):
-                try:
-                    out["publish"] = self.api.sell_inventory_publish_offer_by_inventory_item_group(
-                        body={
-                            "inventoryItemGroupKey": group_key,
-                            "marketplaceId": "EBAY_US",
-                        },
-                        content_type="application/json",
-                    )
-                    break
-                except self.session.Error as e:
-                    error_details = self.session.parse_error(e)
-                    if error_details.get("errorId") == 25001 and attempt < max_pub_tries:
-                        logger.warning(
-                            "eBay publish 500 for group=%s (attempt %d/%d), retrying in %ds...",
-                            group_key,
-                            attempt,
-                            max_pub_tries,
-                            attempt * 5,
-                        )
-                        time.sleep(attempt * 5)
-                    else:
-                        raise
+            out["publish"] = self._call_with_retry(
+                lambda: self.api.sell_inventory_publish_offer_by_inventory_item_group(
+                    body={
+                        "inventoryItemGroupKey": group_key,
+                        "marketplaceId": "EBAY_US",
+                    },
+                    content_type="application/json",
+                ),
+                label=f"publish group={group_key}",
+            )
 
             listing_id = out["publish"].get("listingId") or out["publish"].get("listing_id")
             logger.info("[%s] Step 4/4 done — listing_id=%s", group_key, listing_id)
