@@ -57,9 +57,9 @@ slack:
   app_token: xapp-your-app-token
   # Channel IDs (not names): channel details -> copy ID at the bottom.
   # The bot must be invited to each channel (/invite @YourBot).
-  notify_channel: C0123456789   # pipeline status + order summaries
-  pricing_channel: C0123456789  # price confirmation/approval prompts
-  command_channel: C0123456789  # chat-triggered CLI commands (slack-bot service)
+  notify_channel: C0123456789 # pipeline status + order summaries
+  pricing_channel: C0123456789 # price confirmation/approval prompts
+  command_channel: C0123456789 # chat-triggered CLI commands (slack-bot service)
   # Slack user IDs allowed to run commands in command_channel; empty = anyone
   # in the channel. Find yours: Slack profile -> "..." -> Copy member ID.
   allowed_user_ids: []
@@ -81,7 +81,12 @@ store:
   # eBay leaf category ID (261328 = Sports Trading Cards -> Singles).
   category_id: "261328"
   # Item condition enum for single-card listings.
+  # https://developer.ebay.com/api-docs/sell/inventory/types/slr:ConditionEnum
+  # Limited to ungraded for now
   condition: "USED_VERY_GOOD"
+  # One of NEAR_MINT_OR_BETTER, EXCELLENT, VERY_GOOD, POOR
+  # https://developer.ebay.com/api-docs/user-guides/static/mip-user-guide/mip-enum-condition-descriptor-ids-for-trading-cards.html
+  condition_descriptor: "NEAR_MINT_OR_BETTER"
   # Message attached to seller-initiated best offers (negotiation API).
   offer_message: "Enjoy the discount on this card! Valid for the next 24 hours. Thank you!"
   # Single-card listings <= this price use the "low" fulfillment policy.
@@ -90,9 +95,9 @@ store:
   policies:
     payment_policy_id: "0000000000"
     return_policy_id: "0000000000"
-    fulfillment_policy_id_low: "0000000000"        # single cards <= fulfillment_low_max_price
-    fulfillment_policy_id_high: "0000000000"       # single cards above it
-    fulfillment_policy_id_variation: "0000000000"  # "You Pick" / variation listings
+    fulfillment_policy_id_low: "0000000000" # single cards <= fulfillment_low_max_price (eBay PWE)
+    fulfillment_policy_id_high: "0000000000" # single cards above it (USPS Ground Advantage)
+    fulfillment_policy_id_variation: "0000000000" # "You Pick" / variation listings (Free PWE Shipping)
   # Promoted-listings campaigns. Resolution: by_sport -> by_set ->
   # current-year default -> default.
   ad_campaigns:
