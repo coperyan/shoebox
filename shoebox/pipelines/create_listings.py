@@ -112,7 +112,9 @@ def _create_one_listing(
             new_price = round_up_to_nine(trimmed_mean)
             logger.info("Found calculated price from scraper: %s", new_price)
         except Exception:
-            logger.warning("Error scraping price; falling back to queue price", exc_info=True)
+            logger.warning(
+                "Error scraping price; falling back to queue price", exc_info=True
+            )
             price_info = "Override"
 
         ##Prompt confirmation or override from Slack
@@ -134,7 +136,9 @@ def _create_one_listing(
                 logger.info("Overriding %s with %s", new_price, override)
                 new_price = override
             else:
-                logger.warning("Unrecognized price reply %r; keeping %s", reply_str, new_price)
+                logger.warning(
+                    "Unrecognized price reply %r; keeping %s", reply_str, new_price
+                )
 
         old_price = q.price
         q.price = new_price
@@ -192,7 +196,7 @@ def _create_one_listing(
         offer=draft.offer,
         publish=publish,
         existing_offer_action="delete",
-        promote_listing=True,
+        promote_listing=False,  ##Fix Later
         campaign_id=get_ad_campaign(
             title=draft.inventory_item["product"]["title"],
             set_name=draft.inventory_item["product"]["aspects"]["Set"][0],
@@ -205,7 +209,9 @@ def _create_one_listing(
         offer_id = resp["offer"].get("offerId") or resp["offer"].get("offer_id")
     listing_id = None
     if isinstance(resp.get("publish"), dict):
-        listing_id = resp["publish"].get("listingId") or resp["publish"].get("listing_id")
+        listing_id = resp["publish"].get("listingId") or resp["publish"].get(
+            "listing_id"
+        )
 
     return EbayListingResult(
         card_id=q.card_id,

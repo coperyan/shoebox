@@ -1,7 +1,7 @@
 # Configuration Reference
 
 All runtime configuration lives in **`configs/app.yaml`** (gitignored;
-template: `configs/app.yaml.example`). It is loaded and validated by
+template: `configs/app.example.yml`). It is loaded and validated by
 `shoebox/settings.py` using Pydantic with `extra="forbid"` at the top
 level — unknown top-level keys are rejected, so typos fail fast.
 
@@ -70,6 +70,7 @@ All local working directories; created by `ensure_runtime_dirs()`.
 | `scan_extension` | `.jpg` | Scan file extension (leading dot optional) |
 | `set_images_dir` | (folder) | Hero/default images for variation listings |
 | `tools_dir` | `tools` | Master metadata workbook location |
+| `searches_file` | `configs/searches.yaml` | Saved eBay search definitions (a **file**, not a directory — not created by `ensure_dirs()`) |
 
 A bare scan number typed in the UI or listed in the queue workbook is resolved
 to `scans_dir/<scan_prefix><zero-padded number><scan_extension>` — e.g. with the
@@ -96,6 +97,7 @@ An entry that is already an existing file path is used as-is.
 | `notify_channel` | str | Channel **ID** for pipeline status + order summaries |
 | `pricing_channel` | str | Channel ID for price confirmation/approval prompts |
 | `command_channel` | str | Channel ID watched by the `slack-bot` command service |
+| `search_channel` | str | Channel ID for saved-search hits (`watch-searches`). Optional — falls back to `notify_channel` when unset, so existing configs keep validating |
 | `allowed_user_ids` | list[str] | Optional allowlist for the command bot. Empty (default) = anyone in the channel; non-empty = only these member IDs may run commands (others are ignored and logged) |
 
 ### `google_calendar`
@@ -131,6 +133,121 @@ live listings (eBay rejects offers that reference bogus policy IDs).
 
 Routing in `utils/ad_campaign.get_ad_campaign`: `by_sport` → `by_set` →
 current-year default → `default`.
+
+## Saved searches (`configs/searches.yaml`)
+
+Definitions for the [`watch-searches`](cli.md#watch-searches) watcher. **This
+file is gitignored** — the repo is public and your buy criteria, price ceilings
+and blocked sellers are not. The committed template is
+`configs/searches.example.yml`.
+
+Validated by `shoebox/models/saved_search.py` with `extra="forbid"` at every
+level, so a typo fails at load with its exact location (`searches.0.intervl`)
+rather than being silently ignored. Validate without touching Slack or eBay:
+
+```bash
+shoebox watch-searches --list
+```
+
+The document has a `defaults:` block plus a `searches:` list. **Omitting a key
+inherits the default; setting it to `[]` explicitly overrides a non-empty
+default with "no filter".** Deliberately flat — there is no nested `filters:`
+block, because deep-merge semantics are ambiguous.
+
+### Channel aliases
+
+An optional top-level `channels:` block names each Slack channel once so
+searches can reference it by a readable alias:
+
+```yaml
+channels:
+  card_alerts: C0123456789
+  high_value:  C0123456780
+
+defaults:
+  channel: card_alerts        # everything lands here unless overridden
+
+searches:
+  - name: posey_relic_patch_auto
+    channel: high_value       # this one goes elsewhere
+```
+
+A `channel:` value is resolved as: a key in `channels:` → its ID; otherwise a
+literal Slack channel ID (so configs written before aliases existed still work);
+otherwise a load-time error listing the aliases that *do* exist. Values must be
+IDs (`C…`/`G…`/`D…`), not `#names` — mixing up the alias and the ID is caught too.
+
+Resolution order for a search's destination, first match wins:
+
+1. `channel:` on the search
+2. `channel:` under `defaults:`
+3. `slack.search_channel` in `app.yaml`
+4. `slack.notify_channel` in `app.yaml`
+
+Note that a `defaults.channel` in this file outranks `slack.search_channel` in
+`app.yaml`. Invite the bot to every channel you route to, or Slack returns
+`not_in_channel`. `shoebox watch-searches --list` prints each search's resolved
+destination.
+
+### Scheduling and volume
+
+| Key | Default | Meaning |
+|---|---|---|
+| `interval` | `30m` | `<number><unit>`, unit `s`/`m`/`h`/`d`, minimum 60s. **Bare numbers are rejected** — `15` is ambiguous between seconds and minutes |
+| `sort` | `newlyListed` | `newlyListed`, `endingSoonest`, `price`, `-price`. Best Match is intentionally unavailable: it returns an arbitrary slice of the result set, so new listings could stay invisible for days |
+| `max_results` | `200` | Items fetched per poll. One Browse call returns up to 200 |
+| `seed_max_results` | `2000` | Items fetched on the silent first run. Must be ≥ `max_results` — anything matching but not seeded surfaces later as a false "new listing" |
+| `max_notify` | `10` | Cap on Slack thread replies per run. Slack permits ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
+| `enabled` | `true` | |
+| `channel` | `null` | Slack channel ID; falls back to `slack.search_channel` |
+| `prune_seen_after_days` | `90` | Seen-cache entries older than this are dropped at end of run |
+
+### Search identity
+
+| Key | Notes |
+|---|---|
+| `name` | **Required.** `^[a-z0-9][a-z0-9_-]{0,63}$` — used as a filename for the seen-cache and as part of the dedup key |
+| `query` | Max 100 chars (eBay truncates beyond that); `*` wildcards are rejected. Space-separated terms are AND; `(a, b)` is OR |
+| `category_ids` | A list, but eBay accepts **exactly one** per request. An L1 category also requires a `query` |
+| `price` | `{min, max}`; at least one bound, non-negative, `min ≤ max` |
+| `aspects` | `{Aspect: [values]}`. Requires exactly one `category_ids` — eBay's `aspect_filter` must repeat the category ID inside the filter string. Discover the valid names and values with [`search-aspects`](cli.md#search-aspects) |
+
+### Filters: server-side vs post-filtered
+
+This split matters. eBay caps the result set at `max_results` **before** you see
+it, so every post-filter consumes result slots: fetching 200 items with a
+post-filter that rejects 90% yields 20 usable listings. Push everything eBay
+supports server-side.
+
+**Server-side** (sent to eBay, free):
+
+| Key | Emitted filter |
+|---|---|
+| `buying_options` | `buyingOptions:{FIXED_PRICE\|AUCTION}` |
+| `price` + `currency` | `price:[25..200]` + `priceCurrency:USD` |
+| `conditions` | `conditions:{NEW\|USED}` |
+| `item_location_countries` (one) | `itemLocationCountry:US` |
+| `delivery_country` | `deliveryCountry:US` |
+| `sellers` / `exclude_sellers` | `sellers:{…}` / `excludeSellers:{…}` — mutually exclusive; caps 250 / 100 |
+| `free_shipping_only` | `maxDeliveryCost:0` |
+
+**Post-filtered in Python** (costs result slots):
+
+| Key | Why it can't be server-side |
+|---|---|
+| `title_exclude` | **eBay Browse has no negative-keyword support at all.** This is the unavoidable one |
+| `title_must_include_all` / `_any` | `q` matches the whole listing with Best-Match fuzz, not exact title substrings |
+| `seller_min_feedback_score` | No seller-quality filter exists. Unknown feedback fails an explicit threshold |
+| `item_location_countries` (2+) | `itemLocationCountry` takes a single value |
+| `max_total_price` | eBay filters item price and delivery cost independently; their *sum* needs Python |
+
+To see what a given set of filters actually does to your results — including
+which key rejected each listing — use
+[`preview-search`](cli.md#preview-search) rather than guessing.
+
+> ⚠️ **eBay returns only `FIXED_PRICE` listings when `buyingOptions` is absent.**
+> The filter is therefore always emitted and an empty `buying_options` list is
+> rejected — otherwise an auction watcher would silently never fire.
 
 ## Other configuration surfaces
 

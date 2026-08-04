@@ -130,6 +130,120 @@ days, `NOT_STARTED`).
 | `--pull-order` | Include the pull-list sections |
 | `--buyer-order` | Include the per-buyer sections |
 
+## Saved searches
+
+### `watch-searches`
+Runs the saved eBay searches defined in `configs/searches.yaml` that are **due**,
+and posts net-new listings to Slack — one parent message per search with each
+listing as a thread reply. See
+[configuration.md](configuration.md#saved-searches-configssearchesyaml) for the
+YAML schema and [pipelines.md](pipelines.md#saved-search-watcher) for the
+internals.
+
+| Flag | Effect |
+|---|---|
+| `--force` | Ignore intervals; run every enabled search now |
+| `--dry-run` | Log what *would* be posted. No Slack, no state writes, no GCS/BigQuery |
+| `--only NAME` | Restrict to one search (repeatable). Still interval-gated unless combined with `--force` |
+| `--reseed NAME` | Discard that search's seen-cache and silently re-seed (repeatable) |
+| `--config PATH` | Override `paths.searches_file` |
+| `--no-flush` | Skip the GCS/BigQuery flush this run |
+| `--list` | Validate the config and list searches; run nothing |
+
+A search's **first run seeds silently**: every current match is recorded and a
+single confirmation line is posted, but no per-item alerts. Only listings that
+appear afterwards alert. The same silent re-seed happens if the seen-cache is
+lost or a search has been idle for more than 6× its interval — in both cases the
+matches are stale and alerting on them would just be noise.
+
+### `preview-search`
+Shows **every** listing a saved search returns — including the ones your
+post-filters rejected, and which config key rejected each. This is the tool for
+tuning a search; `watch-searches --dry-run` only prints a 15-row sample.
+
+| Flag | Effect |
+|---|---|
+| `--csv PATH` | Write the full result set, all columns, for spreadsheet work |
+| `--passed-only` | Hide rejected listings (they're shown by default — usually the interesting ones) |
+| `--max-results N` | Cap the fetch. Defaults to the search's `seed_max_results`, so you see the breadth a seed would |
+| `--rows N` | Rows to print (default 40; `0` prints all) |
+| `--config PATH` | Override `paths.searches_file` |
+
+```bash
+shoebox preview-search matt_cain_autos --csv exports/preview.csv
+```
+
+Output is the exact request sent to eBay, a pass/reject count, a breakdown of
+which filters rejected how many, and the listing table. Writes nothing — no
+Slack, no seen-cache, no BigQuery — so it's safe to run repeatedly while tuning.
+
+It's also importable, which is the better tool for real analysis:
+
+```python
+from shoebox.pipelines.preview_search import preview_search
+
+df = preview_search("matt_cain_autos")
+df[df.passed].sort_values("total_price")        # what would alert, cheapest first
+df[~df.passed].dropped_by.value_counts()        # what the filters are costing
+```
+
+The frame has one row per listing: `passed`, `dropped_by`, `title`, `price`,
+`shipping`, `total_price`, `buying`, `condition`, `seller`, `feedback`,
+`country`, `listed`, `item_id`, `url`.
+
+### `search-aspects`
+Lists the eBay **aspects** (structured item attributes — Player/Athlete, Season,
+Parallel/Variety, Grade, Set…) available to filter a saved search on, with the
+match count for every value.
+
+Aspects are category-specific *and* result-set-specific, so this is scoped to a
+saved search rather than being a static list.
+
+| Flag | Effect |
+|---|---|
+| `--top N` | Values shown per aspect (default 8) |
+| `--csv PATH` | Write every aspect/value pair |
+| `--config PATH` | Override `paths.searches_file` |
+
+```bash
+shoebox search-aspects matt_cain_autos --top 5
+```
+
+Copy a name/value pair straight into the search's `aspects:` block. Aspect
+filtering happens on eBay's side, so unlike `title_exclude` it costs you no
+result slots — for one real search, adding `Parallel/Variety: ["Gold"]` took 184
+results down to 11.
+
+Also importable: `aspect_options(name)` returns a DataFrame of `aspect`,
+`value`, `count`, `values_in_aspect`.
+
+> Note: `ebay_rest`'s paginating wrapper lists `refinement` in its internal
+> `page_controls` and discards it, so no `fieldgroups` argument to
+> `browse.search()` can surface aspects. `BrowseClient.aspect_refinements()`
+> goes through the SDK's single-response path instead.
+
+**Scheduling.** One cron entry drives everything; each search's own `interval`
+decides whether it actually fires, so adding a search means editing YAML only.
+
+```bash
+*/5 * * * * cd /Users/you/shoebox && ./.venv/bin/shoebox watch-searches >> logs/cron_watch_searches.log 2>&1
+```
+
+The `cd` is required — pipelines resolve `configs/…` relative to the working
+directory. Concurrent runs are prevented by a lock file
+(`exports/jsonl/searches/.lock`): if a previous run is still posting, the new
+tick logs and exits 0.
+
+On macOS, `cron` needs Full Disk Access granted to `/usr/sbin/cron`. The
+supported alternative is a `launchd` agent with `StartInterval 300`, a
+`WorkingDirectory` of the repo root, and `StandardOutPath` under `logs/`.
+
+**API budget.** Each due search costs one Browse call per run (a single call
+returns up to 200 items). Ten searches on a 15-minute interval is roughly 960
+calls/day against a default Browse ceiling of ~5,000/day. Dropping every search
+to a 5-minute interval would be ~2,900/day — still under, but tighten
+`max_results` before adding many more searches at that cadence.
+
 ## Slack & calendar
 
 ### `slack-bot`

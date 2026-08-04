@@ -30,6 +30,10 @@ ALLOWED_COMMANDS: dict[str, list[str]] = {
         "--display",
         "--message",
     ],
+    # Value-taking flags (--only NAME, --config PATH) are omitted on purpose:
+    # the validator below keeps only exact flag matches, so the value would be
+    # silently dropped and the flag would error out.
+    "watch-searches": ["--force", "--dry-run", "--list"],
 }
 
 _HELP_TEXT = "Available commands:\n" + "\n".join(

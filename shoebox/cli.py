@@ -15,9 +15,7 @@ def main() -> None:
     ## Sync Metadata
     sub.add_parser("sync-metadata", help="Load checklist/parallels into GCS & BigQuery")
 
-    sub.add_parser(
-        "end-oos-listings", help="Ends active listings with no stock available."
-    )
+    sub.add_parser("end-oos-listings", help="Ends active listings with no stock available.")
 
     ## Create listing queue from excel
     sub.add_parser(
@@ -29,27 +27,21 @@ def main() -> None:
     sub.add_parser("ui", help="Opens streamlit UI to create new listings..")
 
     ## Create Listings
-    p_list = sub.add_parser(
-        "create-listings", help="Create/update offers and publish listings"
-    )
+    p_list = sub.add_parser("create-listings", help="Create/update offers and publish listings")
     p_list.add_argument("--dry-run", action="store_true")
     p_list.add_argument("--publish", action="store_true")
     p_list.add_argument("--schedule", action="store_true")
     p_list.add_argument("--scrape-prices", action="store_true")
 
     ## Orders Awaiting Shipment
-    orders = sub.add_parser(
-        "orders-awaiting-shipment", help="Display orders awaiting shipment"
-    )
+    orders = sub.add_parser("orders-awaiting-shipment", help="Display orders awaiting shipment")
     orders.add_argument("--pull-order", action="store_true")
     orders.add_argument("--buyer-order", action="store_true")
     orders.add_argument("--display", action="store_true")
     orders.add_argument("--message", action="store_true")
 
     ##Active Listings
-    sub.add_parser(
-        "sync-active-listings", help="Update active listings in GCS/BigQuery.."
-    )
+    sub.add_parser("sync-active-listings", help="Update active listings in GCS/BigQuery..")
 
     # Active Listing Details
     sub.add_parser(
@@ -78,9 +70,7 @@ def main() -> None:
     p_var.add_argument("--schedule", action="store_true")
     p_var.add_argument("--in-stock-only", action="store_true")
     p_var.add_argument("--images-dir", help="Directory of per-card scans (optional)")
-    p_var.add_argument(
-        "--default-image-path", help="Hero image for the listing (optional)"
-    )
+    p_var.add_argument("--default-image-path", help="Hero image for the listing (optional)")
 
     # Relist listings
     p_relist = sub.add_parser(
@@ -91,9 +81,7 @@ def main() -> None:
     p_relist.add_argument("--dry-run", action="store_true")
 
     # Send offers to watchers
-    p_offers = sub.add_parser(
-        "send-offers", help="Send negotiation offers to eligible watchers"
-    )
+    p_offers = sub.add_parser("send-offers", help="Send negotiation offers to eligible watchers")
     p_offers.add_argument("--dry-run", action="store_true")
     p_offers.add_argument(
         "--max-price",
@@ -104,6 +92,60 @@ def main() -> None:
 
     # Sync Topps Calendar
     sub.add_parser("sync-topps-calendar")
+
+    # Saved eBay searches -> Slack
+    p_watch = sub.add_parser(
+        "watch-searches",
+        help="Run due saved eBay searches and alert Slack about new listings",
+    )
+    p_watch.add_argument(
+        "--force", action="store_true", help="Ignore intervals; run every enabled search"
+    )
+    p_watch.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Log what would be posted; no Slack, no state writes, no GCS/BigQuery",
+    )
+    p_watch.add_argument(
+        "--only", action="append", metavar="NAME", help="Restrict to this search (repeatable)"
+    )
+    p_watch.add_argument(
+        "--reseed",
+        action="append",
+        metavar="NAME",
+        help="Discard the seen-cache and silently re-seed this search (repeatable)",
+    )
+    p_watch.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
+    p_watch.add_argument(
+        "--no-flush", action="store_true", help="Skip the GCS/BigQuery flush this run"
+    )
+    p_watch.add_argument(
+        "--list", action="store_true", help="Validate the config and list searches; run nothing"
+    )
+
+    # Inspect one saved search's results without alerting or writing state
+    p_prev = sub.add_parser(
+        "preview-search",
+        help="Show every listing a saved search returns, and why any were filtered out",
+    )
+    p_prev.add_argument("name", help="Search name from searches.yaml")
+    p_prev.add_argument("--csv", help="Also write the full result set (all columns) to this path")
+    p_prev.add_argument(
+        "--passed-only", action="store_true", help="Hide listings rejected by post-filters"
+    )
+    p_prev.add_argument("--max-results", type=int, help="Cap the fetch (default: seed_max_results)")
+    p_prev.add_argument("--rows", type=int, default=40, help="Rows to print (default 40; 0 = all)")
+    p_prev.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
+
+    # Which eBay aspects a saved search could filter on
+    p_asp = sub.add_parser(
+        "search-aspects",
+        help="List the eBay aspects available to filter a saved search on, with counts",
+    )
+    p_asp.add_argument("name", help="Search name from searches.yaml")
+    p_asp.add_argument("--top", type=int, default=8, help="Values shown per aspect (default 8)")
+    p_asp.add_argument("--csv", help="Write every aspect/value pair to this path")
+    p_asp.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
 
     args = parser.parse_args()
 
@@ -154,9 +196,7 @@ def main() -> None:
             schedule=args.schedule,
             in_stock_only=args.in_stock_only,
             images_dir=Path(args.images_dir) if args.images_dir else None,
-            default_image_path=(
-                Path(args.default_image_path) if args.default_image_path else None
-            ),
+            default_image_path=(Path(args.default_image_path) if args.default_image_path else None),
         )
         return
 
@@ -214,6 +254,39 @@ def main() -> None:
         from shoebox.pipelines.send_offers import main as send_offers
 
         send_offers(dry_run=args.dry_run, max_price=args.max_price)
+        return
+
+    if args.cmd == "watch-searches":
+        from shoebox.pipelines.watch_searches import watch_searches
+
+        watch_searches(
+            force=args.force,
+            dry_run=args.dry_run,
+            only=args.only,
+            reseed=args.reseed,
+            config_path=args.config,
+            flush=not args.no_flush,
+            list_only=args.list,
+        )
+        return
+
+    if args.cmd == "preview-search":
+        from shoebox.pipelines.preview_search import run_preview
+
+        run_preview(
+            args.name,
+            config_path=args.config,
+            max_results=args.max_results,
+            passed_only=args.passed_only,
+            csv_path=args.csv,
+            limit_rows=args.rows or None,
+        )
+        return
+
+    if args.cmd == "search-aspects":
+        from shoebox.pipelines.preview_search import run_aspects
+
+        run_aspects(args.name, config_path=args.config, top=args.top, csv_path=args.csv)
         return
 
     if args.cmd == "sync-topps-calendar":

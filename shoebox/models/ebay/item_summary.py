@@ -3,7 +3,7 @@ from __future__ import annotations
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from ..common import Model
 
@@ -65,11 +65,31 @@ class ItemSummary(Model):
     buying_options: list[str] = Field(default_factory=list)
     item_web_url: str | None = None
     item_end_date: str | None = None
+    # When the listing was created. The base Model ignores unknown keys, so this
+    # was being silently discarded — it's the one freshness signal that doesn't
+    # depend on our own seen-cache.
+    item_origin_date: str | None = None
     current_bid_price: ItemPrice | None = None
     shipping_options: list[ShippingCost] = Field(default_factory=list)
     epid: str | None = None
     item_group_href: str | None = None
     thumbnail_images: list[ItemImage] = Field(default_factory=list)
+
+    # eBay omits some array fields on some listings, but sends an explicit
+    # `null` on others (shipping_options on local-pickup-only items, for
+    # example). A default_factory only covers the omitted case, so without this
+    # an explicit null raises and takes down the whole search.
+    @field_validator(
+        "leaf_category_ids",
+        "categories",
+        "buying_options",
+        "shipping_options",
+        "thumbnail_images",
+        mode="before",
+    )
+    @classmethod
+    def _null_list_is_empty(cls, v: Any) -> Any:
+        return [] if v is None else v
 
     @classmethod
     def from_api(cls, data: dict[str, Any]) -> ItemSummary:

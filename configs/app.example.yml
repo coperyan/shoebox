@@ -36,6 +36,8 @@ paths:
   scan_prefix: "SCAN_"
   scan_number_padding: 4
   scan_extension: ".jpg"
+  # Saved eBay search definitions (gitignored; copy from searches.example.yml).
+  searches_file: configs/searches.yaml
 
 ebay:
   # application/user/header name the entries to use in ebay_rest.json
@@ -60,6 +62,8 @@ slack:
   notify_channel: C0123456789 # pipeline status + order summaries
   pricing_channel: C0123456789 # price confirmation/approval prompts
   command_channel: C0123456789 # chat-triggered CLI commands (slack-bot service)
+  # Saved-search hits (watch-searches). Optional -- falls back to notify_channel.
+  search_channel: C0123456789
   # Slack user IDs allowed to run commands in command_channel; empty = anyone
   # in the channel. Find yours: Slack profile -> "..." -> Copy member ID.
   allowed_user_ids: []

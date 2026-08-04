@@ -7,6 +7,7 @@ from shoebox.clients.ebay_rest.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.settings import get_settings
 from shoebox.utils.jsonl import write_jsonl
+from shoebox.utils.slack import notify
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +17,8 @@ def sync_active_listing_details():
     gcs_client = GCSClient()
     bq_client = BigQueryClient()
     settings = get_settings()
+
+    notify(settings.slack.notify_channel, "Starting sync_active_listing_details..")
 
     active_listings = ebay_api.legacy_api.get_active_listings()
 
@@ -35,17 +38,21 @@ def sync_active_listing_details():
             logger.info("Completed listing %d of %d", ctr, len(active_listings))
 
     for d in details:
-        d["start_time"] = datetime.fromisoformat(d["start_time"]).strftime("%Y-%m-%dT%H:%M:%SZ")
+        d["start_time"] = datetime.fromisoformat(d["start_time"]).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         d["file_date"] = now_str
 
-    write_jsonl(Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl", details)
+    write_jsonl(
+        Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl", details
+    )
 
     gcs_client.upload_text(
         bucket=settings.gcs.ebay_bucket,
         object_name=f"logs/active_listing_details/active_listing_details_{now_file}.jsonl",
-        text=(Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl").read_text(
-            "utf-8"
-        ),
+        text=(
+            Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl"
+        ).read_text("utf-8"),
         content_type="application/json",
     )
     bq_client.load_jsonl_from_gcs(
@@ -56,6 +63,8 @@ def sync_active_listing_details():
         schema_path=Path("configs/bigquery/schemas/active_listing_details.json"),
         write_disposition="WRITE_APPEND",
     )
+
+    notify(settings.slack.notify_channel, "Completed sync_active_listing_details..")
 
 
 def main():

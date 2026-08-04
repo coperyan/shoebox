@@ -38,11 +38,26 @@ class ApprovalResult:
 
 
 async def send_message_only(
-    bot_token: str, channel: str, text: str, thread_ts: str | None = None
+    bot_token: str,
+    channel: str,
+    text: str,
+    thread_ts: str | None = None,
+    unfurl_links: bool = False,
 ) -> str:
-    """Post a message and return its ts (usable as thread_ts for replies)."""
+    """Post a message and return its ts (usable as thread_ts for replies).
+
+    ``unfurl_links`` must be opted into: bot tokens don't expand text links by
+    default, so a message whose value is the link preview (an eBay listing, say)
+    gets no preview at all unless this is set.
+    """
     client = _with_rate_limit_retries(AsyncWebClient(token=bot_token))
-    resp = await client.chat_postMessage(channel=channel, text=text, thread_ts=thread_ts)
+    resp = await client.chat_postMessage(
+        channel=channel,
+        text=text,
+        thread_ts=thread_ts,
+        unfurl_links=unfurl_links,
+        unfurl_media=unfurl_links,
+    )
     return resp["ts"]
 
 
@@ -246,10 +261,27 @@ async def send_and_await_approval(
         await handler.close_async()
 
 
-def notify(channel: str, message: str, thread_ts: str | None = None) -> str:
-    """Post a message; returns its ts so follow-ups can thread under it."""
+def notify(
+    channel: str,
+    message: str,
+    thread_ts: str | None = None,
+    unfurl_links: bool = False,
+) -> str:
+    """Post a message; returns its ts so follow-ups can thread under it.
+
+    Pass ``unfurl_links=True`` when the message's links are the point (link
+    previews are off by default for bot tokens).
+    """
     slack = get_settings().slack
-    return asyncio.run(send_message_only(slack.bot_token, channel, message, thread_ts=thread_ts))
+    return asyncio.run(
+        send_message_only(
+            slack.bot_token,
+            channel,
+            message,
+            thread_ts=thread_ts,
+            unfurl_links=unfurl_links,
+        )
+    )
 
 
 def notify_and_wait(channel: str, message: str, timeout_s: int = 600) -> str:

@@ -168,6 +168,61 @@ All three follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
 
 ---
 
+## Saved search watcher
+
+### `pipelines/watch_searches.py` (CLI: `watch-searches`)
+
+**YAML-defined eBay searches → Slack.** One cron entry runs the command every
+few minutes; each search's own `interval` plus a stored `last_run_at` decides
+which actually fire, so adding a search means editing YAML and nothing else.
+
+Per run:
+
+1. Take a non-blocking `flock` on `exports/jsonl/searches/.lock`. A run posting
+   at ~1 message/sec can outlast the cron period, and two concurrent processes
+   would double-post and clobber each other's state.
+2. Load and validate `configs/searches.yaml`. A config error aborts the whole
+   run (it's global, not per-search) and is posted to Slack — under cron nobody
+   reads the log.
+3. Select due searches. If none, return **before** constructing `EbayClient`
+   (which needs `configs/ebay_rest.json`).
+4. Per search, inside its own `try/except`: Browse search → post-filter → diff
+   against the seen-cache → alert → commit.
+5. Flush buffered hits to GCS + BigQuery, **only when something new was found**
+   — most runs find nothing, which keeps load jobs to a handful per day.
+
+**Seeding.** A search's first run records every current match and posts a single
+confirmation line — no per-item alerts. The same silent re-seed happens when the
+seen-cache is lost (`search_state.json` and the `*_seen.jsonl` caches are
+separate files, so `rm exports/jsonl/*.jsonl` leaves the state claiming
+"seeded") or when a search has been idle for more than 6× its interval. A search
+that legitimately seeded *zero* matches is excluded from the lost-cache guard,
+so a narrow search still alerts on its first genuine hit.
+
+**Ordering — Slack first, then commit state, per item.** If state were committed
+first, a Slack failure would mark an item seen and it would never be alerted:
+silent and undetectable. The other way round, a crash re-alerts an item —
+visible and self-limiting. Committing per item rather than per batch bounds a
+mid-thread crash to exactly one duplicate.
+
+**Failure isolation.** One search raising doesn't stop the others, and a failed
+search **still advances `last_run_at`** — otherwise a permanently broken search
+would retry on every tick and burn the Browse quota. Failures are collected and
+posted as one summary.
+
+Because dedup runs off the local seen-cache and never off BigQuery, a GCS or
+BigQuery outage cannot cause a duplicate or a missed alert — it only delays the
+durable log, which the append buffer retries next run.
+
+**Slack shape.** One parent message per search *that has hits* (a "0 new" post
+every interval would drown the channel), with listings as thread replies capped
+at `max_notify` and an explicit overflow line. Replies are plain mrkdwn with a
+bare URL on the last line and `unfurl_links=True` — `slack_formatting.table()`
+is deliberately unused because URLs inside its code fence are neither clickable
+nor unfurled.
+
+---
+
 ## Services
 
 ### `services/orders_awaiting_shipment.py`

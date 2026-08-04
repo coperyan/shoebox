@@ -28,10 +28,16 @@ Synchronous wrappers (each runs its own event loop; safe to call from plain
 pipeline code):
 
 ```python
-notify(channel, message, thread_ts=None) -> str
+notify(channel, message, thread_ts=None, unfurl_links=False) -> str
 ```
 Posts a message; returns its `ts` so follow-ups can thread under it. Used for
 all fire-and-forget notifications and the threaded order summaries.
+
+`unfurl_links` must be opted into: **bot tokens do not expand text links by
+default**, so a message whose value *is* the link preview gets no preview at
+all unless it's set. The saved-search watcher passes `unfurl_links=True` on its
+item replies to get eBay listing thumbnails. Treat previews as best-effort —
+they depend on eBay's OG tags and Slack fetching them asynchronously.
 
 ```python
 notify_and_wait(channel, message, timeout_s=600) -> str
@@ -144,8 +150,13 @@ stdout+stderr in a code block (tail-truncated near Slack's message limit).
 `create-queue-excel`, `create-listings` (`--dry-run --publish --schedule
 --scrape-prices`), `sync-active-listings`, `sync-active-listing-details`,
 `sync-orders`, `orders-awaiting-shipment` (`--pull-order --buyer-order
---display --message`). `ui` is deliberately excluded (needs a display), as are
-the pipelines that would themselves block on Slack approval prompts.
+--display --message`), `watch-searches` (`--force --dry-run --list`). `ui` is
+deliberately excluded (needs a display), as are the pipelines that would
+themselves block on Slack approval prompts.
+
+> Note: the validator keeps only exact flag matches, so value-taking flags
+> (`--only NAME`, `--config PATH`) can't be whitelisted — the value would be
+> silently dropped and the flag would then error. Run those from a shell.
 
 **Security:**
 - Channel-scoped: only messages in `slack.command_channel` are considered.
@@ -162,6 +173,28 @@ the pipelines that would themselves block on Slack approval prompts.
 section table as a reply in its thread. The channel shows one line per run;
 details live in the thread. Long tables chunk into `(part i/N)` messages
 within the same thread.
+
+## Saved-search alerts
+
+`watch-searches` posts to `slack.search_channel` (falling back to
+`notify_channel`, or a per-search `channel:` override in `searches.yaml`). Same
+parent-plus-thread shape as the order summaries: one parent per search that has
+hits, each new listing as a reply.
+
+Two deliberate differences from the table-based summaries:
+
+- **No code fences.** `slack_formatting.table()` renders inside a fenced block,
+  and Slack neither linkifies nor unfurls URLs there. Item replies are plain
+  mrkdwn — `*<url|Title>*`, price/condition/seller lines, then the bare URL on
+  its own line so a preview can attach.
+- **Explicit pacing.** Slack permits roughly one `chat.postMessage` per second
+  per channel, and each `notify()` spins up its own event loop. The SDK's
+  rate-limit handler only reacts *after* a 429 and gives up after three
+  retries — which would abort a run mid-thread — so the watcher sleeps ~1s
+  between replies and caps them at `max_notify` with a summarized overflow line.
+
+A search with no new listings posts nothing at all: at ten searches on a
+15-minute interval, "0 new" messages would otherwise be thousands per day.
 
 ## Design notes & history
 

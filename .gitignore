@@ -3,6 +3,8 @@ configs/ebay_rest.json
 configs/app.yaml
 configs/gcp.json
 configs/ebay_legacy.json
+# Saved eBay searches -- your buy criteria and price ceilings are private.
+configs/searches.yaml
 
 # --- Real business data (samples are committed instead) ---
 # Keep your real workbooks locally; only the *.sample.xlsx templates are tracked.

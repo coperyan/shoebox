@@ -63,6 +63,10 @@ class PathSettings(BaseModel):
     scan_number_padding: int = 4
     scan_extension: str = ".jpg"
 
+    # Saved-search definitions (gitignored; template configs/searches.example.yml).
+    # A file, not a directory -- deliberately absent from ensure_dirs().
+    searches_file: str = "configs/searches.yaml"
+
     def ensure_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
         Path(self.exports_dir).mkdir(parents=True, exist_ok=True)
@@ -78,6 +82,9 @@ class SlackSettings(BaseModel):
     notify_channel: str
     pricing_channel: str
     command_channel: str
+    # Saved-search hits. Optional so existing configs keep validating; falls
+    # back to notify_channel when unset.
+    search_channel: str = ""
     # Slack user IDs allowed to run commands in command_channel.
     # Empty list = anyone in the channel may run commands.
     allowed_user_ids: list[str] = []
@@ -177,7 +184,7 @@ def get_settings(config_path: str | os.PathLike[str] | None = None) -> Settings:
     if not path.exists():
         raise FileNotFoundError(
             f"Missing config file: {path}. "
-            "Create it from configs/app.yaml.example (or set SHOEBOX_CONFIG_PATH)."
+            "Create it from configs/app.example.yml (or set SHOEBOX_CONFIG_PATH)."
         )
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))
