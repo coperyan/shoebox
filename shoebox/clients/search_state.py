@@ -17,19 +17,20 @@ Layout under ``<exports_dir>/jsonl/searches/``::
     search_state.json          per-search last_run_at / seeded_at / status
     <name>_seen.jsonl          append-only SeenEntry log, last line wins
     search_hits_append.jsonl   shared buffer -> one GCS object + one BQ load
-    .lock                      flock guard against overlapping cron runs
+    .lock                      advisory guard against overlapping scheduled runs
 """
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
+import sys
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import IO
 
 from pydantic_core import to_jsonable_python
 
@@ -53,6 +54,43 @@ _COMPACT_RATIO = 2
 # long-disabled search) re-seeds silently instead of alerting: those listings
 # are hours or days old and no longer actionable.
 STALE_INTERVAL_MULTIPLIER = 6
+
+
+# ----------------------------------------------------------------------
+# Cross-platform file locking
+# ----------------------------------------------------------------------
+# ``fcntl`` is Unix-only and does not exist on Windows, so importing it at
+# module scope would break every search command on a Windows host -- including
+# --list and preview-search, which never take the lock at all.
+#
+# Both backends give the same guarantee the watcher needs: a non-blocking,
+# handle-owned exclusive lock, released when the handle closes (so a killed run
+# cannot wedge the scheduler). Locks are advisory on both, which is fine -- the
+# only writers are watch-searches runs, and they all go through here.
+# The inactive branch is still exercised on the other platform: TestWindowsLockBackend
+# re-imports this module with sys.platform patched and fcntl made unimportable.
+if sys.platform == "win32":
+    import msvcrt
+
+    # msvcrt locks a byte range from the *current* file position, so both calls
+    # seek to 0 and lock the same single byte. The file's contents are
+    # irrelevant; only the lock on byte 0 matters.
+    def _acquire(handle: IO[str]) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+
+    def _release(handle: IO[str]) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+
+else:
+    import fcntl
+
+    def _acquire(handle: IO[str]) -> None:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+    def _release(handle: IO[str]) -> None:
+        fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _schema_path() -> Path:
@@ -148,21 +186,24 @@ class SearchStateStore:
     def lock(self) -> Iterator[bool]:
         """Non-blocking exclusive lock. Yields False if another run holds it.
 
-        A run posting to Slack at ~1 message/sec can outlast the cron period.
-        Without this, two processes would both see a search as due, both alert,
-        and their state writes would clobber each other.
+        A run posting to Slack at ~1 message/sec can outlast the scheduler's
+        period. Without this, two processes would both see a search as due, both
+        alert, and their state writes would clobber each other.
         """
-        handle = self.lock_path.open("w")
+        # "a" rather than "w": on Windows the truncation "w" performs is a write
+        # to a byte range a running holder has locked, which fails outright --
+        # the second run would raise instead of yielding False.
+        handle = self.lock_path.open("a")
         try:
             try:
-                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                _acquire(handle)
             except OSError:
                 yield False
                 return
             try:
                 yield True
             finally:
-                fcntl.flock(handle, fcntl.LOCK_UN)
+                _release(handle)
         finally:
             handle.close()
 

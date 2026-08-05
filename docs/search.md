@@ -320,23 +320,45 @@ into Slack as "new".
 
 ## Scheduling
 
-One cron entry drives every search; each search's own `interval` plus its stored
-`last_run_at` decides which actually fire, so adding a search means editing YAML
-and nothing else.
+One scheduled entry drives every search; each search's own `interval` plus its
+stored `last_run_at` decides which actually fire, so adding a search means
+editing YAML and nothing else. Run the command every few minutes and let the
+intervals do the rest.
+
+Whatever the scheduler, two things matter: the working directory must be the
+repo root (config paths resolve relative to it), and the `shoebox` entry point
+must be the one inside your virtual environment.
+
+**Linux / macOS — cron:**
 
 ```bash
 */5 * * * * cd /Users/you/shoebox && ./.venv/bin/shoebox watch-searches >> logs/cron_watch_searches.log 2>&1
 ```
 
-The `cd` is required — config paths resolve relative to the working directory.
-
-Overlapping runs are prevented by a non-blocking `flock` on
-`exports/jsonl/searches/.lock`: a run posting at ~1 msg/sec can outlast the cron
-period, so if the previous tick is still going the new one logs and exits 0.
-
 On macOS, `cron` needs Full Disk Access granted to `/usr/sbin/cron`. The
 alternative is a `launchd` agent with `StartInterval 300`, a `WorkingDirectory`
 of the repo root, and `StandardOutPath` under `logs/`.
+
+**Windows — Task Scheduler:**
+
+```powershell
+schtasks /create /tn "shoebox watch-searches" /sc minute /mo 5 /ru "%USERNAME%" ^
+  /tr "cmd /c cd /d C:\shoebox && .venv\Scripts\shoebox.exe watch-searches >> logs\watch_searches.log 2>&1"
+```
+
+`cd /d` is what sets the working directory, and `cmd /c` is what makes the
+redirect work — a bare `/tr` command line does not go through a shell. In the
+Task Scheduler GUI the equivalent is *Start in* = the repo root. Tick **Run
+whether user is logged on or not** for an unattended host, and leave *Stop the
+task if it runs longer than* well above your longest expected run, since a run
+posting a full `max_notify` thread takes tens of seconds.
+
+Overlapping runs are prevented by a non-blocking advisory lock on
+`exports/jsonl/searches/.lock` (`flock` on Unix, `msvcrt.locking` on Windows): a
+run posting at ~1 msg/sec can outlast the scheduler's period, so if the previous
+tick is still going the new one logs and exits 0. Task Scheduler's own "do not
+start a new instance" rule is a reasonable belt-and-braces addition, but the
+lock does not depend on it.
 
 **API budget.** One due search costs one Browse call per run (up to 200 items).
 Ten searches at 15m ≈ 960 calls/day against a default Browse ceiling of ~5,000.
@@ -402,7 +424,7 @@ Everything lives under `<exports_dir>/jsonl/searches/`:
 | `search_state.json` | Persistent | Per-search `last_run_at`, `seeded_at`, `seed_count`, last status/error/new-count |
 | `<name>_seen.jsonl` | Persistent, append-only | The dedup cache: one `SeenEntry` per observation, later lines win. Compacted and pruned at end of run |
 | `search_hits_append.jsonl` | Cleared after a successful flush | Buffered BigQuery rows; survives a failed flush and retries next run |
-| `.lock` | Per run | `flock` guard against overlapping cron invocations |
+| `.lock` | Per run | Advisory lock guarding against overlapping scheduled invocations |
 
 **Dedup** is item-id based and per search (`search_name` + `item_id`), and runs
 entirely off the local cache — never off BigQuery. That is why a GCS or BigQuery

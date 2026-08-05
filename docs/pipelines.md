@@ -181,9 +181,10 @@ which actually fire, so adding a search means editing YAML and nothing else.
 
 Per run:
 
-1. Take a non-blocking `flock` on `exports/jsonl/searches/.lock`. A run posting
-   at ~1 message/sec can outlast the cron period, and two concurrent processes
-   would double-post and clobber each other's state.
+1. Take a non-blocking advisory lock on `exports/jsonl/searches/.lock` — `flock`
+   on Unix, `msvcrt.locking` on Windows, where `fcntl` does not exist. A run
+   posting at ~1 message/sec can outlast the scheduler's period, and two
+   concurrent processes would double-post and clobber each other's state.
 2. Load and validate `configs/searches.yaml`. A config error aborts the whole
    run (it's global, not per-search) and is posted to Slack — under cron nobody
    reads the log.

@@ -1,5 +1,9 @@
+import importlib.util
+import sys
+import types
 from datetime import UTC, datetime, timedelta
 
+from shoebox.clients import search_state
 from shoebox.clients.search_state import SearchRunState, SearchStateStore
 from shoebox.models.saved_search import SearchesFile
 from shoebox.models.search_hit import SearchHit, SeenEntry, build_cache_key
@@ -335,3 +339,55 @@ class TestLock:
             pass
         with s.lock() as acquired:
             assert acquired
+
+    def test_existing_lock_file_is_not_truncated(self, tmp_path):
+        # The Windows backend locks a byte range, and truncating a range another
+        # run holds fails outright -- so the file must be opened append-only.
+        s = store(tmp_path)
+        s.lock_path.write_text("x", encoding="utf-8")
+        with s.lock() as acquired:
+            assert acquired
+        assert s.lock_path.read_text(encoding="utf-8") == "x"
+
+
+class TestWindowsLockBackend:
+    """The service host is Windows; ``fcntl`` does not exist there.
+
+    Loading a second copy of the module with ``sys.platform`` patched is the
+    only way to exercise the other branch from a Unix dev machine -- and the
+    branch is at import time, which is exactly where the bug was.
+    """
+
+    def _load(self, monkeypatch, calls):
+        fake_msvcrt = types.ModuleType("msvcrt")
+        fake_msvcrt.LK_NBLCK = 1
+        fake_msvcrt.LK_UNLCK = 0
+        fake_msvcrt.locking = lambda fd, mode, nbytes: calls.append((mode, nbytes))
+
+        monkeypatch.setattr(sys, "platform", "win32")
+        monkeypatch.setitem(sys.modules, "msvcrt", fake_msvcrt)
+        # None makes ``import fcntl`` raise, proving the Windows path never
+        # reaches for it.
+        monkeypatch.setitem(sys.modules, "fcntl", None)
+
+        name = "shoebox.clients._search_state_win"
+        spec = importlib.util.spec_from_file_location(name, search_state.__file__)
+        module = importlib.util.module_from_spec(spec)
+        monkeypatch.setitem(sys.modules, name, module)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_imports_without_fcntl(self, monkeypatch):
+        module = self._load(monkeypatch, [])
+        assert module.SearchStateStore is not None
+
+    def test_lock_uses_non_blocking_msvcrt_calls(self, monkeypatch, tmp_path):
+        calls: list[tuple[int, int]] = []
+        module = self._load(monkeypatch, calls)
+
+        with module.SearchStateStore(base_dir=tmp_path / "searches").lock() as acquired:
+            assert acquired
+
+        # Non-blocking acquire then release; LK_LOCK would retry for 10s and
+        # stall the scheduler instead of skipping the tick.
+        assert calls == [(1, 1), (0, 1)]
