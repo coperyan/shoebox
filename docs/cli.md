@@ -132,6 +132,9 @@ days, `NOT_STARTED`).
 
 ## Saved searches
 
+Full end-to-end guide (setup, YAML, filters, tuning, scheduling, state):
+[search.md](search.md).
+
 ### `watch-searches`
 Runs the saved eBay searches defined in `configs/searches.yaml` that are **due**,
 and posts net-new listings to Slack — one parent message per search with each

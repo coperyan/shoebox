@@ -43,12 +43,17 @@ async def send_message_only(
     text: str,
     thread_ts: str | None = None,
     unfurl_links: bool = False,
+    blocks: list[dict] | None = None,
 ) -> str:
     """Post a message and return its ts (usable as thread_ts for replies).
 
     ``unfurl_links`` must be opted into: bot tokens don't expand text links by
     default, so a message whose value is the link preview (an eBay listing, say)
     gets no preview at all unless this is set.
+
+    When ``blocks`` are given they become the rendered message and ``text`` is
+    demoted to the push-notification and fallback string — so it must still read
+    as a complete summary on its own.
     """
     client = _with_rate_limit_retries(AsyncWebClient(token=bot_token))
     resp = await client.chat_postMessage(
@@ -57,6 +62,7 @@ async def send_message_only(
         thread_ts=thread_ts,
         unfurl_links=unfurl_links,
         unfurl_media=unfurl_links,
+        blocks=blocks,
     )
     return resp["ts"]
 
@@ -266,11 +272,13 @@ def notify(
     message: str,
     thread_ts: str | None = None,
     unfurl_links: bool = False,
+    blocks: list[dict] | None = None,
 ) -> str:
     """Post a message; returns its ts so follow-ups can thread under it.
 
     Pass ``unfurl_links=True`` when the message's links are the point (link
-    previews are off by default for bot tokens).
+    previews are off by default for bot tokens), or ``blocks`` to control the
+    rendering — in which case ``message`` is the notification/fallback text.
     """
     slack = get_settings().slack
     return asyncio.run(
@@ -280,6 +288,7 @@ def notify(
             message,
             thread_ts=thread_ts,
             unfurl_links=unfurl_links,
+            blocks=blocks,
         )
     )
 

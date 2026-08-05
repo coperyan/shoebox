@@ -3,7 +3,9 @@ from datetime import timedelta
 from shoebox.models.ebay.item_summary import ItemSummary
 from shoebox.models.saved_search import SearchesFile
 from shoebox.utils.search_formatting import (
+    IMAGE_SIZE_PX,
     MAX_TITLE_CHARS,
+    build_item_message,
     format_interval,
     format_item,
     format_overflow,
@@ -12,6 +14,8 @@ from shoebox.utils.search_formatting import (
     format_seed,
     truncate_title,
 )
+
+THUMB = "https://i.ebayimg.com/images/g/abc/s-l225.jpg"
 
 
 def resolve(**overrides):
@@ -86,6 +90,12 @@ class TestFormatItem:
     def test_bare_url_on_its_own_line_for_unfurling(self):
         assert format_item(item(), resolve()).splitlines()[-1] == "https://ebay.com/itm/123"
 
+    def test_bare_url_suppressed_when_asked(self):
+        out = format_item(item(), resolve(), include_bare_url=False)
+        assert out.splitlines()[-1] != "https://ebay.com/itm/123"
+        # The link survives in the headline; only the duplicate is gone.
+        assert "https://ebay.com/itm/123|" in out
+
     def test_no_code_fence(self):
         # A fenced block would kill both the link and the unfurl.
         assert "```" not in format_item(item(), resolve())
@@ -136,6 +146,49 @@ class TestFormatItem:
         out = format_item(item(item_web_url=None), resolve())
         assert "1986 Fleer" in out
         assert "<" not in out
+
+
+class TestBuildItemMessage:
+    def test_photo_becomes_an_image_block_below_the_text(self):
+        msg = build_item_message(item(thumbnail_images=[{"image_url": THUMB}]), resolve())
+        assert [b["type"] for b in msg.blocks] == ["section", "image"]
+        assert msg.blocks[0]["text"]["text"].startswith("*<https://ebay.com/itm/123|")
+
+    def test_image_is_upscaled_from_the_default_thumbnail(self):
+        msg = build_item_message(item(thumbnail_images=[{"image_url": THUMB}]), resolve())
+        assert msg.blocks[1]["image_url"].endswith(f"/s-l{IMAGE_SIZE_PX}.jpg")
+
+    def test_unfurling_off_once_the_photo_is_explicit(self):
+        msg = build_item_message(item(thumbnail_images=[{"image_url": THUMB}]), resolve())
+        assert msg.unfurl_links is False
+        assert msg.text.splitlines()[-1] != "https://ebay.com/itm/123"
+
+    def test_alt_text_is_the_title(self):
+        msg = build_item_message(item(thumbnail_images=[{"image_url": THUMB}]), resolve())
+        assert msg.blocks[1]["alt_text"] == "1986 Fleer Michael Jordan Rookie"
+
+    def test_long_title_alt_text_is_bounded(self):
+        msg = build_item_message(
+            item(title="x" * 500, thumbnail_images=[{"image_url": THUMB}]), resolve()
+        )
+        assert len(msg.blocks[1]["alt_text"]) <= 200
+
+    def test_image_field_used_when_thumbnails_absent(self):
+        msg = build_item_message(item(image={"image_url": THUMB}), resolve())
+        assert msg.blocks[1]["type"] == "image"
+
+    def test_no_photo_falls_back_to_unfurling(self):
+        msg = build_item_message(item(), resolve())
+        assert msg.blocks is None
+        assert msg.unfurl_links is True
+        # The bare URL has to be there or the fallback has nothing to unfurl.
+        assert msg.text.splitlines()[-1] == "https://ebay.com/itm/123"
+
+    def test_untitled_photo_still_gets_alt_text(self):
+        msg = build_item_message(
+            item(title=None, thumbnail_images=[{"image_url": THUMB}]), resolve()
+        )
+        assert msg.blocks[1]["alt_text"] == "listing photo"
 
 
 class TestFormatOverflow:

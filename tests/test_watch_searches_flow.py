@@ -13,13 +13,24 @@ from shoebox.models.ebay.item_summary import ItemSummary
 from shoebox.pipelines.watch_searches import watch_searches
 
 
-def item(item_id: str, title: str = "Michael Jordan Rookie", price: str = "100.00") -> ItemSummary:
+def item(
+    item_id: str,
+    title: str = "Michael Jordan Rookie",
+    price: str = "100.00",
+    image: str | None = None,
+) -> ItemSummary:
+    """``image`` is the eBay size segment (``s-l225``); None means no photo."""
     return ItemSummary(
         item_id=item_id,
         title=title,
         price={"value": price, "currency": "USD"},
         buying_options=["FIXED_PRICE"],
         item_web_url=f"https://ebay.com/itm/{item_id}",
+        thumbnail_images=(
+            [{"image_url": f"https://i.ebayimg.com/images/g/{item_id}/{image}.jpg"}]
+            if image
+            else []
+        ),
     )
 
 
@@ -27,13 +38,13 @@ class Recorder:
     """Stand-in for Slack. Records every post and hands back fake ts values."""
 
     def __init__(self, fail_on: int | None = None):
-        self.posts: list[tuple[str, str, str | None, bool]] = []
+        self.posts: list[tuple[str, str, str | None, bool, list[dict] | None]] = []
         self.fail_on = fail_on
 
-    def __call__(self, channel, text, thread_ts, unfurl_links) -> str:
+    def __call__(self, channel, text, thread_ts, unfurl_links, blocks=None) -> str:
         if self.fail_on is not None and len(self.posts) == self.fail_on:
             raise RuntimeError("slack exploded")
-        self.posts.append((channel, text, thread_ts, unfurl_links))
+        self.posts.append((channel, text, thread_ts, unfurl_links, blocks))
         return f"ts{len(self.posts)}"
 
     @property
@@ -196,13 +207,32 @@ class TestOrdering:
         assert len(post.replies) == 1
         assert "itm/c" in post.replies[0][1]
 
-    def test_item_replies_request_unfurling(self, searches_yaml, store):
+    def test_imageless_item_falls_back_to_unfurling(self, searches_yaml, store):
         path = searches_yaml()
         run(path, store, [], Recorder())
         post = Recorder()
         run(path, store, [item("a")], post, force=True)
-        assert post.replies[0][3] is True
+        channel, text, thread_ts, unfurl, blocks = post.replies[0]
+        assert unfurl is True
+        assert blocks is None
+        assert text.splitlines()[-1] == "https://ebay.com/itm/a"
         assert post.parents[0][3] is False
+
+    def test_item_with_photo_posts_an_image_block(self, searches_yaml, store):
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        post = Recorder()
+        run(path, store, [item("a", image="s-l225")], post, force=True)
+
+        channel, text, thread_ts, unfurl, blocks = post.replies[0]
+        # The photo is explicit, so nothing is left to Slack's crawler.
+        assert unfurl is False
+        assert [b["type"] for b in blocks] == ["section", "image"]
+        assert blocks[1]["image_url"].endswith("/s-l500.jpg")
+        assert blocks[1]["alt_text"] == "Michael Jordan Rookie"
+        # Fallback text stays a complete summary, minus the now-redundant URL.
+        assert "itm/a" in text
+        assert text.splitlines()[-1] != "https://ebay.com/itm/a"
 
 
 class TestFailureIsolation:

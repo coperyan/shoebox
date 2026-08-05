@@ -43,8 +43,8 @@ SLACK_PACING_SECONDS = 1.0
 # dumping a whole seed window into the terminal.
 DRY_RUN_SAMPLE = 15
 
-# (channel, text, thread_ts, unfurl_links) -> message ts
-PostFn = Callable[[str, str, str | None, bool], str]
+# (channel, text, thread_ts, unfurl_links, blocks) -> message ts
+PostFn = Callable[[str, str, str | None, bool, list[dict] | None], str]
 FetchFn = Callable[[ResolvedSearch, int], list[ItemSummary]]
 
 
@@ -84,8 +84,14 @@ def _default_fetch(search: ResolvedSearch, max_results: int) -> list[ItemSummary
     )
 
 
-def _default_post(channel: str, text: str, thread_ts: str | None, unfurl_links: bool) -> str:
-    return notify(channel, text, thread_ts=thread_ts, unfurl_links=unfurl_links)
+def _default_post(
+    channel: str,
+    text: str,
+    thread_ts: str | None,
+    unfurl_links: bool,
+    blocks: list[dict] | None = None,
+) -> str:
+    return notify(channel, text, thread_ts=thread_ts, unfurl_links=unfurl_links, blocks=blocks)
 
 
 def _resolve_channel(search: ResolvedSearch) -> str:
@@ -140,7 +146,7 @@ def run_one_search(
             store.append_seen(search.name, [_entry(i, notified=False) for i in items])
             store.append_hits([_hit(i, is_seed=True) for i in items])
             # One line, so a working config is distinguishable from a broken one.
-            post(channel, fmt.format_seed(search, len(items)), None, False)
+            post(channel, fmt.format_seed(search, len(items)), None, False, None)
         else:
             # A seed posts nothing per-item, so without a sample here --dry-run
             # would print a bare count -- useless for the thing it exists for,
@@ -161,18 +167,22 @@ def run_one_search(
     if dry_run:
         logger.info("[dry-run] %s", fmt.format_parent(search, len(fresh)))
         for item in fresh[: search.max_notify]:
-            logger.info("[dry-run] %s", fmt.format_item(item, search))
+            logger.info("[dry-run] %s", fmt.format_item(item, search, include_bare_url=False))
+            if not item.thumbnail():
+                # Worth knowing before the run goes live: this one gets no photo.
+                logger.info("[dry-run]   (no image — will fall back to link unfurl)")
         if len(fresh) > search.max_notify:
             logger.info("[dry-run] %s", fmt.format_overflow(len(fresh), search.max_notify, search))
         return SearchRunResult(search.name, new_count=len(fresh), fetched=len(items))
 
-    parent_ts = post(channel, fmt.format_parent(search, len(fresh)), None, False)
+    parent_ts = post(channel, fmt.format_parent(search, len(fresh)), None, False, None)
 
     shown = fresh[: search.max_notify]
     for index, item in enumerate(shown):
         if index:
             time.sleep(pacing_seconds)
-        post(channel, fmt.format_item(item, search), parent_ts, True)
+        message = fmt.build_item_message(item, search)
+        post(channel, message.text, parent_ts, message.unfurl_links, message.blocks)
         # Committed immediately, so a crash costs at most this one duplicate.
         store.append_seen(search.name, [_entry(item, notified=True)])
         store.append_hits(
@@ -190,7 +200,7 @@ def run_one_search(
     overflow = fresh[search.max_notify :]
     if overflow:
         time.sleep(pacing_seconds)
-        post(channel, fmt.format_overflow(len(fresh), len(shown), search), parent_ts, False)
+        post(channel, fmt.format_overflow(len(fresh), len(shown), search), parent_ts, False, None)
         # Recorded as un-notified: without this they would re-alert forever.
         store.append_seen(search.name, [_entry(i, notified=False) for i in overflow])
         store.append_hits(
@@ -264,6 +274,7 @@ def watch_searches(
                     f"*⚠️ watch-searches: bad config*\n`{path}`\n```{exc}```",
                     None,
                     False,
+                    None,
                 )
             except Exception:
                 logger.warning("Could not post the config error to Slack", exc_info=True)
@@ -414,7 +425,7 @@ def _run_locked(
 
     if failures and not dry_run:
         try:
-            post(_failure_channel(), fmt.format_run_summary(failures), None, False)
+            post(_failure_channel(), fmt.format_run_summary(failures), None, False, None)
         except Exception:
             logger.warning("Could not post failure summary to Slack", exc_info=True)
 

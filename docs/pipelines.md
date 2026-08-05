@@ -172,6 +172,9 @@ All three follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
 
 ### `pipelines/watch_searches.py` (CLI: `watch-searches`)
 
+Setup, YAML reference and tuning workflow live in [search.md](search.md); this
+section covers the internals.
+
 **YAML-defined eBay searches → Slack.** One cron entry runs the command every
 few minutes; each search's own `interval` plus a stored `last_run_at` decides
 which actually fire, so adding a search means editing YAML and nothing else.
@@ -216,10 +219,12 @@ durable log, which the append buffer retries next run.
 
 **Slack shape.** One parent message per search *that has hits* (a "0 new" post
 every interval would drown the channel), with listings as thread replies capped
-at `max_notify` and an explicit overflow line. Replies are plain mrkdwn with a
-bare URL on the last line and `unfurl_links=True` — `slack_formatting.table()`
-is deliberately unused because URLs inside its code fence are neither clickable
-nor unfurled.
+at `max_notify` and an explicit overflow line. Each reply is a Block Kit
+`section` + `image` pair — mrkdwn detail plus the listing photo at 500px — so
+the picture doesn't depend on Slack's link unfurler; listings with no photo fall
+back to a bare URL and `unfurl_links=True`. `slack_formatting.table()` is
+deliberately unused because URLs inside its code fence are neither clickable nor
+unfurled.
 
 ---
 

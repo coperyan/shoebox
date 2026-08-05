@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
@@ -109,6 +110,26 @@ class ItemSummary(Model):
             if opt.shipping_cost and opt.shipping_cost.decimal == Decimal("0"):
                 return True
         return False
+
+    def thumbnail(self, size: int | None = None) -> str | None:
+        """Best available image URL, or None when the listing has no picture.
+
+        ``thumbnail_images`` is preferred over ``image`` only because eBay
+        populates it more consistently in Browse search results.
+
+        ``size`` rewrites the ``s-l<n>`` segment eBay embeds in the path. The
+        default thumbnail is 225px -- fine as a chat avatar, mushy as a picture
+        of a card -- and every size is served off the same CDN path, so asking
+        for a bigger one costs no extra API call.
+        """
+        url = None
+        if self.thumbnail_images:
+            url = self.thumbnail_images[0].image_url
+        elif self.image:
+            url = self.image.image_url
+        if not url or size is None:
+            return url
+        return re.sub(r"/s-l\d+\.", f"/s-l{size}.", url)
 
     @property
     def is_auction(self) -> bool:

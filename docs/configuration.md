@@ -136,7 +136,8 @@ current-year default → `default`.
 
 ## Saved searches (`configs/searches.yaml`)
 
-Definitions for the [`watch-searches`](cli.md#watch-searches) watcher. **This
+Definitions for the [`watch-searches`](cli.md#watch-searches) watcher; the
+feature as a whole is documented in [search.md](search.md). **This
 file is gitignored** — the repo is public and your buy criteria, price ceilings
 and blocked sellers are not. The committed template is
 `configs/searches.example.yml`.

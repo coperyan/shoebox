@@ -4,8 +4,12 @@ Deliberately *not* using ``slack_formatting.table``: it renders inside a fenced
 code block, and Slack neither linkifies nor unfurls URLs there — which would
 defeat the entire point of an alert you want to click through.
 
-Each item reply ends with a bare URL on its own line so Slack can attach a
-preview (requires ``unfurl_links=True`` at the call site).
+Item replies carry the listing photo as a Block Kit ``image`` block. Relying on
+Slack's link unfurl instead would be leaving the most useful part of a card
+alert to chance: whether a preview appears at all depends on eBay's OG tags and
+Slack's crawler, and neither is under our control. Unfurling stays as the
+fallback for the rare listing with no photo, and that path is the only reason
+``format_item`` still emits a bare URL.
 
 Pure functions: no I/O.
 """
@@ -13,6 +17,7 @@ Pure functions: no I/O.
 from __future__ import annotations
 
 from decimal import Decimal
+from typing import NamedTuple
 
 from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch
@@ -20,6 +25,13 @@ from ..transforms.search_filters import cheapest_shipping
 
 # Slack renders long titles poorly in a thread; eBay titles run to 80 chars.
 MAX_TITLE_CHARS = 90
+
+# Slack downscales anything wider than the message column, so a larger fetch is
+# just wasted bytes -- 500px is the sharpest size that isn't.
+IMAGE_SIZE_PX = 500
+
+# Slack's own cap is 2000; a truncated eBay title is a perfectly good alt text.
+MAX_ALT_TEXT_CHARS = 200
 
 
 def truncate_title(title: str, limit: int = MAX_TITLE_CHARS) -> str:
@@ -71,8 +83,18 @@ def format_parent(search: ResolvedSearch, new_count: int) -> str:
     return f"*🔎 {search.name}* — {new_count} new listing{plural}\n_{' · '.join(bits)}_"
 
 
-def format_item(item: ItemSummary, search: ResolvedSearch) -> str:
-    """One thread reply per listing."""
+def format_item(
+    item: ItemSummary,
+    search: ResolvedSearch,
+    *,
+    include_bare_url: bool = True,
+) -> str:
+    """One thread reply per listing.
+
+    ``include_bare_url`` appends the URL on its own line, which is what lets
+    Slack unfurl it. Turn it off when an image block already carries the photo:
+    the trailing URL would then be duplicated noise in the push notification.
+    """
     title = truncate_title(_escape_mrkdwn_link_text(item.title or "(untitled)"))
     url = item.item_web_url or ""
 
@@ -105,10 +127,43 @@ def format_item(item: ItemSummary, search: ResolvedSearch) -> str:
     lines = [headline, " · ".join(price_bits)]
     if meta:
         lines.append(" · ".join(meta))
-    if url:
+    if url and include_bare_url:
         # Bare, on its own line, so Slack can unfurl a preview.
         lines.append(url)
     return "\n".join(lines)
+
+
+class ItemMessage(NamedTuple):
+    """Everything needed to post one item reply.
+
+    Bundled rather than returned piecemeal so the image-or-unfurl decision stays
+    here, in the pure layer, instead of being re-derived at every call site.
+    """
+
+    text: str  # notification + fallback text
+    blocks: list[dict] | None  # None => plain text message
+    unfurl_links: bool
+
+
+def build_item_message(item: ItemSummary, search: ResolvedSearch) -> ItemMessage:
+    """Render a listing as a photo-carrying message, or fall back to unfurling."""
+    image_url = item.thumbnail(IMAGE_SIZE_PX)
+    if not image_url:
+        # No photo to show, so let Slack try the link preview -- it's the only
+        # shot at an image for this listing.
+        return ItemMessage(format_item(item, search), None, True)
+
+    text = format_item(item, search, include_bare_url=False)
+    blocks = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": text}},
+        {
+            "type": "image",
+            "image_url": image_url,
+            "alt_text": (item.title or "listing photo")[:MAX_ALT_TEXT_CHARS],
+        },
+    ]
+    # Unfurling off: the photo is already here, and the title link is enough.
+    return ItemMessage(text, blocks, False)
 
 
 def format_overflow(total_new: int, shown: int, search: ResolvedSearch) -> str:

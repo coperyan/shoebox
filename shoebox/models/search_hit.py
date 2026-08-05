@@ -104,11 +104,6 @@ class SearchHit(Model):
         from ..transforms.search_filters import cheapest_shipping
 
         item_id = item.item_id or ""
-        thumbnail = None
-        if item.thumbnail_images:
-            thumbnail = item.thumbnail_images[0].image_url
-        elif item.image:
-            thumbnail = item.image.image_url
 
         return cls(
             run_id=run_id,
@@ -124,7 +119,8 @@ class SearchHit(Model):
             slack_parent_ts=slack_parent_ts,
             title=item.title,
             item_web_url=item.item_web_url,
-            thumbnail_url=thumbnail,
+            # Stored at eBay's native size; the Slack renderer asks for its own.
+            thumbnail_url=item.thumbnail(),
             item_origin_date=item.item_origin_date,
             last_price=item.price_decimal,
             last_price_currency=item.price.currency if item.price else None,

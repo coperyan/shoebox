@@ -28,16 +28,21 @@ Synchronous wrappers (each runs its own event loop; safe to call from plain
 pipeline code):
 
 ```python
-notify(channel, message, thread_ts=None, unfurl_links=False) -> str
+notify(channel, message, thread_ts=None, unfurl_links=False, blocks=None) -> str
 ```
 Posts a message; returns its `ts` so follow-ups can thread under it. Used for
 all fire-and-forget notifications and the threaded order summaries.
 
 `unfurl_links` must be opted into: **bot tokens do not expand text links by
 default**, so a message whose value *is* the link preview gets no preview at
-all unless it's set. The saved-search watcher passes `unfurl_links=True` on its
-item replies to get eBay listing thumbnails. Treat previews as best-effort —
-they depend on eBay's OG tags and Slack fetching them asynchronously.
+all unless it's set. Treat previews as best-effort — they depend on eBay's OG
+tags and Slack fetching them asynchronously, neither of which is under our
+control. When an image matters, send a Block Kit `image` block instead (see
+[Saved-search alerts](#saved-search-alerts)).
+
+`blocks`, when given, becomes the rendered message and `message` is demoted to
+the push-notification and fallback string — so it must still read as a complete
+summary on its own.
 
 ```python
 notify_and_wait(channel, message, timeout_s=600) -> str
@@ -181,12 +186,21 @@ within the same thread.
 parent-plus-thread shape as the order summaries: one parent per search that has
 hits, each new listing as a reply.
 
-Two deliberate differences from the table-based summaries:
+Three deliberate differences from the table-based summaries:
 
 - **No code fences.** `slack_formatting.table()` renders inside a fenced block,
-  and Slack neither linkifies nor unfurls URLs there. Item replies are plain
-  mrkdwn — `*<url|Title>*`, price/condition/seller lines, then the bare URL on
-  its own line so a preview can attach.
+  and Slack neither linkifies nor unfurls URLs there. Item replies are mrkdwn —
+  `*<url|Title>*`, then price/condition/seller lines.
+- **The photo is an image block, not an unfurl.** `build_item_message()` returns
+  a `section` + `image` pair carrying the listing photo, and turns
+  `unfurl_links` off. Leaving the picture to Slack's crawler would make the most
+  useful part of a card alert depend on eBay's OG tags — so the image is
+  requested explicitly instead. eBay serves every size off one CDN path, so
+  `ItemSummary.thumbnail(500)` rewrites the `s-l<n>` segment to get a 500px
+  image at no extra API call; Slack downscales anything larger anyway.
+  A listing with no photo at all falls back to the old behavior — bare URL on
+  its own line plus `unfurl_links=True`, which is its only shot at an image.
+  `--dry-run` flags those listings so you know before the run goes live.
 - **Explicit pacing.** Slack permits roughly one `chat.postMessage` per second
   per channel, and each `notify()` spins up its own event loop. The SDK's
   rate-limit handler only reacts *after* a 429 and gives up after three
