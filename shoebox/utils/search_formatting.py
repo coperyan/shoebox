@@ -16,6 +16,7 @@ Pure functions: no I/O.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import NamedTuple
 
@@ -50,6 +51,78 @@ def _money(value: Decimal | None, currency: str) -> str:
         return "price unknown"
     symbol = "$" if currency == "USD" else f"{currency} "
     return f"{symbol}{value:,.2f}"
+
+
+def _parse_end_date(value: object) -> datetime | None:
+    """eBay sends ``item_end_date`` as an ISO string; ItemSummary keeps it raw."""
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def format_time_left(end: datetime | None, now: datetime | None) -> str | None:
+    """``2d 4h left`` — the one thing that decides whether to act on an auction.
+
+    Returns None when either end is unknown, rather than guessing: a wrong
+    countdown on an auction is worse than none.
+    """
+    if end is None or now is None:
+        return None
+
+    seconds = int((end - now).total_seconds())
+    if seconds <= 0:
+        return "ending now"
+    if seconds < 60:
+        return "<1m left"
+
+    days, rest = divmod(seconds, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes = rest // 60
+    if days:
+        return f"{days}d {hours}h left"
+    if hours:
+        return f"{hours}h {minutes}m left"
+    return f"{minutes}m left"
+
+
+def _price_note(item: ItemSummary, now: datetime | None) -> str | None:
+    """The qualifier that sits next to the price.
+
+    Slack mrkdwn has no font-size control — italics is the only way to make this
+    read as secondary to the number it follows.
+    """
+    if item.is_auction:
+        return format_time_left(_parse_end_date(item.item_end_date), now)
+    if "BEST_OFFER" in item.buying_options:
+        return "or Best Offer"
+    return None
+
+
+def _shipping_line(item: ItemSummary, search: ResolvedSearch) -> str | None:
+    """Shipping gets its own line: it is a second number, and reading two
+    amounts separated by a dot invites misreading one as the other."""
+    if item.free_shipping:
+        return "Free shipping"
+    shipping = cheapest_shipping(item)
+    if shipping is not None:
+        return f"+{_money(shipping, search.currency)} shipping"
+    return None
+
+
+def _seller_line(item: ItemSummary) -> str | None:
+    if not (item.seller and item.seller.username):
+        return None
+    score = item.seller.feedback_score
+    seller = f"`{item.seller.username}`"
+    if score is not None:
+        seller += f" ({score:,})"
+    return f"seller {seller}"
 
 
 def format_interval(delta) -> str:
@@ -88,12 +161,21 @@ def format_item(
     search: ResolvedSearch,
     *,
     include_bare_url: bool = True,
+    now: datetime | None = None,
 ) -> str:
     """One thread reply per listing.
+
+    Four lines: title, price, shipping, seller. Each is one fact, because the
+    single dot-joined line this replaced made a $4.99 shipping cost read as part
+    of the price.
 
     ``include_bare_url`` appends the URL on its own line, which is what lets
     Slack unfurl it. Turn it off when an image block already carries the photo:
     the trailing URL would then be duplicated noise in the push notification.
+
+    ``now`` is the run timestamp, used for the auction countdown. Passed in
+    rather than read from the clock so this stays a pure function; omitting it
+    just drops the countdown.
     """
     title = truncate_title(_escape_mrkdwn_link_text(item.title or "(untitled)"))
     url = item.item_web_url or ""
@@ -108,25 +190,14 @@ def format_item(
 
     price_bits.append("Auction" if item.is_auction else "Buy It Now")
 
-    shipping = cheapest_shipping(item)
-    if item.free_shipping:
-        price_bits.append("Free shipping")
-    elif shipping is not None:
-        price_bits.append(f"+{_money(shipping, search.currency)} ship")
-
-    meta: list[str] = []
-    if item.condition:
-        meta.append(item.condition)
-    if item.seller and item.seller.username:
-        score = item.seller.feedback_score
-        seller = f"`{item.seller.username}`"
-        if score is not None:
-            seller += f" ({score:,})"
-        meta.append(f"seller {seller}")
+    note = _price_note(item, now)
+    if note:
+        price_bits.append(f"_{note}_")
 
     lines = [headline, " · ".join(price_bits)]
-    if meta:
-        lines.append(" · ".join(meta))
+    for line in (_shipping_line(item, search), _seller_line(item)):
+        if line:
+            lines.append(line)
     if url and include_bare_url:
         # Bare, on its own line, so Slack can unfurl a preview.
         lines.append(url)
@@ -145,15 +216,19 @@ class ItemMessage(NamedTuple):
     unfurl_links: bool
 
 
-def build_item_message(item: ItemSummary, search: ResolvedSearch) -> ItemMessage:
+def build_item_message(
+    item: ItemSummary, search: ResolvedSearch, *, now: datetime | None = None
+) -> ItemMessage:
     """Render a listing as a photo-carrying message, or fall back to unfurling."""
     image_url = item.thumbnail(IMAGE_SIZE_PX)
     if not image_url:
         # No photo to show, so let Slack try the link preview -- it's the only
-        # shot at an image for this listing.
-        return ItemMessage(format_item(item, search), None, True)
+        # shot at an image for this listing. No divider either: adding blocks
+        # here would put the URL inside one, and the unfurl this path exists for
+        # keys off the bare URL in the message text.
+        return ItemMessage(format_item(item, search, now=now), None, True)
 
-    text = format_item(item, search, include_bare_url=False)
+    text = format_item(item, search, include_bare_url=False, now=now)
     blocks = [
         {"type": "section", "text": {"type": "mrkdwn", "text": text}},
         {
@@ -161,6 +236,9 @@ def build_item_message(item: ItemSummary, search: ResolvedSearch) -> ItemMessage
             "image_url": image_url,
             "alt_text": (item.title or "listing photo")[:MAX_ALT_TEXT_CHARS],
         },
+        # Trailing rule: a photo-per-reply thread runs together otherwise, and
+        # the eye needs a boundary to know where one listing stops.
+        {"type": "divider"},
     ]
     # Unfurling off: the photo is already here, and the title link is enough.
     return ItemMessage(text, blocks, False)

@@ -156,7 +156,8 @@ def run_one_search(
                 )
                 for item in seed_shown:
                     logger.info(
-                        "[dry-run] %s", fmt.format_item(item, search, include_bare_url=False)
+                        "[dry-run] %s",
+                        fmt.format_item(item, search, include_bare_url=False, now=now),
                     )
             else:
                 # A silent seed posts nothing per-item, so without a sample here
@@ -175,7 +176,7 @@ def run_one_search(
         for index, item in enumerate(seed_shown):
             if index:
                 time.sleep(pacing_seconds)
-            message = fmt.build_item_message(item, search)
+            message = fmt.build_item_message(item, search, now=now)
             post(channel, message.text, parent_ts, message.unfurl_links, message.blocks)
             store.append_seen(search.name, [_entry(item, notified=True)])
             store.append_hits(
@@ -208,7 +209,9 @@ def run_one_search(
     if dry_run:
         logger.info("[dry-run] %s", fmt.format_parent(search, len(fresh)))
         for item in fresh[: search.max_notify]:
-            logger.info("[dry-run] %s", fmt.format_item(item, search, include_bare_url=False))
+            logger.info(
+                "[dry-run] %s", fmt.format_item(item, search, include_bare_url=False, now=now)
+            )
             if not item.thumbnail():
                 # Worth knowing before the run goes live: this one gets no photo.
                 logger.info("[dry-run]   (no image — will fall back to link unfurl)")
@@ -222,7 +225,7 @@ def run_one_search(
     for index, item in enumerate(shown):
         if index:
             time.sleep(pacing_seconds)
-        message = fmt.build_item_message(item, search)
+        message = fmt.build_item_message(item, search, now=now)
         post(channel, message.text, parent_ts, message.unfurl_links, message.blocks)
         # Committed immediately, so a crash costs at most this one duplicate.
         store.append_seen(search.name, [_entry(item, notified=True)])

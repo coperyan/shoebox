@@ -224,9 +224,12 @@ durable log, which the append buffer retries next run.
 **Slack shape.** One parent message per search *that has hits* (a "0 new" post
 every interval would drown the channel), with listings as thread replies capped
 at `max_notify` and an explicit overflow line. Each reply is a Block Kit
-`section` + `image` pair — mrkdwn detail plus the listing photo at 500px — so
-the picture doesn't depend on Slack's link unfurler; listings with no photo fall
-back to a bare URL and `unfurl_links=True`. `slack_formatting.table()` is
+`section` + `image` + `divider` — mrkdwn detail (title, price with an italic
+auction countdown or Best Offer marker, shipping on its own line, seller) plus
+the listing photo at 500px and a closing rule — so the picture doesn't depend on
+Slack's link unfurler. Listings with no photo fall back to a bare URL and
+`unfurl_links=True`, without a divider, since the unfurl needs the URL in the
+message text rather than inside a block. `slack_formatting.table()` is
 deliberately unused because URLs inside its code fence are neither clickable nor
 unfurled.
 

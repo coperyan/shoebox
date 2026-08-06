@@ -297,7 +297,7 @@ class TestOrdering:
         channel, text, thread_ts, unfurl, blocks = post.replies[0]
         # The photo is explicit, so nothing is left to Slack's crawler.
         assert unfurl is False
-        assert [b["type"] for b in blocks] == ["section", "image"]
+        assert [b["type"] for b in blocks] == ["section", "image", "divider"]
         assert blocks[1]["image_url"].endswith("/s-l500.jpg")
         assert blocks[1]["alt_text"] == "Michael Jordan Rookie"
         # Fallback text stays a complete summary, minus the now-redundant URL.

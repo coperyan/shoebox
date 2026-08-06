@@ -408,12 +408,31 @@ every interval would drown the channel:
 $25.00–$200.00 · Buy It Now · every 15m
 ```
 
-**One thread reply per listing**, capped at `max_notify`: a Block Kit `section`
-(linked title, price or current bid, Buy It Now/Auction, shipping, condition,
-seller + feedback) plus an `image` block with the listing photo at 500px.
+**One thread reply per listing**, capped at `max_notify` — a Block Kit
+`section`, an `image` block with the listing photo at 500px, and a `divider`
+closing the card:
+
+```
+2026 Topps Tribute Crest Calligraphy Barry Zito Auto Blue /150
+$59.99 (bid) · Auction · 8d 13h left
++$5.98 shipping
+seller `cmcardshop` (330)
+[photo]
+────────────────────────────
+```
+
+One fact per line. Shipping sits below the price rather than beside it, because
+two amounts dot-separated on one line invite reading the second as the first;
+the line is omitted entirely when eBay quotes no shipping. The qualifier next to
+the price is italic — Slack mrkdwn has no font-size control, so italics is the
+only way to mark it as secondary — and reads `8d 13h left` on an auction (from
+`item_end_date`, omitted when eBay doesn't send one) or `or Best Offer` on a
+fixed-price listing that accepts offers.
+
 Carrying the photo ourselves means the picture doesn't depend on eBay's OG tags
-and Slack's crawler; listings with no photo fall back to a bare URL with
-unfurling on.
+and Slack's crawler. Listings with **no** photo fall back to a bare URL with
+unfurling on, and get no divider: blocks would put the URL inside one, and the
+unfurl that path exists for keys off the URL being in the message text.
 
 **Overflow line** when `max_notify` truncates, so nothing disappears quietly:
 
