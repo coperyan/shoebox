@@ -211,6 +211,59 @@ class TestValidation:
         ).resolved()[0]
         assert r.query is None
 
+    def test_category_ids_inherit_from_defaults(self):
+        # A file usually searches one category; repeating it per search is the
+        # duplication that eventually disagrees with itself.
+        f = SearchesFile(
+            version=1,
+            defaults={"category_ids": ["261328"]},
+            searches=[{"name": "s1", "query": "jordan"}],
+        )
+        assert f.resolved()[0].category_ids == ["261328"]
+
+    def test_search_overrides_inherited_category(self):
+        f = SearchesFile(
+            version=1,
+            defaults={"category_ids": ["261328"]},
+            searches=[{"name": "s1", "query": "jordan", "category_ids": ["212"]}],
+        )
+        assert f.resolved()[0].category_ids == ["212"]
+
+    def test_empty_list_opts_out_of_an_inherited_category(self):
+        # [] is "no category filter", not "inherit" -- same rule as every other
+        # inheritable list.
+        f = SearchesFile(
+            version=1,
+            defaults={"category_ids": ["261328"]},
+            searches=[{"name": "s1", "query": "jordan", "category_ids": []}],
+        )
+        assert f.resolved()[0].category_ids == []
+
+    def test_multiple_category_ids_in_defaults_rejected(self):
+        with pytest.raises(ValidationError, match="only one category ID"):
+            SearchesFile(
+                version=1,
+                defaults={"category_ids": ["261328", "212"]},
+                searches=[{"name": "s1", "query": "jordan"}],
+            )
+
+    def test_inherited_category_satisfies_aspects(self):
+        # aspects need exactly one category; inheriting one has to count.
+        f = SearchesFile(
+            version=1,
+            defaults={"category_ids": ["261328"]},
+            searches=[{"name": "s1", "query": "jordan", "aspects": {"Grade": ["10"]}}],
+        )
+        assert f.resolved()[0].aspects == {"Grade": ["10"]}
+
+    def test_inherited_category_satisfies_query_or_category_rule(self):
+        f = SearchesFile(
+            version=1,
+            defaults={"category_ids": ["261328"]},
+            searches=[{"name": "s1"}],
+        )
+        assert f.resolved()[0].query is None
+
     def test_empty_buying_options_rejected(self):
         # An empty list would make eBay silently return FIXED_PRICE only.
         with pytest.raises(ValidationError, match="silently hide every auction"):

@@ -211,7 +211,7 @@ destination.
 |---|---|
 | `name` | **Required.** `^[a-z0-9][a-z0-9_-]{0,63}$` — used as a filename for the seen-cache and as part of the dedup key |
 | `query` | Max 100 chars (eBay truncates beyond that); `*` wildcards are rejected. Space-separated terms are AND; `(a, b)` is OR |
-| `category_ids` | A list, but eBay accepts **exactly one** per request. An L1 category also requires a `query` |
+| `category_ids` | A list, but eBay accepts **exactly one** per request. An L1 category also requires a `query`. The one identity-ish key that **is inheritable** — put it under `defaults:` when the whole file searches one category; `[]` on a search opts out of an inherited one |
 | `price` | `{min, max}`; at least one bound, non-negative, `min ≤ max` |
 | `aspects` | `{Aspect: [values]}`. Requires exactly one `category_ids` — eBay's `aspect_filter` must repeat the category ID inside the filter string. Discover the valid names and values with [`search-aspects`](cli.md#search-aspects) |
 

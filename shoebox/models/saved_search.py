@@ -116,12 +116,32 @@ class PriceRange(_ConfigModel):
         return self
 
 
+def _check_single_category(v: list[str] | None) -> list[str] | None:
+    """eBay Browse accepts one category per request; more is a config error.
+
+    Shared by ``SearchDefaults`` and ``SavedSearch`` so the failure names the
+    exact key (``defaults.category_ids`` vs ``searches.2.category_ids``) instead
+    of surfacing after the merge with no location.
+    """
+    if v is not None and len(v) > 1:
+        raise ValueError(
+            "eBay Browse accepts only one category ID per request "
+            f"(got {len(v)}); split this into separate searches"
+        )
+    return v
+
+
 class SearchDefaults(_ConfigModel):
     """Inheritable defaults. Scalars and flat lists only — no nested ``filters``
     block, because deep-merge semantics are ambiguous and every reader would
     guess differently."""
 
     enabled: bool = True
+    # Inheritable because a file usually searches one category (261328 for card
+    # singles), and repeating it on every search is the kind of duplication that
+    # eventually disagrees with itself. A search may override it; `[]` there
+    # means "no category", not "inherit".
+    category_ids: list[str] = Field(default_factory=list)
     interval: Interval = timedelta(minutes=30)
     sort: SortValue = "newlyListed"
     max_results: int = Field(default=200, ge=1)
@@ -159,6 +179,11 @@ class SearchDefaults(_ConfigModel):
 
     prune_seen_after_days: int = Field(default=90, ge=1)
 
+    @field_validator("category_ids")
+    @classmethod
+    def _check_category_ids(cls, v: list[str]) -> list[str]:
+        return _check_single_category(v)
+
 
 # Every field a search may inherit from defaults.
 _INHERITABLE = tuple(SearchDefaults.model_fields)
@@ -169,11 +194,13 @@ class SavedSearch(_ConfigModel):
 
     name: str
     query: str | None = None
-    category_ids: list[str] = Field(default_factory=list)
     price: PriceRange | None = None
     aspects: dict[str, list[str]] = Field(default_factory=dict)
 
     enabled: bool | None = None
+    # None inherits defaults.category_ids; [] means "no category filter" even
+    # when the defaults set one.
+    category_ids: list[str] | None = None
     interval: Interval | None = None
     sort: SortValue | None = None
     max_results: int | None = Field(default=None, ge=1)
@@ -223,13 +250,8 @@ class SavedSearch(_ConfigModel):
 
     @field_validator("category_ids")
     @classmethod
-    def _check_category_ids(cls, v: list[str]) -> list[str]:
-        if len(v) > 1:
-            raise ValueError(
-                "eBay Browse accepts only one category ID per request "
-                f"(got {len(v)}); split this into separate searches"
-            )
-        return v
+    def _check_category_ids(cls, v: list[str] | None) -> list[str] | None:
+        return _check_single_category(v)
 
 
 class ResolvedSearch(_ConfigModel):
@@ -375,10 +397,11 @@ class SearchesFile(_ConfigModel):
         """Merge defaults into each search."""
         out: list[ResolvedSearch] = []
         for search in self.searches:
+            # Only the non-inheritable identity fields; everything in
+            # _INHERITABLE (category_ids included) is merged by the loop below.
             merged: dict[str, Any] = {
                 "name": search.name,
                 "query": search.query,
-                "category_ids": search.category_ids,
                 "price": search.price,
                 "aspects": search.aspects,
             }

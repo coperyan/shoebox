@@ -167,11 +167,17 @@ channel you route to.
 |---|---|
 | `name` | **Required.** `^[a-z0-9][a-z0-9_-]{0,63}$`. Used as the seen-cache filename and as part of the dedup key, so renaming a search re-seeds it |
 | `query` | Max 100 chars (eBay truncates `q` beyond that); `*` wildcards rejected. Space-separated terms are AND; `(a, b)` is OR |
-| `category_ids` | A list, but eBay Browse accepts **exactly one** per request. Split anything wider into separate searches |
+| `category_ids` | A list, but eBay Browse accepts **exactly one** per request. Split anything wider into separate searches. **Inheritable** — set it once under `defaults:` when a whole file searches one category; a search overrides it, and `[]` there means "no category filter" rather than "inherit" |
 | `price` | `{min, max}` — at least one bound, non-negative, `min ≤ max`. Emits `priceCurrency` automatically |
 | `aspects` | `{Aspect: [values]}` — see [Aspects](#aspects). Requires exactly one `category_ids` |
 
-At least one of `query` or `category_ids` must be present.
+At least one of `query` or `category_ids` must be present — counted after the
+merge, so a query-only search is fine when `defaults:` supplies the category.
+The same goes for `aspects`, which needs exactly one category: an inherited one
+counts.
+
+`name`, `query`, `price` and `aspects` are the fields that cannot be inherited;
+everything else in this document can live under `defaults:`.
 
 ### Scheduling and volume
 

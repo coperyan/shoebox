@@ -30,6 +30,12 @@ channels:
 defaults:
   enabled: true
 
+  # eBay allows exactly ONE category per request. Most files search a single
+  # category, so set it once here; a search may override it, and [] there means
+  # "no category filter" rather than "inherit".
+  # 261328 = Sports Trading Cards -> Singles.
+  category_ids: ["261328"]
+
   # <number><unit>, unit is s|m|h|d. Minimum 60s. Bare numbers are rejected
   # (is "15" seconds or minutes?). This is the *minimum* age before a search
   # runs again -- actual cadence is also bounded by how often cron fires.
@@ -108,7 +114,6 @@ searches:
   # lowercase letters, digits, '_' and '-' only.
   - name: jordan_psa10_bin
     query: "michael jordan psa 10" # max 100 chars, no '*' wildcard
-    category_ids: ["261328"] # eBay allows exactly ONE per request
     interval: 15m
     price:
       min: 25
@@ -121,7 +126,8 @@ searches:
 
   - name: cheap_vintage_auctions
     query: "1986 fleer basketball"
-    category_ids: ["261328"]
+    # Overrides the inherited default; [] would mean "search every category".
+    category_ids: ["213"]
     interval: 1h
     buying_options: [AUCTION]
     sort: endingSoonest
@@ -131,10 +137,10 @@ searches:
     channel: high_value # per-search override, by alias
 
   # Aspect filters require exactly one category_id -- eBay's aspect_filter has
-  # to repeat the category ID inside the filter string.
+  # to repeat the category ID inside the filter string. The inherited default
+  # counts, so there is nothing to repeat here.
   - name: graded_chrome_autos
     query: "topps chrome auto"
-    category_ids: ["261328"]
     interval: 2h
     enabled: false
     aspects:
