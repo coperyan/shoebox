@@ -9,7 +9,8 @@ Access pattern throughout the codebase:
 
 ```python
 from shoebox.settings import get_settings
-settings = get_settings()          # cached singleton; no side effects
+
+settings = get_settings()  # cached singleton; no side effects
 settings.slack.notify_channel
 ```
 
@@ -199,6 +200,7 @@ destination.
 | `max_results` | `200` | Items fetched per poll. One Browse call returns up to 200 |
 | `seed_max_results` | `2000` | Items fetched on the silent first run. Must be ≥ `max_results` — anything matching but not seeded surfaces later as a false "new listing" |
 | `max_notify` | `10` | Cap on Slack thread replies per run. Slack permits ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
+| `notify_on_seed` | `false` | Post the first `max_notify` matches when the search seeds, rather than only the confirmation line. Applies to a first-ever seed and to `--reseed`; the automatic recovery seeds (lost cache, long-idle search) stay silent either way. See [search.md](search.md#seeing-the-initial-results) |
 | `enabled` | `true` | |
 | `channel` | `null` | Slack channel ID; falls back to `slack.search_channel` |
 | `prune_seen_after_days` | `90` | Seen-cache entries older than this are dropped at end of run |

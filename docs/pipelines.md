@@ -196,7 +196,10 @@ Per run:
    — most runs find nothing, which keeps load jobs to a handful per day.
 
 **Seeding.** A search's first run records every current match and posts a single
-confirmation line — no per-item alerts. The same silent re-seed happens when the
+confirmation line — no per-item alerts, unless `notify_on_seed: true`, which
+also posts the first `max_notify` matches (first-ever seed and `--reseed` only;
+the recovery seeds below stay silent, since suppressing stale alerts is their
+whole purpose). The same silent re-seed happens when the
 seen-cache is lost (`search_state.json` and the `*_seen.jsonl` caches are
 separate files, so `rm exports/jsonl/*.jsonl` leaves the state claiming
 "seeded") or when a search has been idle for more than 6× its interval. A search

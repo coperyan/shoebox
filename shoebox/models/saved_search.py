@@ -131,6 +131,11 @@ class SearchDefaults(_ConfigModel):
     # Slack allows ~1 message/sec/channel, so this is a time budget as much as a
     # noise budget. Overflow is summarized, never silently dropped.
     max_notify: int = Field(default=10, ge=1)
+    # Post the first max_notify matches when a search seeds, instead of only the
+    # one-line confirmation. Applies to a first-ever seed and to an explicit
+    # --reseed; the automatic recovery re-seeds (lost cache, long-idle search)
+    # stay silent, since those exist precisely to avoid alerting on stale hits.
+    notify_on_seed: bool = False
     channel: str | None = None
 
     currency: str = "USD"
@@ -174,6 +179,7 @@ class SavedSearch(_ConfigModel):
     max_results: int | None = Field(default=None, ge=1)
     seed_max_results: int | None = Field(default=None, ge=1)
     max_notify: int | None = Field(default=None, ge=1)
+    notify_on_seed: bool | None = None
     channel: str | None = None
 
     currency: str | None = None
@@ -241,6 +247,7 @@ class ResolvedSearch(_ConfigModel):
     max_results: int
     seed_max_results: int
     max_notify: int
+    notify_on_seed: bool
     channel: str | None
 
     currency: str

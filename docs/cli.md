@@ -148,7 +148,7 @@ internals.
 | `--force` | Ignore intervals; run every enabled search now |
 | `--dry-run` | Log what *would* be posted. No Slack, no state writes, no GCS/BigQuery |
 | `--only NAME` | Restrict to one search (repeatable). Still interval-gated unless combined with `--force` |
-| `--reseed NAME` | Discard that search's seen-cache and silently re-seed (repeatable) |
+| `--reseed NAME` | Discard that search's seen-cache and re-seed it (repeatable). Combine with `--dry-run` to rehearse one — the cache is left intact |
 | `--config PATH` | Override `paths.searches_file` |
 | `--no-flush` | Skip the GCS/BigQuery flush this run |
 | `--list` | Validate the config and list searches; run nothing |
@@ -158,6 +158,12 @@ single confirmation line is posted, but no per-item alerts. Only listings that
 appear afterwards alert. The same silent re-seed happens if the seen-cache is
 lost or a search has been idle for more than 6× its interval — in both cases the
 matches are stale and alerting on them would just be noise.
+
+To see a new search's existing inventory rather than only its future listings,
+set `notify_on_seed: true` on it: the seed then also posts its first
+`max_notify` matches. That applies to a first-ever seed and to `--reseed`, never
+to the two recovery re-seeds above. See
+[search.md](search.md#seeing-the-initial-results).
 
 ### `preview-search`
 Shows **every** listing a saved search returns — including the ones your
@@ -186,8 +192,8 @@ It's also importable, which is the better tool for real analysis:
 from shoebox.pipelines.preview_search import preview_search
 
 df = preview_search("matt_cain_autos")
-df[df.passed].sort_values("total_price")        # what would alert, cheapest first
-df[~df.passed].dropped_by.value_counts()        # what the filters are costing
+df[df.passed].sort_values("total_price")  # what would alert, cheapest first
+df[~df.passed].dropped_by.value_counts()  # what the filters are costing
 ```
 
 The frame has one row per listing: `passed`, `dropped_by`, `title`, `price`,

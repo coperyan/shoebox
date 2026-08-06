@@ -183,6 +183,7 @@ At least one of `query` or `category_ids` must be present.
 | `max_results` | `200` | Items fetched per poll. One Browse call returns up to 200, so raising this within that bound costs nothing extra |
 | `seed_max_results` | `2000` | Items fetched on the silent first run. Must be ≥ `max_results` — anything that matches but is not seeded resurfaces later as a false "new listing", so seed wide |
 | `max_notify` | `10` | Cap on Slack thread replies per run. Slack allows ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
+| `notify_on_seed` | `false` | Post the first `max_notify` matches when the search seeds, instead of only the confirmation line — see [Seeing the initial results](#seeing-the-initial-results) |
 | `prune_seen_after_days` | `90` | Seen-cache entries older than this are dropped at the end of a run |
 
 A search's effective cadence is `max(interval, cron period)`, with a 10% grace
@@ -279,8 +280,8 @@ Useful flags: `--rows 0` (print all), `--passed-only`, `--max-results N`,
 from shoebox.pipelines.preview_search import preview_search
 
 df = preview_search("jordan_psa10_bin")
-df[df.passed].sort_values("total_price")     # what would alert, cheapest first
-df[~df.passed].dropped_by.value_counts()     # what each filter is costing you
+df[df.passed].sort_values("total_price")  # what would alert, cheapest first
+df[~df.passed].dropped_by.value_counts()  # what each filter is costing you
 ```
 
 Columns: `passed`, `dropped_by`, `title`, `price`, `shipping`, `total_price`,
@@ -410,6 +411,10 @@ indistinguishable from a broken config:
 🌱 jordan_psa10_bin — seeded with 412 existing listing(s). Future runs alert on new ones only (every 15m).
 ```
 
+With `notify_on_seed: true` that line becomes the parent of a thread carrying
+the first `max_notify` matches — see
+[Seeing the initial results](#seeing-the-initial-results).
+
 **Failure summary**, posted only when something went wrong, plus a separate
 "bad config" message if the YAML fails to load (under cron nobody reads the log).
 
@@ -447,6 +452,43 @@ none of them. It happens when:
 
 Items past the `max_notify` cap are recorded as `notified: false` too. They are
 saved precisely so they never alert; without that they would re-alert forever.
+
+### Seeing the initial results
+
+By default a seed is silent because its job is to establish a baseline, not to
+report one. Set `notify_on_seed: true` (per search, or in `defaults:`) when you
+want a new search to show you what is *already* out there:
+
+```yaml
+searches:
+  - name: barry_zito_autos
+    query: "barry zito auto"
+    notify_on_seed: true
+```
+
+The seed then posts its normal parent line plus the first `max_notify` matches
+as thread replies, identical in shape to a real alert:
+
+```
+🌱 barry_zito_autos — seeded with 412 existing listing(s), showing 10 below. Future runs alert on new ones only (every 15m).
+```
+
+Three things to know:
+
+- **The cap still applies.** A seed fetches `seed_max_results` (2000 by default)
+  to build a complete cache; only the first `max_notify` are posted, in the
+  search's `sort` order — with `newlyListed` that's the most recent. All of them
+  are recorded, so the unshown ones never alert later.
+- **It fires on a first-ever seed and on `--reseed`.** Both are seeds a person
+  asked for and is waiting on output from.
+- **The recovery seeds stay silent regardless.** A lost seen-cache or a search
+  idle for more than 6× its interval re-seeds without posting listings, because
+  those exist to *prevent* an alert storm over listings that are already old.
+  The confirmation line is still posted, so the recovery is visible.
+
+For a one-off look at what a search matches — with the rejected listings and the
+filter that rejected each — use [`preview-search`](#tuning-a-search) instead. It
+writes nothing and doesn't need the search to be seeding.
 
 Already-seen items are refreshed every run so `last_seen_at` and `last_price`
 stay current — that's the seam a future price-drop alert builds on.

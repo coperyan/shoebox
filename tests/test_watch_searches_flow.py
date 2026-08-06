@@ -156,6 +156,76 @@ class TestSeeding:
         assert "itm/a" in post.replies[0][1]
 
 
+class TestNotifyOnSeed:
+    def test_seed_posts_the_initial_matches(self, searches_yaml, store):
+        path = searches_yaml(notify_on_seed=True)
+        post = Recorder()
+        run(path, store, [item("a"), item("b")], post)
+
+        assert len(post.parents) == 1
+        assert "seeded with 2 existing listing(s), all shown below" in post.parents[0][1]
+        assert len(post.replies) == 2
+        posted = " ".join(r[1] for r in post.replies)
+        assert "itm/a" in posted and "itm/b" in posted
+
+    def test_seed_respects_max_notify(self, searches_yaml, store):
+        # A seed fetches seed_max_results, so the cap is what stops it flooding.
+        path = searches_yaml(notify_on_seed=True, max_notify=2)
+        post = Recorder()
+        run(path, store, [item(str(i)) for i in range(5)], post)
+
+        assert len(post.replies) == 2
+        assert "seeded with 5 existing listing(s), showing 2 below" in post.parents[0][1]
+        # Every match still recorded, shown or not.
+        assert len(store.load_seen("s1")) == 5
+
+    def test_notified_seed_items_do_not_realert(self, searches_yaml, store):
+        path = searches_yaml(notify_on_seed=True)
+        items = [item("a"), item("b")]
+        run(path, store, items, Recorder())
+
+        post = Recorder()
+        run(path, store, items, post, force=True)
+        assert post.posts == []
+
+    def test_shown_items_are_recorded_as_notified(self, searches_yaml, store):
+        path = searches_yaml(notify_on_seed=True, max_notify=1)
+        run(path, store, [item("a"), item("b")], Recorder())
+
+        seen = store.load_seen("s1")
+        assert seen["a"].notified is True
+        assert seen["b"].notified is False
+
+    def test_manual_reseed_posts_again(self, searches_yaml, store):
+        path = searches_yaml(notify_on_seed=True)
+        run(path, store, [item("a")], Recorder())
+
+        post = Recorder()
+        run(path, store, [item("a")], post, reseed=["s1"])
+        assert len(post.replies) == 1
+
+    def test_recovery_reseed_stays_silent(self, searches_yaml, store):
+        """A lost cache must not replay the whole result set as alerts.
+
+        notify_on_seed is about seeing a *new* search's inventory; the recovery
+        seeds exist to suppress noise, and outrank the flag.
+        """
+        path = searches_yaml(notify_on_seed=True)
+        run(path, store, [item("a"), item("b")], Recorder())
+        store.clear_seen("s1")
+
+        post = Recorder()
+        run(path, store, [item("a"), item("b")], post, force=True)
+
+        assert post.replies == []
+        assert "seeded with 2 existing listing(s)." in post.parents[0][1]
+
+    def test_off_by_default(self, searches_yaml, store):
+        post = Recorder()
+        run(searches_yaml(), store, [item("a")], post)
+        assert post.replies == []
+
+
 class TestNotifyCap:
     def test_cap_posts_overflow_line_and_records_everything(self, searches_yaml, store):
         path = searches_yaml(max_notify=2)
@@ -392,6 +462,26 @@ class TestDryRun:
         assert post.posts == []
         assert store.load_seen("s1") == {}
         assert store.load_state() == {}
+
+    def test_dry_run_reseed_keeps_the_seen_cache(self, searches_yaml, store, caplog):
+        """Rehearsing a reseed must not perform one.
+
+        Discarding the cache is the most destructive thing the command does, and
+        --dry-run promises no state writes -- but the run must still take the
+        seed path, or there would be nothing to rehearse.
+        """
+        path = searches_yaml()
+        run(path, store, [item("a"), item("b")], Recorder())
+        before = store.load_seen("s1")
+
+        post = Recorder()
+        with caplog.at_level("INFO"):
+            run(path, store, [item("a"), item("b")], post, reseed=["s1"], dry_run=True)
+
+        assert post.posts == []
+        assert store.load_seen("s1").keys() == before.keys()
+        assert store.load_state()["s1"].seeded_at is not None
+        assert "would seed s1 with 2 items" in caplog.text
 
 
 class TestListOnly:

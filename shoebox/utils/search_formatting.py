@@ -177,14 +177,24 @@ def format_overflow(total_new: int, shown: int, search: ResolvedSearch) -> str:
     )
 
 
-def format_seed(search: ResolvedSearch, count: int) -> str:
+def format_seed(search: ResolvedSearch, count: int, *, shown: int = 0) -> str:
     """First-run confirmation.
 
     A fully silent seed is indistinguishable from a broken config, so one line
     goes out — but no per-item spam.
+
+    ``shown`` > 0 means ``notify_on_seed`` is on and this line is the parent of a
+    thread carrying that many of the seeded listings. It states the count both
+    ways, so "412 matched, you are seeing 10" can't be misread as "10 matched".
     """
+    if shown >= count > 0:
+        head = f"seeded with {count} existing listing(s), all shown below"
+    elif shown:
+        head = f"seeded with {count} existing listing(s), showing {shown} below"
+    else:
+        head = f"seeded with {count} existing listing(s)"
     return (
-        f"*🌱 {search.name}* — seeded with {count} existing listing(s). "
+        f"*🌱 {search.name}* — {head}. "
         f"Future runs alert on new ones only (every {format_interval(search.interval)})."
     )
 

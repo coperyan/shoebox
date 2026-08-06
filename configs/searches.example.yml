@@ -55,6 +55,14 @@ defaults:
   # silently dropped, and still recorded so it won't re-alert.
   max_notify: 10
 
+  # false (default): a seed posts one confirmation line and no listings.
+  # true: the seed also posts its first max_notify matches, so a brand-new
+  # search shows you what is already out there instead of only future listings.
+  # Applies to a first-ever seed and to --reseed. The automatic recovery seeds
+  # (lost cache, search idle > 6x its interval) stay silent either way -- those
+  # exist to prevent an alert storm over listings that are already old.
+  notify_on_seed: false
+
   # An alias from the channels: block above, or a literal channel ID.
   # null falls back to slack.search_channel in app.yaml.
   channel: card_alerts

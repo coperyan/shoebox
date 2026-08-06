@@ -100,9 +100,7 @@ class StorePolicySettings(BaseModel):
     payment_policy_id: str = "REPLACE_PAYMENT_POLICY_ID"
     return_policy_id: str = "REPLACE_RETURN_POLICY_ID"
     # Single-card listings pick a fulfillment policy by price:
-    fulfillment_policy_id_low: str = (
-        "REPLACE_FULFILLMENT_POLICY_ID_LOW"  # <= low_max_price
-    )
+    fulfillment_policy_id_low: str = "REPLACE_FULFILLMENT_POLICY_ID_LOW"  # <= low_max_price
     fulfillment_policy_id_high: str = "REPLACE_FULFILLMENT_POLICY_ID_HIGH"  # above it
     # "You Pick" / multi-variation listings use their own (e.g. free-shipping) policy:
     fulfillment_policy_id_variation: str = "REPLACE_FULFILLMENT_POLICY_ID_VARIATION"
@@ -142,15 +140,11 @@ class StoreSettings(BaseModel):
     # Item condition descriptor
     condition_descriptor: str = "NEAR_MINT_OR_BETTER"
     # Message attached to seller-initiated best offers (negotiation API).
-    offer_message: str = (
-        "Enjoy the discount on this card! Valid for the next 24 hours. Thank you!"
-    )
+    offer_message: str = "Enjoy the discount on this card! Valid for the next 24 hours. Thank you!"
     # Price threshold separating the low/high fulfillment policies.
     fulfillment_low_max_price: float = 19.99
     policies: StorePolicySettings = Field(default_factory=StorePolicySettings)
-    ad_campaigns: StoreAdCampaignSettings = Field(
-        default_factory=StoreAdCampaignSettings
-    )
+    ad_campaigns: StoreAdCampaignSettings = Field(default_factory=StoreAdCampaignSettings)
 
 
 class Settings(BaseModel):

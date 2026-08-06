@@ -38,21 +38,17 @@ def sync_active_listing_details():
             logger.info("Completed listing %d of %d", ctr, len(active_listings))
 
     for d in details:
-        d["start_time"] = datetime.fromisoformat(d["start_time"]).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        d["start_time"] = datetime.fromisoformat(d["start_time"]).strftime("%Y-%m-%dT%H:%M:%SZ")
         d["file_date"] = now_str
 
-    write_jsonl(
-        Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl", details
-    )
+    write_jsonl(Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl", details)
 
     gcs_client.upload_text(
         bucket=settings.gcs.ebay_bucket,
         object_name=f"logs/active_listing_details/active_listing_details_{now_file}.jsonl",
-        text=(
-            Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl"
-        ).read_text("utf-8"),
+        text=(Path(settings.paths.exports_dir) / "jsonl/active_listing_details.jsonl").read_text(
+            "utf-8"
+        ),
         content_type="application/json",
     )
     bq_client.load_jsonl_from_gcs(

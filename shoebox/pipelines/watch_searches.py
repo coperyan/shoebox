@@ -115,6 +115,7 @@ def run_one_search(
     post: PostFn,
     channel: str,
     seed: bool,
+    notify_seed: bool = False,
     dry_run: bool = False,
     pacing_seconds: float = SLACK_PACING_SECONDS,
 ) -> SearchRunResult:
@@ -140,19 +141,59 @@ def run_one_search(
     def _hit(item: ItemSummary, **kw) -> SearchHit:
         return SearchHit.from_item(item, search_name=search.name, run_id=run_id, hit_at=now, **kw)
 
-    # ---- Seed: record everything, alert nothing -------------------------
+    # ---- Seed: record everything; alert nothing unless notify_on_seed ----
     if seed:
-        if not dry_run:
-            store.append_seen(search.name, [_entry(i, notified=False) for i in items])
-            store.append_hits([_hit(i, is_seed=True) for i in items])
-            # One line, so a working config is distinguishable from a broken one.
-            post(channel, fmt.format_seed(search, len(items)), None, False, None)
-        else:
-            # A seed posts nothing per-item, so without a sample here --dry-run
-            # would print a bare count -- useless for the thing it exists for,
-            # which is eyeballing whether the filters are actually right.
+        # Only ever the first max_notify: a seed fetches seed_max_results (2000
+        # by default) to build a complete cache, and posting that would be a
+        # channel flood, not an alert.
+        seed_shown = items[: search.max_notify] if notify_seed else []
+
+        if dry_run:
             logger.info("[dry-run] would seed %s with %d items", search.name, len(items))
-            _log_sample(items, search)
+            if notify_seed:
+                logger.info(
+                    "[dry-run] %s", fmt.format_seed(search, len(items), shown=len(seed_shown))
+                )
+                for item in seed_shown:
+                    logger.info(
+                        "[dry-run] %s", fmt.format_item(item, search, include_bare_url=False)
+                    )
+            else:
+                # A silent seed posts nothing per-item, so without a sample here
+                # --dry-run would print a bare count -- useless for the thing it
+                # exists for, which is eyeballing whether the filters are right.
+                _log_sample(items, search)
+            return SearchRunResult(search.name, seeded=True, fetched=len(items))
+
+        # One line even when nothing is shown, so a working config is
+        # distinguishable from a broken one.
+        parent_ts = post(
+            channel, fmt.format_seed(search, len(items), shown=len(seed_shown)), None, False, None
+        )
+
+        # Same Slack-before-state, commit-per-item rule as a normal run.
+        for index, item in enumerate(seed_shown):
+            if index:
+                time.sleep(pacing_seconds)
+            message = fmt.build_item_message(item, search)
+            post(channel, message.text, parent_ts, message.unfurl_links, message.blocks)
+            store.append_seen(search.name, [_entry(item, notified=True)])
+            store.append_hits(
+                [
+                    _hit(
+                        item,
+                        is_seed=True,
+                        notified=True,
+                        notified_at=datetime.now(UTC),
+                        slack_channel=channel,
+                        slack_parent_ts=parent_ts,
+                    )
+                ]
+            )
+
+        rest = items[len(seed_shown) :]
+        store.append_seen(search.name, [_entry(i, notified=False) for i in rest])
+        store.append_hits([_hit(i, is_seed=True) for i in rest])
         return SearchRunResult(search.name, seeded=True, fetched=len(items))
 
     # ---- Normal run -----------------------------------------------------
@@ -331,11 +372,15 @@ def _run_locked(
     run_id = uuid.uuid4().hex
     state = store.load_state()
 
-    for name in reseed:
-        store.clear_seen(name)
-        if name in state:
-            store.mark(name, last_run_at=now, status="reseed", seeded_at=None)
-    if reseed:
+    # Discarding a seen-cache is the most destructive thing this command does,
+    # and --dry-run promises no state writes -- so a dry run only *rehearses* a
+    # reseed. The names are still forced due below and still take the seed path,
+    # which is the whole point of rehearsing one.
+    if reseed and not dry_run:
+        for name in reseed:
+            store.clear_seen(name)
+            if name in state:
+                store.mark(name, last_run_at=now, status="reseed", seeded_at=None)
         state = store.load_state()
 
     candidates = [s for s in searches if s.enabled]
@@ -358,19 +403,20 @@ def _run_locked(
     for search in due:
         run_state = state.get(search.name)
         seeded = run_state is not None and run_state.seeded_at is not None
-        # Seed silently when: explicitly asked; never seeded; the seen-cache was
-        # lost behind our back; or the last run is so stale that these listings
-        # are hours old and no longer actionable. Each case would otherwise dump
-        # a whole result page into Slack as "new".
-        seed = (
-            search.name in set(reseed)
-            or not seeded
-            or store.cache_was_lost(search.name)
-            or store.is_stale(search, now)
-        )
+        # Seed when: explicitly asked; never seeded; the seen-cache was lost
+        # behind our back; or the last run is so stale that these listings are
+        # hours old and no longer actionable. Each case would otherwise dump a
+        # whole result page into Slack as "new".
+        seed_reason = _seed_reason(search, store=store, now=now, reseed=reseed, seeded=seeded)
+        # notify_on_seed covers the seeds a human caused and is expecting output
+        # from. The recovery seeds stay silent whatever the config says -- they
+        # exist to *suppress* an alert storm over listings that are already old.
+        notify_seed = search.notify_on_seed and seed_reason in ("first", "manual")
 
         try:
             channel = _resolve_channel(search)
+            if seed_reason:
+                logger.info("%s: seeding (%s), notify=%s", search.name, seed_reason, notify_seed)
             result = run_one_search(
                 search,
                 store=store,
@@ -379,7 +425,8 @@ def _run_locked(
                 fetch=fetch,
                 post=post,
                 channel=channel,
-                seed=seed,
+                seed=bool(seed_reason),
+                notify_seed=notify_seed,
                 dry_run=dry_run,
                 pacing_seconds=pacing_seconds,
             )
@@ -391,8 +438,8 @@ def _run_locked(
                     last_run_at=now,
                     status="ok",
                     new_count=result.new_count,
-                    seeded_at=now if seed else None,
-                    seed_count=result.fetched if seed else None,
+                    seeded_at=now if seed_reason else None,
+                    seed_count=result.fetched if seed_reason else None,
                 )
                 store.compact_seen(
                     search.name,
@@ -430,6 +477,32 @@ def _run_locked(
             logger.warning("Could not post failure summary to Slack", exc_info=True)
 
     return results
+
+
+def _seed_reason(
+    search: ResolvedSearch,
+    *,
+    store: SearchStateStore,
+    now: datetime,
+    reseed: list[str],
+    seeded: bool,
+) -> str | None:
+    """Why this search is seeding, or None if it isn't.
+
+    The reason is what ``notify_on_seed`` keys off: a first-ever or explicitly
+    requested seed is something a human is waiting on, while ``recovered`` and
+    ``stale`` are the watcher quietly repairing itself. Ordered so the two
+    state-reading checks are only reached when the cheap ones don't decide it.
+    """
+    if search.name in set(reseed):
+        return "manual"
+    if not seeded:
+        return "first"
+    if store.cache_was_lost(search.name):
+        return "recovered"
+    if store.is_stale(search, now):
+        return "stale"
+    return None
 
 
 def _failure_channel() -> str:

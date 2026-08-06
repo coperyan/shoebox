@@ -166,11 +166,7 @@ def replace_title_elements(title: str, ctr: int, card_number) -> str:
     elif ctr == 2:
         return title.replace(f" #{card_number}", "")
     elif ctr == 3:
-        return (
-            title.replace(" Baseball", "")
-            .replace(" Basketball", "")
-            .replace(" Football", "")
-        )
+        return title.replace(" Baseball", "").replace(" Basketball", "").replace(" Football", "")
     elif ctr == 4:
         return title.replace(" Refractor", "")
     elif ctr == 5:
@@ -250,9 +246,7 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Sport"] = sport(row.set_name)
     aspects["Player/Athlete"] = multi_str_split(row.player)
     aspects["Season"] = row.set_year
-    aspects["Year Manufactured"] = (
-        row.set_year if len(row.set_year) == 4 else row.set_year[:4]
-    )
+    aspects["Year Manufactured"] = row.set_year if len(row.set_year) == 4 else row.set_year[:4]
     aspects["Features"] = features(row)
     aspects["Set"] = row.set_name
     if row.team:
@@ -262,9 +256,7 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Card Number"] = row.card_number
     aspects["Type"] = "Sports Trading Card"
     aspects["Card Size"] = "Standard"
-    aspects["Card Thickness"] = (
-        "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
-    )
+    aspects["Card Thickness"] = "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
     aspects["Country/Region of Manufacture"] = "United States"
     aspects["Graded"] = "No"
     aspects["Vintage"] = "No"
@@ -285,9 +277,7 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     return aspects
 
 
-def base_inventory_item_payload(
-    *, quantity: int, product: dict[str, Any]
-) -> dict[str, Any]:
+def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> dict[str, Any]:
     """Shared inventory-item skeleton for every card listing.
 
     Condition descriptor 40001/400010 is eBay's trading-card grade
@@ -299,9 +289,7 @@ def base_inventory_item_payload(
         "conditionDescriptors": [
             {
                 "name": "40001",
-                "values": [
-                    _CONDITION_DESCRIPTORS[get_settings().store.condition_descriptor]
-                ],
+                "values": [_CONDITION_DESCRIPTORS[get_settings().store.condition_descriptor]],
             }
         ],
         "packageWeightAndSize": {
@@ -359,9 +347,7 @@ def build_offer_payload(*, draft: EbayListingDraft) -> dict[str, Any]:
 def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     """Rebuild an inventory item payload from an existing eBay API item response."""
     return base_inventory_item_payload(
-        quantity=existing_item["availability"]["ship_to_location_availability"][
-            "quantity"
-        ],
+        quantity=existing_item["availability"]["ship_to_location_availability"]["quantity"],
         product={
             "title": existing_item["product"]["title"],
             "description": store_footer_html(),
@@ -421,9 +407,7 @@ def build_draft(
     aspects = build_aspects(row)
 
     if schedule:
-        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
         listing_start_date = None
 
