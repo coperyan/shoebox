@@ -37,7 +37,16 @@ paths:
   scan_number_padding: 4
   scan_extension: ".jpg"
   # Saved eBay search definitions (gitignored; copy from searches.example.yml).
+  # May also point at a clone of a separate private repo so searches can be
+  # edited from anywhere (GitHub web/mobile) -- see searches_git_pull below.
   searches_file: configs/searches.yaml
+  # When true, watch-searches runs `git pull --ff-only` in the directory
+  # containing searches_file before every run (including --list/--dry-run),
+  # picking up edits pushed from anywhere. Pull failures are logged and the
+  # run continues with the last-synced file; a file that is broken still
+  # fails the run loudly. Requires searches_file to live inside a git clone
+  # with an upstream and non-interactive auth (e.g. `gh auth setup-git`).
+  searches_git_pull: false
 
 ebay:
   # application/user/header name the entries to use in ebay_rest.json

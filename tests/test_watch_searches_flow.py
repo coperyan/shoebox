@@ -4,13 +4,15 @@ No mocking library: run_one_search / watch_searches take ``fetch`` and ``post``
 callables, so a plain local function plus tmp_path covers the whole flow.
 """
 
+import subprocess
+
 import pytest
 import yaml
 from pydantic import ValidationError
 
 from shoebox.clients.search_state import SearchStateStore
 from shoebox.models.ebay.item_summary import ItemSummary
-from shoebox.pipelines.watch_searches import watch_searches
+from shoebox.pipelines.watch_searches import pull_searches_repo, watch_searches
 
 
 def item(
@@ -524,3 +526,83 @@ class TestConfigErrors:
         post = Recorder()
         with pytest.raises(FileNotFoundError, match="searches.example.yml"):
             watch_searches(config_path=tmp_path / "nope.yaml", store=store, post=post, flush=False)
+
+
+class TestGitPull:
+    """pull_searches_repo and its searches_git_pull hook, against real git repos."""
+
+    @staticmethod
+    def _git(*args, cwd):
+        subprocess.run(
+            ["git", "-c", "user.name=test", "-c", "user.email=test@test", *args],
+            cwd=cwd,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _searches_doc(self, query: str) -> str:
+        return yaml.safe_dump(
+            {"version": 1, "searches": [{"name": "s1", "query": query, "interval": "15m"}]}
+        )
+
+    def _origin_and_clone(self, tmp_path):
+        origin = tmp_path / "origin"
+        origin.mkdir()
+        self._git("init", "-b", "main", cwd=origin)
+        (origin / "searches.yaml").write_text(self._searches_doc("jordan"))
+        self._git("add", ".", cwd=origin)
+        self._git("commit", "-m", "v1", cwd=origin)
+        clone = tmp_path / "clone"
+        self._git("clone", str(origin), str(clone), cwd=tmp_path)
+        return origin, clone
+
+    def _push_remote_edit(self, origin, query: str):
+        (origin / "searches.yaml").write_text(self._searches_doc(query))
+        self._git("commit", "-am", "edit", cwd=origin)
+
+    def test_pull_picks_up_remote_edit(self, tmp_path):
+        origin, clone = self._origin_and_clone(tmp_path)
+        self._push_remote_edit(origin, "lebron")
+
+        assert pull_searches_repo(clone / "searches.yaml") is True
+        assert "lebron" in (clone / "searches.yaml").read_text()
+
+    def test_pull_failure_is_fail_open(self, tmp_path):
+        """Not a git repo: log and return False, never raise -- the run continues."""
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        (plain / "searches.yaml").write_text(self._searches_doc("jordan"))
+
+        assert pull_searches_repo(plain / "searches.yaml") is False
+
+    def test_diverged_clone_does_not_pull(self, tmp_path):
+        """--ff-only: a clone with local commits stops syncing rather than merging."""
+        origin, clone = self._origin_and_clone(tmp_path)
+        self._push_remote_edit(origin, "lebron")
+        (clone / "searches.yaml").write_text(self._searches_doc("local-edit"))
+        self._git("commit", "-am", "local", cwd=clone)
+
+        assert pull_searches_repo(clone / "searches.yaml") is False
+        assert "local-edit" in (clone / "searches.yaml").read_text()
+
+    def test_watch_searches_pulls_before_load(self, tmp_path, monkeypatch):
+        """The edit-on-phone loop: a remote push is visible to the very next run."""
+        from shoebox.settings import get_settings
+
+        origin, clone = self._origin_and_clone(tmp_path)
+        self._push_remote_edit(origin, "lebron")
+        monkeypatch.setattr(get_settings().paths, "searches_git_pull", True)
+
+        watch_searches(config_path=clone / "searches.yaml", list_only=True)
+
+        assert "lebron" in (clone / "searches.yaml").read_text()
+
+    def test_pull_disabled_by_default(self, tmp_path):
+        """Flag off (the example-config default): no pull, stale file stays."""
+        origin, clone = self._origin_and_clone(tmp_path)
+        self._push_remote_edit(origin, "lebron")
+
+        watch_searches(config_path=clone / "searches.yaml", list_only=True)
+
+        assert "jordan" in (clone / "searches.yaml").read_text()

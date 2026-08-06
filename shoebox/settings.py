@@ -67,6 +67,13 @@ class PathSettings(BaseModel):
     # A file, not a directory -- deliberately absent from ensure_dirs().
     searches_file: str = "configs/searches.yaml"
 
+    # When true, watch-searches runs `git pull --ff-only` in the directory
+    # containing searches_file before loading it. Point searches_file at a
+    # clone of a private repo and edits made anywhere (e.g. GitHub mobile)
+    # take effect on the next run. Requires searches_file to live inside a
+    # git clone with a configured upstream and non-interactive auth.
+    searches_git_pull: bool = False
+
     def ensure_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
         Path(self.exports_dir).mkdir(parents=True, exist_ok=True)

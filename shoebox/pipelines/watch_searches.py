@@ -17,6 +17,7 @@ mid-thread to exactly one duplicate rather than the entire run's worth.
 from __future__ import annotations
 
 import logging
+import subprocess
 import time
 import uuid
 from collections.abc import Callable
@@ -286,6 +287,37 @@ def seen_refresh(items: list[ItemSummary], seen: dict[str, SeenEntry]) -> list[I
     return [i for i in items if i.item_id and i.item_id in seen]
 
 
+def pull_searches_repo(path: str | Path, *, timeout: float = 60) -> bool:
+    """``git pull --ff-only`` in the directory containing the searches file.
+
+    Fail-open by design: a pull failure means running with a slightly stale
+    (but previously valid) config, which beats not running at all -- and this
+    fires on every cron tick, so posting each failure to Slack would spam a
+    persistent outage (box offline, expired token) every interval. A stale
+    file that is also *broken* still fails loudly through the load_searches_file
+    path below.
+
+    Returns True if the pull succeeded, False otherwise (logged, never raised).
+    """
+    repo_dir = Path(path).parent
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(repo_dir), "pull", "--ff-only"],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except Exception as exc:
+        logger.warning("Could not pull searches repo %s: %s", repo_dir, exc)
+        return False
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        logger.warning("git pull failed in %s: %s", repo_dir, detail)
+        return False
+    logger.info("Pulled searches repo %s: %s", repo_dir, (result.stdout or "").strip())
+    return True
+
+
 def watch_searches(
     *,
     force: bool = False,
@@ -302,6 +334,12 @@ def watch_searches(
 ) -> list[SearchRunResult]:
     settings = get_settings()
     path = config_path or settings.paths.searches_file
+
+    # Pull runs for --list and --dry-run too, on purpose: "edit on my phone,
+    # then ask the Slack bot for watch-searches --list" is the validation loop,
+    # and it only works if listing sees the freshly pushed file.
+    if settings.paths.searches_git_pull:
+        pull_searches_repo(path)
 
     # A config error is global, not per-search: fail the whole run rather than
     # half-running a broken file. Under cron nobody reads the log, so the error
