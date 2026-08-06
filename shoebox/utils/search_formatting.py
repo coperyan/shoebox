@@ -216,6 +216,18 @@ class ItemMessage(NamedTuple):
     unfurl_links: bool
 
 
+def build_unfurl_fallback(
+    item: ItemSummary, search: ResolvedSearch, *, now: datetime | None = None
+) -> ItemMessage:
+    """The photo-less rendering: bare URL in the text, image left to the unfurl.
+
+    No blocks at all -- putting the URL inside a section block would stop Slack
+    keying the unfurl off it. Used when a listing has no photo, and as the retry
+    when Slack rejects an image block because it couldn't download the photo.
+    """
+    return ItemMessage(format_item(item, search, now=now), None, True)
+
+
 def build_item_message(
     item: ItemSummary, search: ResolvedSearch, *, now: datetime | None = None
 ) -> ItemMessage:
@@ -223,10 +235,8 @@ def build_item_message(
     image_url = item.thumbnail(IMAGE_SIZE_PX)
     if not image_url:
         # No photo to show, so let Slack try the link preview -- it's the only
-        # shot at an image for this listing. No divider either: adding blocks
-        # here would put the URL inside one, and the unfurl this path exists for
-        # keys off the bare URL in the message text.
-        return ItemMessage(format_item(item, search, now=now), None, True)
+        # shot at an image for this listing.
+        return build_unfurl_fallback(item, search, now=now)
 
     text = format_item(item, search, include_bare_url=False, now=now)
     blocks = [

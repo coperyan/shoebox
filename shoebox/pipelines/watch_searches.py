@@ -24,6 +24,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from slack_sdk.errors import SlackApiError
+
 from ..clients.search_state import SearchStateStore
 from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch, load_searches_file
@@ -93,6 +95,48 @@ def _default_post(
     blocks: list[dict] | None = None,
 ) -> str:
     return notify(channel, text, thread_ts=thread_ts, unfurl_links=unfurl_links, blocks=blocks)
+
+
+def _image_download_failed(exc: Exception) -> bool:
+    """True when Slack rejected the message because *it* couldn't fetch the
+    image-block URL (``invalid_blocks`` / "downloading image failed").
+
+    Slack downloads image URLs server-side while validating blocks, so a CDN
+    hiccup or a fetch eBay refuses fails the whole post -- a property of that
+    one photo, not of the message. Anything else stays fatal: another
+    ``invalid_blocks`` reason means a bug in our block building, and silently
+    swallowing it would hide that.
+    """
+    response = getattr(exc, "response", None)
+    if not response or response.get("error") != "invalid_blocks":
+        return False
+    return any("downloading image failed" in str(e) for e in response.get("errors") or [])
+
+
+def _post_item(
+    post: PostFn,
+    channel: str,
+    item: ItemSummary,
+    search: ResolvedSearch,
+    thread_ts: str | None,
+    now: datetime,
+) -> None:
+    """Post one listing reply, dropping to the unfurl fallback when Slack
+    can't download the photo -- losing the alert over a flaky image would
+    invert the priorities."""
+    message = fmt.build_item_message(item, search, now=now)
+    try:
+        post(channel, message.text, thread_ts, message.unfurl_links, message.blocks)
+    except SlackApiError as exc:
+        if message.blocks is None or not _image_download_failed(exc):
+            raise
+        logger.warning(
+            "%s: Slack couldn't download the image for %s; reposting without it",
+            search.name,
+            item.item_id,
+        )
+        fallback = fmt.build_unfurl_fallback(item, search, now=now)
+        post(channel, fallback.text, thread_ts, fallback.unfurl_links, fallback.blocks)
 
 
 def _resolve_channel(search: ResolvedSearch) -> str:
@@ -177,8 +221,7 @@ def run_one_search(
         for index, item in enumerate(seed_shown):
             if index:
                 time.sleep(pacing_seconds)
-            message = fmt.build_item_message(item, search, now=now)
-            post(channel, message.text, parent_ts, message.unfurl_links, message.blocks)
+            _post_item(post, channel, item, search, parent_ts, now)
             store.append_seen(search.name, [_entry(item, notified=True)])
             store.append_hits(
                 [
@@ -226,8 +269,7 @@ def run_one_search(
     for index, item in enumerate(shown):
         if index:
             time.sleep(pacing_seconds)
-        message = fmt.build_item_message(item, search, now=now)
-        post(channel, message.text, parent_ts, message.unfurl_links, message.blocks)
+        _post_item(post, channel, item, search, parent_ts, now)
         # Committed immediately, so a crash costs at most this one duplicate.
         store.append_seen(search.name, [_entry(item, notified=True)])
         store.append_hits(

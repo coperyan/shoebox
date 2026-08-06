@@ -9,6 +9,7 @@ import subprocess
 import pytest
 import yaml
 from pydantic import ValidationError
+from slack_sdk.errors import SlackApiError
 
 from shoebox.clients.search_state import SearchStateStore
 from shoebox.models.ebay.item_summary import ItemSummary
@@ -56,6 +57,23 @@ class Recorder:
     @property
     def replies(self):
         return [p for p in self.posts if p[2] is not None]
+
+
+class ImageRejectingRecorder(Recorder):
+    """Recorder whose image-block posts fail the way Slack's server-side image
+    fetch does: chat.postMessage comes back ok=False / invalid_blocks."""
+
+    def __init__(self, errors: list[str] | None = None):
+        super().__init__()
+        self.errors = errors or ["downloading image failed [json-pointer:/blocks/1/image_url]"]
+
+    def __call__(self, channel, text, thread_ts, unfurl_links, blocks=None) -> str:
+        if blocks and any(b["type"] == "image" for b in blocks):
+            raise SlackApiError(
+                "The request to the Slack API failed.",
+                {"ok": False, "error": "invalid_blocks", "errors": self.errors},
+            )
+        return super().__call__(channel, text, thread_ts, unfurl_links, blocks)
 
 
 @pytest.fixture
@@ -305,6 +323,34 @@ class TestOrdering:
         # Fallback text stays a complete summary, minus the now-redundant URL.
         assert "itm/a" in text
         assert text.splitlines()[-1] != "https://ebay.com/itm/a"
+
+    def test_undownloadable_image_falls_back_to_unfurling(self, searches_yaml, store):
+        """Slack fetches image-block URLs itself and rejects the whole message
+        when that fetch fails; the alert must still go out, photo-less."""
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        post = ImageRejectingRecorder()
+        run(path, store, [item("a", image="s-l225")], post, force=True)
+
+        assert len(post.replies) == 1
+        channel, text, thread_ts, unfurl, blocks = post.replies[0]
+        assert blocks is None
+        assert unfurl is True
+        assert text.splitlines()[-1] == "https://ebay.com/itm/a"
+        assert set(store.load_seen("s1")) == {"a"}
+
+    def test_other_slack_api_errors_stay_fatal(self, searches_yaml, store):
+        """Only the image-download rejection gets the retry: any other
+        invalid_blocks reason is our bug and must surface."""
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        post = ImageRejectingRecorder(
+            errors=["failed to match all allowed schemas [json-pointer:/blocks/0]"]
+        )
+        run(path, store, [item("a", image="s-l225")], post, force=True)
+
+        assert post.replies == []
+        assert "a" not in store.load_seen("s1")
 
 
 class TestFailureIsolation:
