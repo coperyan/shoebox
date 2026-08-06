@@ -1,0 +1,111 @@
+# Declarative definitions for the Windows scheduled tasks that drive shoebox.
+#
+# Regenerate the XML with:      python scripts/generate_tasks.py
+# Generate and register:        python scripts/generate_tasks.py --register
+#
+# Generated XML lands in scripts/tasks/ and is overwritten every run -- edit
+# this file, never the XML.
+
+defaults:
+  # Task Scheduler folder the tasks live in.
+  folder: \shoebox
+
+  # Entry point every `run:` command is passed to. Task Scheduler does not
+  # search PATH, so this is resolved to an absolute path at generation time --
+  # by default whichever `shoebox` is on PATH. Point it at
+  # .venv\Scripts\shoebox.exe to pin the tasks to the project virtualenv.
+  # executable: .venv\Scripts\shoebox.exe
+
+  # Working directory for every task, relative to the repo root. This must stay
+  # the repo root: shoebox resolves its config paths and log directory relative
+  # to the current directory, so a task without it inherits C:\Windows\System32
+  # and dies with PermissionError before doing any work.
+  working_dir: .
+
+  # Fixed so regenerated XML stays byte-identical; only the time-of-day matters
+  # for a daily trigger whose start boundary is in the past.
+  start_date: "2026-05-23"
+
+  run_level: highest
+  logon_type: password
+  multiple_instances: IgnoreNew
+  execution_time_limit: PT72H
+  priority: 7
+
+  disallow_start_if_on_batteries: true
+  stop_if_going_on_batteries: true
+  wake_to_run: true
+  start_when_available: false
+  allow_hard_terminate: true
+  allow_start_on_demand: true
+  run_only_if_network_available: false
+  run_only_if_idle: false
+  stop_on_idle_end: true
+  restart_on_idle: false
+  disallow_start_on_remote_app_session: false
+  use_unified_scheduling_engine: true
+  hidden: false
+  enabled: true
+
+tasks:
+  - name: sync-active-listings
+    run: sync-active-listings
+    description: Update active listings in GCS/BigQuery.
+    trigger:
+      type: daily
+      at: "03:00"
+
+  - name: sync-active-listing-details
+    run: sync-active-listing-details
+    description: Update active listing details in GCS/BigQuery.
+    trigger:
+      type: daily
+      at: "03:30"
+
+  - name: sync-orders
+    run: sync-orders
+    description: Sync orders into GCS/BigQuery.
+    trigger:
+      type: daily
+      at: "04:00"
+
+  - name: end_oos_listings
+    run: end-oos-listings
+    description: End active listings with no stock available.
+    trigger:
+      type: daily
+      at: "05:00"
+
+  - name: watch-searches
+    run: watch-searches
+    description: Poll saved eBay searches and post new hits to Slack.
+    trigger:
+      type: logon
+      repeat_every: PT5M
+      execution_time_limit: PT30M
+
+  - name: slack-bot
+    run: slack-bot
+    description: Long-running Slack bot that runs shoebox commands from chat.
+    start_when_available: true
+    restart_on_failure:
+      count: 3
+      interval: PT1M
+    trigger:
+      type: logon
+
+  # A list runs as sequential actions, matching what the batch file did. Note
+  # that Task Scheduler does not stop at the first failing step -- neither did
+  # the batch file.
+  #
+  # NOTE: the registered version of this task still points at the old repo
+  # (ebay_sports_cards_automation) and has no trigger and no working directory.
+  # shoebox owns the `orders-awaiting-shipment` subcommand now, so this runs it
+  # directly. Registering will repoint the task.
+  - name: ebay-orders-awaiting-shipment
+    run:
+      - orders-awaiting-shipment --pull-order --message
+      - orders-awaiting-shipment --buyer-order --message
+    description: Message buyers about orders awaiting shipment.
+    trigger:
+      type: manual
