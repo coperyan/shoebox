@@ -27,6 +27,8 @@ logs/
 exports/
 data/*
 scripts/*.bat
+scripts/*.xml
+scripts/tasks/*.xml
 
 # --- Local tooling / editor / caches ---
 .claude/

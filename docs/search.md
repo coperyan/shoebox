@@ -342,6 +342,16 @@ of the repo root, and `StandardOutPath` under `logs/`.
 
 **Windows — Task Scheduler:**
 
+The scheduled tasks on the Windows host are generated from
+`scripts/tasks.yaml` — see [scheduling.md](scheduling.md). `watch-searches` is
+already defined there as a logon trigger repeating every 5 minutes:
+
+```bash
+python scripts/generate_tasks.py --only watch-searches --register
+```
+
+For a one-off task outside that setup:
+
 ```powershell
 schtasks /create /tn "shoebox watch-searches" /sc minute /mo 5 /ru "%USERNAME%" ^
   /tr "cmd /c cd /d C:\shoebox && .venv\Scripts\shoebox.exe watch-searches >> logs\watch_searches.log 2>&1"
@@ -349,10 +359,11 @@ schtasks /create /tn "shoebox watch-searches" /sc minute /mo 5 /ru "%USERNAME%" 
 
 `cd /d` is what sets the working directory, and `cmd /c` is what makes the
 redirect work — a bare `/tr` command line does not go through a shell. In the
-Task Scheduler GUI the equivalent is *Start in* = the repo root. Tick **Run
-whether user is logged on or not** for an unattended host, and leave *Stop the
-task if it runs longer than* well above your longest expected run, since a run
-posting a full `max_notify` thread takes tens of seconds.
+Task Scheduler GUI the equivalent is *Start in* = the repo root; omitting it is
+a silent, every-run failure. Tick **Run whether user is logged on or not** for
+an unattended host, and leave *Stop the task if it runs longer than* well above
+your longest expected run, since a run posting a full `max_notify` thread takes
+tens of seconds.
 
 Overlapping runs are prevented by a non-blocking advisory lock on
 `exports/jsonl/searches/.lock` (`flock` on Unix, `msvcrt.locking` on Windows): a

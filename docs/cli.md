@@ -246,8 +246,9 @@ tick logs and exits 0.
 On macOS, `cron` needs Full Disk Access granted to `/usr/sbin/cron`. The
 supported alternative is a `launchd` agent with `StartInterval 300`, a
 `WorkingDirectory` of the repo root, and `StandardOutPath` under `logs/`. On
-Windows, use Task Scheduler with *Start in* set to the repo root — see
-[search.md](search.md#scheduling).
+Windows, use Task Scheduler with *Start in* set to the repo root — the tasks on
+the Windows host are generated from `scripts/tasks.yaml`, see
+[scheduling.md](scheduling.md).
 
 **API budget.** Each due search costs one Browse call per run (a single call
 returns up to 200 items). Ten searches on a 15-minute interval is roughly 960
