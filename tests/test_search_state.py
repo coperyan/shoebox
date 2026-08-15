@@ -322,10 +322,16 @@ class TestHitsAppendLog:
             def upload_text(self, **kw):
                 raise RuntimeError("network down")
 
+        class UnreachableBQ:
+            def load_jsonl_from_gcs(self, **kw):
+                raise AssertionError("BigQuery must not be reached after a GCS failure")
+
         s = store(tmp_path)
         s.append_hits([self._hit()])
+        # bq is stubbed rather than left None: flush_append_log builds a real
+        # BigQueryClient for a None arg, which needs GCP credentials CI has not got.
         try:
-            s.flush_append_log(gcs=BoomGCS(), bq=None)
+            s.flush_append_log(gcs=BoomGCS(), bq=UnreachableBQ())
         except RuntimeError:
             pass
         # Retried next run; dedup never depended on BigQuery.
