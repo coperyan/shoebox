@@ -70,7 +70,17 @@ copy is a working starting point. The config path can be overridden with the
    commands from the repo root.
 5. Scopes needed by the REST user token (pre-filled in the template):
    `sell.inventory`, `sell.marketing`, `sell.account`, `sell.fulfillment`,
-   `sell.analytics.readonly`, plus the base `api_scope`.
+   `sell.analytics.readonly`, `sell.negotiation`, `sell.stores`, plus the base
+   `api_scope`.
+
+   Scopes are baked into the token when you consent, so **adding one to
+   `ebay_rest.json` is not enough** — the refresh token carries the scopes it
+   was granted. After editing the list, clear `refresh_token` (and `token` /
+   `token_expiry`) for that user so `ebay_rest` runs the consent flow again and
+   mints a token with the new scope. A call made with a token missing its scope
+   fails with HTTP 403, `errorId` 1100, `domain: ACCESS`, "Insufficient
+   permissions to fulfill the request" — that error means the scope, not the
+   code. `sell.stores` is what the store-category commands need.
 
 ## Google Cloud setup
 

@@ -4,14 +4,20 @@ Replaces the Trading-API (XML) implementation that previously lived in
 ``clients/ebay_legacy.py``. This uses the same OAuth token as the rest of the
 REST pipelines, so no Auth'n'Auth token is involved.
 
+Requires the ``sell.stores`` OAuth scope. A token without it fails with HTTP
+403 / errorId 1100 / domain ACCESS; scopes are fixed at consent time, so the
+user token has to be re-minted after adding it (see docs/setup.md).
+
 Two shape differences from the Trading API are worth knowing:
 
 * eBay's REST endpoints act on **one category per call**, so the batch helpers
   here loop. That makes partial failure possible — see ``stop_on_error``.
-* The mutating calls are asynchronous and return a taskId, but the
-  swagger-generated client in ``ebay_rest`` discards the response body. Use
-  :meth:`StoresClient.get_store_tasks` to see recent task outcomes, and re-read
-  :meth:`StoresClient.get_store_categories` to pick up newly assigned IDs.
+* The mutating calls are asynchronous. eBay returns the task URI in the
+  ``Location`` response header rather than the body, and the swagger-generated
+  client in ``ebay_rest`` surfaces neither, so there is no taskId to hold onto.
+  Use :meth:`StoresClient.get_store_tasks` to see recent task outcomes, and
+  re-read :meth:`StoresClient.get_store_categories` to pick up newly assigned
+  IDs.
 """
 
 from __future__ import annotations
