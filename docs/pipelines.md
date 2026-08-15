@@ -147,10 +147,20 @@ Trading API: find active listings with zero remaining quantity, end them all
 
 ### `pipelines/send_offers.py`
 
-Negotiation API: `find_eligible_items()` → per listing, skip if price >
-`max_price` (default $19.99) → offer price = standard markdown of current
-price → send a 1-day offer with a fixed message to interested buyers.
-`--dry-run` logs the offers without sending them.
+Negotiation API: `find_eligible_items()` → post every eligible listing to
+Slack at once (`notify_batch_and_wait`, to `slack.offers_channel` falling back
+to the pricing channel), then handle
+threaded replies as they arrive: a parsed amount within
+`$0.99 <= amount < current price` sends a 1-day offer immediately, `skip`
+resolves without sending, and unparseable/out-of-range replies (or an eBay
+rejection) get a threaded hint and stay pending. Prompts still pending at
+`timeout_s` are stamped expired and reappear next run. A threaded tally
+(sent/skipped/expired) closes the parent summary message.
+
+`--auto` bypasses Slack and sends the standard markdown-matrix price for every
+eligible listing (prices above the matrix fall back to 5% off). `--dry-run`
+logs the prompts without contacting eBay or Slack. No state is kept between
+runs — eligibility comes fresh from eBay each time.
 
 ---
 
@@ -165,6 +175,77 @@ All three follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
 | `sync_active_listings.py` | Trading `GetMyeBaySelling` + Analytics traffic report (90 days) | `active_listings` | Sends start/complete Slack notifications |
 | `sync_active_listing_details.py` | Trading `GetItem` per listing | `active_listing_details` | Skips "complete your set" variation listings; 1 API call per listing |
 | `sync_orders.py` | Fulfillment API, FULFILLED, ~2 years windowed | `orders` | One row per line item via `Order.flattened_line_items`; constructs clients at import time |
+
+---
+
+## Saved search watcher
+
+### `pipelines/watch_searches.py` (CLI: `watch-searches`)
+
+Setup, YAML reference and tuning workflow live in [search.md](search.md); this
+section covers the internals.
+
+**YAML-defined eBay searches → Slack.** One cron entry runs the command every
+few minutes; each search's own `interval` plus a stored `last_run_at` decides
+which actually fire, so adding a search means editing YAML and nothing else.
+
+Per run:
+
+1. Take a non-blocking advisory lock on `exports/jsonl/searches/.lock` — `flock`
+   on Unix, `msvcrt.locking` on Windows, where `fcntl` does not exist. A run
+   posting at ~1 message/sec can outlast the scheduler's period, and two
+   concurrent processes would double-post and clobber each other's state.
+2. Load and validate `configs/searches.yaml`. A config error aborts the whole
+   run (it's global, not per-search) and is posted to Slack — under cron nobody
+   reads the log.
+3. Select due searches. If none, return **before** constructing `EbayClient`
+   (which needs `configs/ebay_rest.json`).
+4. Per search, inside its own `try/except`: Browse search → post-filter → diff
+   against the seen-cache → alert → commit.
+5. Flush buffered hits to GCS + BigQuery, **only when something new was found**
+   — most runs find nothing, which keeps load jobs to a handful per day.
+
+**Seeding.** A search's first run records every current match and posts a single
+confirmation line — no per-item alerts, unless `notify_on_seed: true`, which
+also posts the first `max_notify` matches (first-ever seed and `--reseed` only;
+the recovery seeds below stay silent, since suppressing stale alerts is their
+whole purpose). The same silent re-seed happens when the
+seen-cache is lost (`search_state.json` and the `*_seen.jsonl` caches are
+separate files, so `rm exports/jsonl/*.jsonl` leaves the state claiming
+"seeded") or when a search has been idle for more than 6× its interval. A search
+that legitimately seeded *zero* matches is excluded from the lost-cache guard,
+so a narrow search still alerts on its first genuine hit.
+
+**Ordering — Slack first, then commit state, per item.** If state were committed
+first, a Slack failure would mark an item seen and it would never be alerted:
+silent and undetectable. The other way round, a crash re-alerts an item —
+visible and self-limiting. Committing per item rather than per batch bounds a
+mid-run crash to exactly one duplicate.
+
+**Failure isolation.** One search raising doesn't stop the others, and a failed
+search **still advances `last_run_at`** — otherwise a permanently broken search
+would retry on every tick and burn the Browse quota. Failures are collected and
+posted as one summary.
+
+Because dedup runs off the local seen-cache and never off BigQuery, a GCS or
+BigQuery outage cannot cause a duplicate or a missed alert — it only delays the
+durable log, which the append buffer retries next run.
+
+**Slack shape.** One header message per search *that has hits* (a "0 new" post
+every interval would drown the channel), with listings posted right in the
+channel — not a thread — capped at `max_notify` and an explicit overflow line.
+Each listing is a Block Kit
+`section` + `image` + `divider` — mrkdwn detail (title, price with an italic
+auction countdown or Best Offer marker, shipping on its own line, seller) plus
+the listing photo at 500px and a closing rule — so the picture doesn't depend on
+Slack's link unfurler. A brand-new listing whose photo hasn't propagated
+through eBay's image CDN yet is held for one interval (`defer_missing_image`,
+default on) and alerts on its next appearance, photo or not. Listings still
+photo-less then fall back to a bare URL and
+`unfurl_links=True`, without a divider, since the unfurl needs the URL in the
+message text rather than inside a block. `slack_formatting.table()` is
+deliberately unused because URLs inside its code fence are neither clickable nor
+unfurled.
 
 ---
 

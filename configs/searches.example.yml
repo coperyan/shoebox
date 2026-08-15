@@ -1,0 +1,162 @@
+# Template for configs/searches.yaml (GITIGNORED -- your buy criteria, price
+# ceilings and blocked sellers are private, and this repo is public).
+#
+# Copy this file to configs/searches.yaml and edit, or point
+# paths.searches_file in configs/app.yaml at another location.
+#
+# Schema is validated by shoebox/models/saved_search.py. Unknown keys are
+# REJECTED, so a typo fails at load time instead of being silently ignored.
+# Validate without touching Slack or eBay:  shoebox watch-searches --list
+
+version: 1
+
+# Optional: name your Slack channels once, then reference them by alias below.
+# Values are channel IDs (channel details -> copy the ID at the bottom), not
+# "#name". A search may still use a literal ID instead of an alias.
+#
+# A typo'd alias fails when the file loads, listing the aliases that do exist --
+# far better than a channel_not_found from Slack on the 3am cron run.
+channels:
+  card_alerts: C0123456789
+  high_value: C0123456780
+
+# Inherited by every search below. A search may override any of these.
+#
+# Only flat scalars and lists live here -- there is deliberately no nested
+# "filters" block, because deep-merge semantics are ambiguous.
+#
+# Inheritance rule: omitting a key inherits the default; setting it to an empty
+# list ([]) explicitly overrides a non-empty default with "no filter".
+defaults:
+  enabled: true
+
+  # eBay allows exactly ONE category per request. Most files search a single
+  # category, so set it once here; a search may override it, and [] there means
+  # "no category filter" rather than "inherit".
+  # 261328 = Sports Trading Cards -> Singles.
+  category_ids: ["261328"]
+
+  # <number><unit>, unit is s|m|h|d. Minimum 60s. Bare numbers are rejected
+  # (is "15" seconds or minutes?). This is the *minimum* age before a search
+  # runs again -- actual cadence is also bounded by how often cron fires.
+  interval: 30m
+
+  # newlyListed | endingSoonest | price | -price
+  # Best Match is intentionally unavailable: it returns an arbitrary slice of
+  # the result set, so new listings could stay invisible for days.
+  sort: newlyListed
+
+  # Items fetched per poll. Raising this costs nothing in API calls (one call
+  # returns up to 200) but every post-filter below consumes result slots.
+  max_results: 200
+
+  # Items fetched on a search's FIRST run, when it seeds silently. Must be >=
+  # max_results. Anything that matches but isn't seeded shows up later as a
+  # false "new listing", so seed wide.
+  seed_max_results: 2000
+
+  # Max Slack thread replies per search per run. Slack permits roughly one
+  # message per second per channel, so this is a time budget as much as a noise
+  # budget. Anything beyond it is summarized in one overflow line -- never
+  # silently dropped, and still recorded so it won't re-alert.
+  max_notify: 10
+
+  # false (default): a seed posts one confirmation line and no listings.
+  # true: the seed also posts its first max_notify matches, so a brand-new
+  # search shows you what is already out there instead of only future listings.
+  # Applies to a first-ever seed and to --reseed. The automatic recovery seeds
+  # (lost cache, search idle > 6x its interval) stay silent either way -- those
+  # exist to prevent an alert storm over listings that are already old.
+  notify_on_seed: false
+
+  # eBay's image CDN often lags a brand-new listing, so alerting the moment a
+  # listing appears tends to post a card with no photo. true (default): hold
+  # image-less new listings for one interval -- they alert on the next run,
+  # with the photo if it has appeared by then, without it otherwise. false:
+  # alert immediately, photo or not.
+  defer_missing_image: true
+
+  # An alias from the channels: block above, or a literal channel ID.
+  # null falls back to slack.search_channel in app.yaml.
+  channel: card_alerts
+
+  # ---- Server-side filters (sent to eBay; they do not consume result slots) ----
+
+  currency: USD
+
+  # eBay returns ONLY FIXED_PRICE listings when this filter is absent, so it is
+  # always sent. Removing AUCTION here means you will never see an auction.
+  buying_options: [FIXED_PRICE, AUCTION]
+
+  # NEW | USED | UNSPECIFIED. Empty = no condition filter.
+  conditions: []
+
+  # ISO 3166-1 alpha-2. A single country is filtered by eBay; two or more falls
+  # back to a post-filter (eBay's itemLocationCountry takes one value).
+  item_location_countries: [US]
+  delivery_country: US
+
+  # Seller allowlist (max 250) OR blocklist (max 100) -- mutually exclusive.
+  sellers: []
+  exclude_sellers: []
+
+  free_shipping_only: false
+
+  # ---- Post-filters (applied in Python; each one consumes result slots) ----
+  #
+  # eBay Browse has no negative-keyword support at all, which is why title
+  # exclusion has to happen here. Case-insensitive substring matching.
+  # eBay sometimes pads a thin result set with looser matches that don't
+  # contain every query term (a "tim lincecum auto" search returning plain
+  # Lincecum cards). true (default) re-checks the query against titles --
+  # substring, case-insensitive, so "auto" also accepts "Autograph". Set false
+  # on a search whose query is meant to match item specifics, not title words.
+  require_query_in_title: true
+
+  title_exclude: [reprint, lot, digital, custom]
+  title_must_include_all: []
+  title_must_include_any: []
+  seller_min_feedback_score: null
+  # Ceiling on price + cheapest shipping (eBay filters those independently).
+  max_total_price: null
+
+  # Seen-cache entries older than this are pruned at the end of a run.
+  prune_seen_after_days: 90
+
+searches:
+  # Name is used as a filename for the seen-cache and as part of the dedup key:
+  # lowercase letters, digits, '_' and '-' only.
+  - name: jordan_psa10_bin
+    query: "michael jordan psa 10" # max 100 chars, no '*' wildcard
+    interval: 15m
+    price:
+      min: 25
+      max: 200
+    buying_options: [FIXED_PRICE]
+    conditions: [USED]
+    title_exclude: [reprint, lot, custom, proxy]
+    seller_min_feedback_score: 50
+    max_notify: 5
+
+  - name: cheap_vintage_auctions
+    query: "1986 fleer basketball"
+    # Overrides the inherited default; [] would mean "search every category".
+    category_ids: ["213"]
+    interval: 1h
+    buying_options: [AUCTION]
+    sort: endingSoonest
+    price:
+      max: 50
+    max_total_price: 60 # price + shipping
+    channel: high_value # per-search override, by alias
+
+  # Aspect filters require exactly one category_id -- eBay's aspect_filter has
+  # to repeat the category ID inside the filter string. The inherited default
+  # counts, so there is nothing to repeat here.
+  - name: graded_chrome_autos
+    query: "topps chrome auto"
+    interval: 2h
+    enabled: false
+    aspects:
+      Grade: ["10"]
+      Professional Grader: ["Professional Sports Authenticator (PSA)"]

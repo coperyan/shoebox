@@ -36,10 +36,21 @@ paths:
   scan_prefix: "SCAN_"
   scan_number_padding: 4
   scan_extension: ".jpg"
+  # Saved eBay search definitions (gitignored; copy from searches.example.yml).
+  # May also point at a clone of a separate private repo so searches can be
+  # edited from anywhere (GitHub web/mobile) -- see searches_git_pull below.
+  searches_file: configs/searches.yaml
+  # When true, watch-searches runs `git pull --ff-only` in the directory
+  # containing searches_file before every run (including --list/--dry-run),
+  # picking up edits pushed from anywhere. Pull failures are logged and the
+  # run continues with the last-synced file; a file that is broken still
+  # fails the run loudly. Requires searches_file to live inside a git clone
+  # with an upstream and non-interactive auth (e.g. `gh auth setup-git`).
+  searches_git_pull: false
 
 ebay:
   # application/user/header name the entries to use in ebay_rest.json
-  # (see configs/ebay_rest.json.example and the ebay_rest package docs:
+  # (see configs/ebay_rest.example.json and the ebay_rest package docs:
   # https://github.com/matecsaj/ebay_rest).
   application: production_1
   user: production_1
@@ -57,9 +68,13 @@ slack:
   app_token: xapp-your-app-token
   # Channel IDs (not names): channel details -> copy ID at the bottom.
   # The bot must be invited to each channel (/invite @YourBot).
-  notify_channel: C0123456789   # pipeline status + order summaries
-  pricing_channel: C0123456789  # price confirmation/approval prompts
-  command_channel: C0123456789  # chat-triggered CLI commands (slack-bot service)
+  notify_channel: C0123456789 # pipeline status + order summaries
+  pricing_channel: C0123456789 # price confirmation/approval prompts
+  command_channel: C0123456789 # chat-triggered CLI commands (slack-bot service)
+  # Saved-search hits (watch-searches). Optional -- falls back to notify_channel.
+  search_channel: C0123456789
+  # send-offers prompts. Optional; falls back to pricing_channel when unset.
+  offers_channel: C0123456789
   # Slack user IDs allowed to run commands in command_channel; empty = anyone
   # in the channel. Find yours: Slack profile -> "..." -> Copy member ID.
   allowed_user_ids: []
@@ -81,7 +96,12 @@ store:
   # eBay leaf category ID (261328 = Sports Trading Cards -> Singles).
   category_id: "261328"
   # Item condition enum for single-card listings.
+  # https://developer.ebay.com/api-docs/sell/inventory/types/slr:ConditionEnum
+  # Limited to ungraded for now
   condition: "USED_VERY_GOOD"
+  # One of NEAR_MINT_OR_BETTER, EXCELLENT, VERY_GOOD, POOR
+  # https://developer.ebay.com/api-docs/user-guides/static/mip-user-guide/mip-enum-condition-descriptor-ids-for-trading-cards.html
+  condition_descriptor: "NEAR_MINT_OR_BETTER"
   # Message attached to seller-initiated best offers (negotiation API).
   offer_message: "Enjoy the discount on this card! Valid for the next 24 hours. Thank you!"
   # Single-card listings <= this price use the "low" fulfillment policy.
@@ -90,9 +110,9 @@ store:
   policies:
     payment_policy_id: "0000000000"
     return_policy_id: "0000000000"
-    fulfillment_policy_id_low: "0000000000"        # single cards <= fulfillment_low_max_price
-    fulfillment_policy_id_high: "0000000000"       # single cards above it
-    fulfillment_policy_id_variation: "0000000000"  # "You Pick" / variation listings
+    fulfillment_policy_id_low: "0000000000" # single cards <= fulfillment_low_max_price (eBay PWE)
+    fulfillment_policy_id_high: "0000000000" # single cards above it (USPS Ground Advantage)
+    fulfillment_policy_id_variation: "0000000000" # "You Pick" / variation listings (Free PWE Shipping)
   # Promoted-listings campaigns. Resolution: by_sport -> by_set ->
   # current-year default -> default.
   ad_campaigns:

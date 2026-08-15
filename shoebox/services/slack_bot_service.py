@@ -14,37 +14,81 @@ from shoebox.utils.slack_formatting import title
 
 logger = logging.getLogger(__name__)
 
-# Maps each allowed command to its accepted flags.
+# Maps each allowed command to its accepted flags; the bool says whether the
+# flag takes a value (``--reseed NAME``) or stands alone (``--force``).
 # The 'ui' command is intentionally excluded (requires an interactive display).
-ALLOWED_COMMANDS: dict[str, list[str]] = {
-    "sync-metadata": [],
-    "end-oos-listings": [],
-    "create-queue-excel": [],
-    "create-listings": ["--dry-run", "--publish", "--schedule", "--scrape-prices"],
-    "sync-active-listings": [],
-    "sync-active-listing-details": [],
-    "sync-orders": [],
-    "orders-awaiting-shipment": [
-        "--pull-order",
-        "--buyer-order",
-        "--display",
-        "--message",
-    ],
+# --config stays excluded: pointing the bot at an arbitrary file path from chat
+# is not a capability it should have.
+ALLOWED_COMMANDS: dict[str, dict[str, bool]] = {
+    "sync-metadata": {},
+    "end-oos-listings": {},
+    "create-queue-excel": {},
+    "create-listings": {
+        "--dry-run": False,
+        "--publish": False,
+        "--schedule": False,
+        "--scrape-prices": False,
+    },
+    "sync-active-listings": {},
+    "sync-active-listing-details": {},
+    "sync-orders": {},
+    "orders-awaiting-shipment": {
+        "--pull-order": False,
+        "--buyer-order": False,
+        "--display": False,
+        "--message": False,
+    },
+    "watch-searches": {
+        "--force": False,
+        "--dry-run": False,
+        "--list": False,
+        "--only": True,
+        "--reseed": True,
+    },
 }
 
 _HELP_TEXT = "Available commands:\n" + "\n".join(
-    f"  /{cmd}" + (f"  [{' | '.join(flags)}]" if flags else "")
+    f"  /{cmd}"
+    + (
+        "  ["
+        + " | ".join(f"{f} NAME" if takes_value else f for f, takes_value in flags.items())
+        + "]"
+        if flags
+        else ""
+    )
     for cmd, flags in ALLOWED_COMMANDS.items()
 )
 
 
 def parse_command(command: str, args: list[str]) -> tuple[str, list[str]] | None:
-    """Validate command and strip any unrecognized flags. Returns None if command unknown."""
+    """Validate command and strip any unrecognized flags. Returns None if command unknown.
+
+    Value-taking flags accept both ``--reseed NAME`` and ``--reseed=NAME``. A
+    value-taking flag with no value is dropped whole rather than passed on to
+    argparse, which would abort the run over what was probably a typo in chat.
+    """
     if command not in ALLOWED_COMMANDS:
         return None
-    allowed_flags = set(ALLOWED_COMMANDS[command])
-    valid_args = [a for a in args if a in allowed_flags]
-    ignored = [a for a in args if a not in allowed_flags]
+    allowed = ALLOWED_COMMANDS[command]
+    valid_args: list[str] = []
+    ignored: list[str] = []
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        flag, _, inline_value = arg.partition("=")
+        if flag not in allowed:
+            ignored.append(arg)
+        elif not allowed[flag]:
+            # Boolean flag: an =value form would be an error, so it's ignored too.
+            (valid_args if arg == flag else ignored).append(arg)
+        elif inline_value:
+            valid_args += [flag, inline_value]
+        elif i + 1 < len(args) and not args[i + 1].startswith("--"):
+            valid_args += [flag, args[i + 1]]
+            i += 1
+        else:
+            ignored.append(arg)
+        i += 1
     if ignored:
         logger.warning("Ignoring unrecognized flags for %r: %s", command, ignored)
     return command, valid_args

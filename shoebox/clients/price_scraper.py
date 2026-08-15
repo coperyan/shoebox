@@ -5,9 +5,10 @@ import time
 from datetime import datetime
 from typing import Any
 
-import chrome_version
+# import chrome_version
 import pandas as pd
-import undetected_chromedriver as uc
+
+# import undetected_chromedriver as uc
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
@@ -120,6 +121,9 @@ class PriceScraper:
     def start(self) -> None:
         if self.driver is not None:
             return
+        import chrome_version
+        import undetected_chromedriver as uc
+
         chrome_v = chrome_version.get_chrome_version()
         self.driver = uc.Chrome(
             headless=self.headless,

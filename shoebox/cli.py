@@ -81,17 +81,78 @@ def main() -> None:
     p_relist.add_argument("--dry-run", action="store_true")
 
     # Send offers to watchers
-    p_offers = sub.add_parser("send-offers", help="Send negotiation offers to eligible watchers")
+    p_offers = sub.add_parser(
+        "send-offers", help="Send negotiation offers to eligible watchers via Slack prompts"
+    )
     p_offers.add_argument("--dry-run", action="store_true")
     p_offers.add_argument(
-        "--max-price",
-        type=float,
-        default=19.99,
-        help="Only send offers on listings priced at or below this (default 19.99)",
+        "--auto",
+        action="store_true",
+        help="Send discount-matrix offers headlessly instead of prompting via Slack",
+    )
+    p_offers.add_argument(
+        "--timeout-s",
+        type=int,
+        default=900,
+        help="Seconds to wait for Slack replies before unanswered prompts expire (default 900)",
     )
 
     # Sync Topps Calendar
     sub.add_parser("sync-topps-calendar")
+
+    # Saved eBay searches -> Slack
+    p_watch = sub.add_parser(
+        "watch-searches",
+        help="Run due saved eBay searches and alert Slack about new listings",
+    )
+    p_watch.add_argument(
+        "--force", action="store_true", help="Ignore intervals; run every enabled search"
+    )
+    p_watch.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Log what would be posted; no Slack, no state writes, no GCS/BigQuery",
+    )
+    p_watch.add_argument(
+        "--only", action="append", metavar="NAME", help="Restrict to this search (repeatable)"
+    )
+    p_watch.add_argument(
+        "--reseed",
+        action="append",
+        metavar="NAME",
+        help="Discard the seen-cache and silently re-seed this search (repeatable)",
+    )
+    p_watch.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
+    p_watch.add_argument(
+        "--no-flush", action="store_true", help="Skip the GCS/BigQuery flush this run"
+    )
+    p_watch.add_argument(
+        "--list", action="store_true", help="Validate the config and list searches; run nothing"
+    )
+
+    # Inspect one saved search's results without alerting or writing state
+    p_prev = sub.add_parser(
+        "preview-search",
+        help="Show every listing a saved search returns, and why any were filtered out",
+    )
+    p_prev.add_argument("name", help="Search name from searches.yaml")
+    p_prev.add_argument("--csv", help="Also write the full result set (all columns) to this path")
+    p_prev.add_argument(
+        "--passed-only", action="store_true", help="Hide listings rejected by post-filters"
+    )
+    p_prev.add_argument("--max-results", type=int, help="Cap the fetch (default: seed_max_results)")
+    p_prev.add_argument("--rows", type=int, default=40, help="Rows to print (default 40; 0 = all)")
+    p_prev.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
+
+    # Which eBay aspects a saved search could filter on
+    p_asp = sub.add_parser(
+        "search-aspects",
+        help="List the eBay aspects available to filter a saved search on, with counts",
+    )
+    p_asp.add_argument("name", help="Search name from searches.yaml")
+    p_asp.add_argument("--top", type=int, default=8, help="Values shown per aspect (default 8)")
+    p_asp.add_argument("--csv", help="Write every aspect/value pair to this path")
+    p_asp.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
 
     args = parser.parse_args()
 
@@ -199,7 +260,40 @@ def main() -> None:
     if args.cmd == "send-offers":
         from shoebox.pipelines.send_offers import main as send_offers
 
-        send_offers(dry_run=args.dry_run, max_price=args.max_price)
+        send_offers(dry_run=args.dry_run, auto=args.auto, timeout_s=args.timeout_s)
+        return
+
+    if args.cmd == "watch-searches":
+        from shoebox.pipelines.watch_searches import watch_searches
+
+        watch_searches(
+            force=args.force,
+            dry_run=args.dry_run,
+            only=args.only,
+            reseed=args.reseed,
+            config_path=args.config,
+            flush=not args.no_flush,
+            list_only=args.list,
+        )
+        return
+
+    if args.cmd == "preview-search":
+        from shoebox.pipelines.preview_search import run_preview
+
+        run_preview(
+            args.name,
+            config_path=args.config,
+            max_results=args.max_results,
+            passed_only=args.passed_only,
+            csv_path=args.csv,
+            limit_rows=args.rows or None,
+        )
+        return
+
+    if args.cmd == "search-aspects":
+        from shoebox.pipelines.preview_search import run_aspects
+
+        run_aspects(args.name, config_path=args.config, top=args.top, csv_path=args.csv)
         return
 
     if args.cmd == "sync-topps-calendar":

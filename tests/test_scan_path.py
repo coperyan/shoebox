@@ -11,7 +11,7 @@ from shoebox.ui.helpers import handle_image_path
 def _point_settings_at(tmp_path, monkeypatch, **path_overrides):
     """Write a config with the given paths overrides and make the no-arg
     get_settings() (used by handle_image_path) load it."""
-    with open("configs/app.yaml.example") as f:
+    with open("configs/app.example.yml") as f:
         raw = yaml.safe_load(f)
     raw["paths"].update(path_overrides)
     cfg = tmp_path / "app.yaml"

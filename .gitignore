@@ -3,6 +3,8 @@ configs/ebay_rest.json
 configs/app.yaml
 configs/gcp.json
 configs/ebay_legacy.json
+# Saved eBay searches -- your buy criteria and price ceilings are private.
+configs/searches.yaml
 
 # --- Real business data (samples are committed instead) ---
 # Keep your real workbooks locally; only the *.sample.xlsx templates are tracked.
@@ -24,6 +26,9 @@ __pycache__/
 logs/
 exports/
 data/*
+scripts/*.bat
+scripts/*.xml
+scripts/tasks/*.xml
 
 # --- Local tooling / editor / caches ---
 .claude/
@@ -35,3 +40,9 @@ CLAUDE.bat
 # --- OS / misc ---
 *.DS_Store
 **/~$*
+!*.gitkeep
+
+## Exclude non-sample tools
+tools/*
+!tools/README.md
+!tools/checklist_parallel_metadata.sample.xlsx

@@ -1,7 +1,7 @@
 """Promoted-listings campaign routing.
 
 Campaign IDs and routing rules live in `settings.store.ad_campaigns`
-(see `configs/app.yaml.example`). This keeps eBay-account-specific IDs out
+(see `configs/app.example.yml`). This keeps eBay-account-specific IDs out
 of the source tree.
 """
 

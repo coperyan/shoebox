@@ -18,6 +18,7 @@ Automate common workflows for an eBay sports card store:
 - Create eBay listings via `ebay_rest`
 - Log outputs to **JSONL → GCS → BigQuery**
 - Download existing listing details and performance metrics for monitoring
+- Watch **YAML-defined eBay searches** and get new listings in Slack
 - **Slack** notifications, interactive price approvals, and a chat command bot
 
 📚 **Full documentation lives in [`docs/`](docs/README.md)** — architecture,
@@ -102,7 +103,7 @@ Required permissions:
 ## Configuration
 
 All runtime configuration is centralized in `configs/app.yaml`, validated by
-`settings.py`. Copy `configs/app.yaml.example` (and the other
+`settings.py`. Copy `configs/app.example.yml` (and the other
 `configs/*.example` templates) to get started — see
 [docs/configuration.md](docs/configuration.md) for the full reference.
 
@@ -153,6 +154,33 @@ Every mutating pipeline (`create-listings`, `create-variation-listings`,
 `relist-listings`, `send-offers`) supports `--dry-run` and creates offers
 unpublished unless `--publish` is passed. See [docs/cli.md](docs/cli.md) for
 every command and flag.
+
+### Watch saved eBay searches
+
+Declare searches in `configs/searches.yaml` (gitignored — copy
+`configs/searches.example.yml`) and get new listings pushed to Slack: one
+parent message per search, each listing as a thread reply.
+
+```yaml
+searches:
+  - name: jordan_psa10_bin
+    query: "michael jordan psa 10"
+    category_ids: ["261328"]
+    interval: 15m
+    price: { min: 25, max: 200 }
+    title_exclude: [reprint, lot, custom]
+```
+
+```bash
+shoebox watch-searches --list              # validate config, run nothing
+shoebox watch-searches --dry-run --only jordan_psa10_bin
+shoebox watch-searches                     # what cron runs
+```
+
+A single cron entry drives everything — each search's own `interval` decides
+when it fires, so adding a search means editing YAML only. The first run of a
+search seeds silently, so you only ever get alerted about genuinely new
+listings. See [docs/cli.md](docs/cli.md#watch-searches).
 
 ### Sync Topps release calendar
 

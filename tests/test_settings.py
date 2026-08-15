@@ -4,12 +4,12 @@ from shoebox.settings import Settings, get_settings
 
 
 def _example_raw():
-    with open("configs/app.yaml.example") as f:
+    with open("configs/app.example.yml") as f:
         return yaml.safe_load(f)
 
 
 def test_example_config_loads_with_store_section():
-    s = get_settings("configs/app.yaml.example")
+    s = get_settings("configs/app.example.yml")
     assert s.store.category_id == "261328"
     assert s.store.merchant_location_key == "YOUR_LOCATION_KEY"
     assert s.store.policies.payment_policy_id == "0000000000"

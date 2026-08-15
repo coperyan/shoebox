@@ -40,7 +40,7 @@ def build_session(settings: Settings | None = None) -> EbaySession:
     if not config_file.exists():
         raise FileNotFoundError(
             f"Missing ebay_rest config file: {config_file}. "
-            "Create one from configs/ebay_rest.json.example (or set EBAY_REST_CONFIG_PATH)."
+            "Create one from configs/ebay_rest.example.json (or set EBAY_REST_CONFIG_PATH)."
         )
 
     try:

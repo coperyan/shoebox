@@ -4,11 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shoebox"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.11"
 dependencies = [
   "beautifulsoup4",
   "chrome_version",
+  "db-dtypes",
   "ebay_rest",
   "google-api-python-client",
   "google-auth",
@@ -24,6 +25,7 @@ dependencies = [
   "requests",
   "rich",
   "selenium",
+  "setuptools<81",
   "streamlit",
   "undetected-chromedriver",
   "unidecode",

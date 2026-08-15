@@ -1,0 +1,160 @@
+[
+  {
+    "name": "run_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "One watch-searches invocation"
+  },
+  {
+    "name": "search_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Search name from configs/searches.yaml"
+  },
+  {
+    "name": "item_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "eBay Browse item id (v1|123|0)"
+  },
+  {
+    "name": "cache_key",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Dedup key: search_name + unit separator + item_id"
+  },
+  {
+    "name": "hit_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "NEW_LISTING (v1). Extension point for PRICE_DROP / ENDING_SOON"
+  },
+  {
+    "name": "hit_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When this run observed the item"
+  },
+  {
+    "name": "first_seen_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "First observation of this item by this search"
+  },
+  {
+    "name": "is_seed",
+    "type": "BOOLEAN",
+    "mode": "REQUIRED",
+    "description": "True for rows written by a search's silent first run"
+  },
+  {
+    "name": "notified",
+    "type": "BOOLEAN",
+    "mode": "REQUIRED",
+    "description": "False for seed rows and for hits past the max_notify cap"
+  },
+  {
+    "name": "notified_at",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "slack_channel",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "slack_parent_ts",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "ts of the parent message, to jump back to the thread"
+  },
+  {
+    "name": "title",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "item_web_url",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "thumbnail_url",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "item_origin_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE",
+    "description": "eBay listing creation date"
+  },
+  {
+    "name": "last_price",
+    "type": "NUMERIC",
+    "mode": "NULLABLE",
+    "description": "Price at hit time; carried for future price-drop alerts"
+  },
+  {
+    "name": "last_price_currency",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "current_bid",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "shipping_cost",
+    "type": "NUMERIC",
+    "mode": "NULLABLE",
+    "description": "Cheapest quoted shipping option"
+  },
+  {
+    "name": "free_shipping",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "buying_options",
+    "type": "STRING",
+    "mode": "REPEATED"
+  },
+  {
+    "name": "condition",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "condition_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "seller_username",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "seller_feedback_score",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "item_location_country",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "leaf_category_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "item_end_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  }
+]

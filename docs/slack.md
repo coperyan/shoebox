@@ -28,10 +28,21 @@ Synchronous wrappers (each runs its own event loop; safe to call from plain
 pipeline code):
 
 ```python
-notify(channel, message, thread_ts=None) -> str
+notify(channel, message, thread_ts=None, unfurl_links=False, blocks=None) -> str
 ```
 Posts a message; returns its `ts` so follow-ups can thread under it. Used for
 all fire-and-forget notifications and the threaded order summaries.
+
+`unfurl_links` must be opted into: **bot tokens do not expand text links by
+default**, so a message whose value *is* the link preview gets no preview at
+all unless it's set. Treat previews as best-effort — they depend on eBay's OG
+tags and Slack fetching them asynchronously, neither of which is under our
+control. When an image matters, send a Block Kit `image` block instead (see
+[Saved-search alerts](#saved-search-alerts)).
+
+`blocks`, when given, becomes the rendered message and `message` is demoted to
+the push-notification and fallback string — so it must still read as a complete
+summary on its own.
 
 ```python
 notify_and_wait(channel, message, timeout_s=600) -> str
@@ -57,6 +68,30 @@ In all three cases the original message is edited to show the outcome
 button is removed, so it can't be double-clicked or clicked after the waiting
 pipeline has moved on. Clicks on the wrong message are ignored (matched by
 `ts`).
+
+```python
+notify_batch_and_wait(channel, prompts, on_reply, timeout_s=900)
+    -> dict[key, outcome]
+```
+Batch counterpart to the approval helper: posts every `BatchPrompt`
+(`key`/`text`/`blocks`) up front — paced 1 s apart — then holds **one** Socket
+Mode connection and dispatches threaded replies to any of them as they arrive,
+in whatever order the user answers. Each reply invokes the async
+`on_reply(key, reply_text, post_thread)` callback: an outcome string resolves
+that prompt (its message is rewritten to show the outcome), `None` leaves it
+pending so the user can reply again (the callback posts its own threaded
+hint via `post_thread`). Prompts still pending at `timeout_s` are stamped
+`⌛ Expired` and returned with `EXPIRED_STATUS` instead of raising. Wrap
+blocking work inside `on_reply` in `asyncio.to_thread` — it runs on the
+listener's event loop.
+
+Socket Mode events are only the fast path: **Slack load-balances events
+across all of an app's open Socket Mode connections**, and the always-on
+slack-bot service usually holds one — so a reply's event may be delivered to
+a connection this waiter never sees. Every `sweep_interval_s` (default 15 s)
+the waiter therefore polls `conversations.replies` on each pending thread and
+processes anything the socket missed; replies are deduped between the two
+paths, so worst case a reply is acted on ~15 s late rather than lost.
 
 ```python
 notify_and_wait_reaction(channel, message, timeout_s=600,
@@ -107,7 +142,7 @@ tables):
 
 ## Price approval flows
 
-Three pipelines prompt the pricing channel. Replies are parsed by
+Four pipelines prompt the pricing channel. Replies are parsed by
 `utils/pricing.parse_price_reply`, which tolerates `$4.99`, ` 4.99 `,
 `1,299.99` and returns `None` for anything that isn't a positive price
 (`no`, `Y`, typos) — callers then apply an explicit policy:
@@ -116,8 +151,12 @@ Three pipelines prompt the pricing channel. Replies are parsed by
 |---|---|---|---|---|
 | `relist-listings` | `*Price approval:* <title>` with `Approve $X` button | Button click | Threaded reply with a number | **Skip the listing** (stays live untouched; next run retries). Rationale: approval is the point — never change a price without sign-off |
 | `create-listings --scrape-prices` | `Please confirm price: X - <card>` | Reply `Y`/`YES` | Reply with a number | **Proceed with the proposed price** (scraped price, or the queue price if scraping failed). Rationale: the card is queued to be listed; the best-known price beats aborting the whole run |
+| `send-offers` | One message per eligible listing (title, current price, photo), all posted up front — to `offers_channel` when set, else the pricing channel | Threaded reply with the offer amount → sends immediately | Reply `skip` to resolve without sending | **Unparseable/out-of-range reply or eBay rejection** → threaded hint, prompt stays pending for another reply. **Deadline (`--timeout-s`, default 900 s for the whole batch)** → prompt stamped `⌛ Expired`; the listing reappears next run. Rationale: no offer is ever sent without an explicit amount |
 
-Default timeout is 600 s per prompt (`timeout_s` parameter).
+Default timeout is 600 s per prompt (`timeout_s` parameter); `send-offers`
+uses a single 900 s deadline shared by the whole batch. Like `relist-listings`,
+`send-offers` blocks waiting on Slack and therefore stays out of the command
+bot's whitelist.
 
 ## The command bot (`services/slack_bot_service.py`)
 
@@ -144,8 +183,13 @@ stdout+stderr in a code block (tail-truncated near Slack's message limit).
 `create-queue-excel`, `create-listings` (`--dry-run --publish --schedule
 --scrape-prices`), `sync-active-listings`, `sync-active-listing-details`,
 `sync-orders`, `orders-awaiting-shipment` (`--pull-order --buyer-order
---display --message`). `ui` is deliberately excluded (needs a display), as are
-the pipelines that would themselves block on Slack approval prompts.
+--display --message`), `watch-searches` (`--force --dry-run --list`). `ui` is
+deliberately excluded (needs a display), as are the pipelines that would
+themselves block on Slack approval prompts.
+
+> Note: the validator keeps only exact flag matches, so value-taking flags
+> (`--only NAME`, `--config PATH`) can't be whitelisted — the value would be
+> silently dropped and the flag would then error. Run those from a shell.
 
 **Security:**
 - Channel-scoped: only messages in `slack.command_channel` are considered.
@@ -162,6 +206,37 @@ the pipelines that would themselves block on Slack approval prompts.
 section table as a reply in its thread. The channel shows one line per run;
 details live in the thread. Long tables chunk into `(part i/N)` messages
 within the same thread.
+
+## Saved-search alerts
+
+`watch-searches` posts to `slack.search_channel` (falling back to
+`notify_channel`, or a per-search `channel:` override in `searches.yaml`). Same
+parent-plus-thread shape as the order summaries: one parent per search that has
+hits, each new listing as a reply.
+
+Three deliberate differences from the table-based summaries:
+
+- **No code fences.** `slack_formatting.table()` renders inside a fenced block,
+  and Slack neither linkifies nor unfurls URLs there. Item replies are mrkdwn —
+  `*<url|Title>*`, then price/condition/seller lines.
+- **The photo is an image block, not an unfurl.** `build_item_message()` returns
+  a `section` + `image` pair carrying the listing photo, and turns
+  `unfurl_links` off. Leaving the picture to Slack's crawler would make the most
+  useful part of a card alert depend on eBay's OG tags — so the image is
+  requested explicitly instead. eBay serves every size off one CDN path, so
+  `ItemSummary.thumbnail(500)` rewrites the `s-l<n>` segment to get a 500px
+  image at no extra API call; Slack downscales anything larger anyway.
+  A listing with no photo at all falls back to the old behavior — bare URL on
+  its own line plus `unfurl_links=True`, which is its only shot at an image.
+  `--dry-run` flags those listings so you know before the run goes live.
+- **Explicit pacing.** Slack permits roughly one `chat.postMessage` per second
+  per channel, and each `notify()` spins up its own event loop. The SDK's
+  rate-limit handler only reacts *after* a 429 and gives up after three
+  retries — which would abort a run mid-thread — so the watcher sleeps ~1s
+  between replies and caps them at `max_notify` with a summarized overflow line.
+
+A search with no new listings posts nothing at all: at ten searches on a
+15-minute interval, "0 new" messages would otherwise be thousands per day.
 
 ## Design notes & history
 

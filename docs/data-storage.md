@@ -25,7 +25,7 @@ source → normalize → local JSONL (exports/jsonl/…) → GCS staging object 
 |---|---|---|
 | `image_bucket` | `images/<set>/<subset>/<parallel|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies | `ImageLogClient.upload_image`, relist pipelines |
 | `metadata_bucket` | `metadata/checklist/…`, `metadata/parallels/…` staging JSONL | `sync-metadata` (`TableAsset`) |
-| `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/ebay_listings/…` staging JSONL | monitoring pipelines, listing-result sync |
+| `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/ebay_listings/…`, `logs/search_hits/…` staging JSONL | monitoring pipelines, listing-result sync, saved-search watcher |
 | `image_log_bucket` | `logs/image_log/…` staging JSONL | `ImageLogClient.flush_append_log` |
 
 Card images are made public (their public URLs go into eBay listings).
@@ -44,6 +44,7 @@ by the shipped SQL views/queries:
 | `ebay` | `active_listing_details` | `sync-active-listing-details` | `active_listing_details.json` | Adds item-specifics + picture URLs as JSON columns |
 | `ebay` | `ebay_listings` | `create-listings` / variation pipeline | `ebay_listings.json` | `EbayListingResult` rows: sku, ids, success, full request/response JSON |
 | `images` | `image_log` | `ImageLogClient` | `image_log.json` | One row per net-new image upload |
+| `ebay` | `search_hits` | `watch-searches` | `search_hits.json` | One row per saved-search observation. `is_seed`/`notified` distinguish silent seeds and `max_notify` overflow from real alerts; `hit_type` is always `NEW_LISTING` in v1 |
 
 ### Views & queries (`configs/bigquery/`)
 
@@ -71,6 +72,10 @@ by the shipped SQL views/queries:
 | `exports/jsonl/image_cache.jsonl` | Persistent | Image dedup index — cache key → `ImageLogEntry`; prevents re-uploads across runs |
 | `exports/jsonl/image_log_append.jsonl` | Flushed after successful GCS+BQ sync | Net-new uploads awaiting BigQuery |
 | `exports/jsonl/orders.jsonl`, `active_listings.jsonl`, `active_listing_details.jsonl` | Overwritten per run | Monitoring staging |
+| `exports/jsonl/searches/search_state.json` | Persistent | Per-search `last_run_at` / `seeded_at` / status. Read once per tick so the due-check never loads a large cache |
+| `exports/jsonl/searches/<name>_seen.jsonl` | Persistent, append-only | Saved-search dedup cache; later lines win. Compacted and pruned (`prune_seen_after_days`) at end of run |
+| `exports/jsonl/searches/search_hits_append.jsonl` | Flushed after successful GCS+BQ sync | Buffered `search_hits` rows; survives a failed flush and retries next run |
+| `exports/jsonl/searches/.lock` | Per run | Advisory lock (`flock` / `msvcrt.locking`) guarding against overlapping scheduled invocations |
 | `data/checklist.csv`, `data/parallels.csv` | Overwritten per sync | Normalized metadata extracts |
 | `data/Inputs (Param).xlsm` | User-maintained | Excel queue input |
 | `scans_dir/<scan_prefix><id><scan_extension>` | User-maintained | Source card scans (naming set by `scan_prefix`/`scan_number_padding`/`scan_extension`) |

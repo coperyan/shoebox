@@ -7,6 +7,14 @@ from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.settings import get_settings
 from shoebox.utils.shorten_team import shorten_team_name
 
+## Condition mapping
+_CONDITION_DESCRIPTORS = {
+    "NEAR_MINT_OR_BETTER": "400010",
+    "EXCELLENT": "400011",
+    "VERY_GOOD": "400012",
+    "POOR": "400013",
+}
+
 # Store description footer appended to every listing. `{store_name}` is filled
 # from settings.store.name at build time (see store_footer_html).
 _STORE_FOOTER_TEMPLATE = """
@@ -276,9 +284,22 @@ def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> di
     "Near Mint or Better"; the package is a one-ounce plain-white-envelope
     style LETTER (7x5x1 in).
     """
+    descriptor = get_settings().store.condition_descriptor
+    if descriptor not in _CONDITION_DESCRIPTORS:
+        # Settings doesn't validate this value, so a typo in app.yaml would
+        # otherwise surface as a bare KeyError mid-listing-build.
+        raise ValueError(
+            f"store.condition_descriptor {descriptor!r} in app.yaml is not one of "
+            f"{sorted(_CONDITION_DESCRIPTORS)}"
+        )
     return {
         "condition": get_settings().store.condition,
-        "conditionDescriptors": [{"name": "40001", "values": ["400010"]}],
+        "conditionDescriptors": [
+            {
+                "name": "40001",
+                "values": [_CONDITION_DESCRIPTORS[descriptor]],
+            }
+        ],
         "packageWeightAndSize": {
             "dimensions": {"height": 1, "length": 7, "unit": "INCH", "width": 5},
             "packageType": "LETTER",

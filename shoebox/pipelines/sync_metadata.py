@@ -47,6 +47,9 @@ def update_csvs():
                 pd.to_numeric(df["print_run"], errors="coerce").round().astype("Int64")
             )
         if s == "Checklist":
+            # fillna must run first: astype(str) turns NaN into the literal
+            # string "nan", which fillna then can't see.
+            df["player"] = df["player"].fillna("")
             df["player"] = df["player"].astype(str)
             df["player"] = df["player"].apply(lambda x: unidecode(x, "utf-8"))
         df.to_csv(Path(settings.paths.data_dir) / f"{s.lower()}.csv", index=False)

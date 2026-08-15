@@ -96,28 +96,7 @@ def ebay_image_to_gcs(
 
 
 def get_campaign_ads(ebay_api: EbayClient) -> pd.DataFrame:
-    campaigns = ebay_api.api.sell_marketing_get_campaigns()
-    campaigns = [x.get("record") for x in campaigns if "record" in x]
-
-    results = []
-    for campaign in campaigns:
-        if campaign.get("campaign_status") == "RUNNING":
-            ads = ebay_api.api.sell_marketing_get_ads(campaign_id=campaign.get("campaign_id"))
-            iter_results = [x.get("record") for x in ads if "record" in x]
-            results.extend(
-                [
-                    {
-                        **{
-                            "campaign_id": campaign.get("campaign_id"),
-                            "campaign_name": campaign.get("campaign_name"),
-                            "campaign_status": campaign.get("campaign_status"),
-                        },
-                        **x,
-                    }
-                    for x in iter_results
-                ]
-            )
-    return pd.json_normalize(results)
+    return pd.json_normalize(ebay_api.marketing.get_campaign_ads())
 
 
 def add_campaign_info(df: pd.DataFrame, ebay_api: EbayClient) -> pd.DataFrame:

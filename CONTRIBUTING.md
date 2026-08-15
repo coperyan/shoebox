@@ -16,10 +16,10 @@ pip install -e ".[dev]"
 Copy the config templates and fill in your own values:
 
 ```bash
-cp configs/app.yaml.example configs/app.yaml
-cp configs/gcp.json.example configs/gcp.json
-cp configs/ebay_rest.json.example configs/ebay_rest.json
-cp configs/ebay_legacy.json.example configs/ebay_legacy.json
+cp configs/app.example.yml configs/app.yaml
+cp configs/gcp.example.json configs/gcp.json
+cp configs/ebay_rest.example.json configs/ebay_rest.json
+cp configs/ebay_legacy.example.json configs/ebay_legacy.json
 cp tools/checklist_parallel_metadata.sample.xlsx tools/checklist_parallel_metadata.xlsm
 ```
 
@@ -32,7 +32,7 @@ for the full walkthrough.
 pytest -q
 ```
 
-Tests point the settings loader at `configs/app.yaml.example` (via
+Tests point the settings loader at `configs/app.example.yml` (via
 `tests/conftest.py`), so they run without any real credentials.
 
 ## Style / linting

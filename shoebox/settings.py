@@ -63,6 +63,17 @@ class PathSettings(BaseModel):
     scan_number_padding: int = 4
     scan_extension: str = ".jpg"
 
+    # Saved-search definitions (gitignored; template configs/searches.example.yml).
+    # A file, not a directory -- deliberately absent from ensure_dirs().
+    searches_file: str = "configs/searches.yaml"
+
+    # When true, watch-searches runs `git pull --ff-only` in the directory
+    # containing searches_file before loading it. Point searches_file at a
+    # clone of a private repo and edits made anywhere (e.g. GitHub mobile)
+    # take effect on the next run. Requires searches_file to live inside a
+    # git clone with a configured upstream and non-interactive auth.
+    searches_git_pull: bool = False
+
     def ensure_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
         Path(self.exports_dir).mkdir(parents=True, exist_ok=True)
@@ -78,6 +89,11 @@ class SlackSettings(BaseModel):
     notify_channel: str
     pricing_channel: str
     command_channel: str
+    # Saved-search hits. Optional so existing configs keep validating; falls
+    # back to notify_channel when unset.
+    search_channel: str = ""
+    # send-offers prompts. Optional; falls back to pricing_channel when unset.
+    offers_channel: str = ""
     # Slack user IDs allowed to run commands in command_channel.
     # Empty list = anyone in the channel may run commands.
     allowed_user_ids: list[str] = []
@@ -130,6 +146,8 @@ class StoreSettings(BaseModel):
     category_id: str = "261328"
     # Item condition enum for single-card listings.
     condition: str = "USED_VERY_GOOD"
+    # Item condition descriptor
+    condition_descriptor: str = "NEAR_MINT_OR_BETTER"
     # Message attached to seller-initiated best offers (negotiation API).
     offer_message: str = "Enjoy the discount on this card! Valid for the next 24 hours. Thank you!"
     # Price threshold separating the low/high fulfillment policies.
@@ -169,7 +187,7 @@ def get_settings(config_path: str | os.PathLike[str] | None = None) -> Settings:
     if not path.exists():
         raise FileNotFoundError(
             f"Missing config file: {path}. "
-            "Create it from configs/app.yaml.example (or set SHOEBOX_CONFIG_PATH)."
+            "Create it from configs/app.example.yml (or set SHOEBOX_CONFIG_PATH)."
         )
 
     raw = yaml.safe_load(path.read_text(encoding="utf-8"))

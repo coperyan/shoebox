@@ -19,13 +19,7 @@ class NegotiationOffer(Model):
 
     allow_counter_offer: bool = False
     message: str = Field(default_factory=_default_offer_message)
-    duration_unit: str = "DAY"
-    duration_value: int = 1
     currency: str = "USD"
-
-    @property
-    def offer_duration(self) -> dict:
-        return {"unit": self.duration_unit, "value": self.duration_value}
 
     @property
     def amount(self) -> dict:
@@ -43,10 +37,11 @@ class NegotiationOffer(Model):
 
     @property
     def to_json(self) -> dict:
+        # No offerDuration: eBay applies its default (1 day), which is what
+        # the default offer_message promises.
         return {
             "allowCounterOffer": self.allow_counter_offer,
             "message": self.message,
-            # "offerDuration": self.offer_duration,
             "offeredItems": self.offered_item,
         }
 
@@ -54,7 +49,3 @@ class NegotiationOffer(Model):
     def from_api(cls, **kwargs) -> "NegotiationOffer":
         # Preserve raw for debugging/auditing
         return cls.model_validate({**kwargs})
-
-
-class NegotationOfferResponse:
-    pass

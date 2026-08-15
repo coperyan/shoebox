@@ -57,7 +57,7 @@ class TestStoreFooter:
         assert "My Cards Shop" in html
 
     def test_reads_name_from_settings(self):
-        # conftest points settings at app.yaml.example -> "Your Store Name"
+        # conftest points settings at app.example.yml -> "Your Store Name"
         assert "Your Store Name" in store_footer_html()
 
     def test_store_name_is_not_hardcoded(self):
