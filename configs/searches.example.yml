@@ -106,6 +106,13 @@ defaults:
   #
   # eBay Browse has no negative-keyword support at all, which is why title
   # exclusion has to happen here. Case-insensitive substring matching.
+  # eBay sometimes pads a thin result set with looser matches that don't
+  # contain every query term (a "tim lincecum auto" search returning plain
+  # Lincecum cards). true (default) re-checks the query against titles --
+  # substring, case-insensitive, so "auto" also accepts "Autograph". Set false
+  # on a search whose query is meant to match item specifics, not title words.
+  require_query_in_title: true
+
   title_exclude: [reprint, lot, digital, custom]
   title_must_include_all: []
   title_must_include_any: []

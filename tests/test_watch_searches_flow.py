@@ -508,8 +508,8 @@ class TestScheduling:
                 {
                     "version": 1,
                     "searches": [
-                        {"name": "one", "query": "x", "interval": "15m"},
-                        {"name": "two", "query": "y", "interval": "15m"},
+                        {"name": "one", "query": "jordan", "interval": "15m"},
+                        {"name": "two", "query": "jordan", "interval": "15m"},
                     ],
                 }
             )
@@ -704,11 +704,11 @@ class TestDryRun:
         """
         path = searches_yaml()
         with caplog.at_level("INFO"):
-            run(path, store, [item("a", title="Matt Cain Auto /99")], Recorder(), dry_run=True)
+            run(path, store, [item("a", title="Michael Jordan Auto /99")], Recorder(), dry_run=True)
 
         output = caplog.text
         assert "would seed" in output
-        assert "Matt Cain Auto /99" in output
+        assert "Michael Jordan Auto /99" in output
         assert "https://ebay.com/itm/a" in output
 
     def test_seed_dry_run_reports_when_nothing_matched(self, searches_yaml, store, caplog):

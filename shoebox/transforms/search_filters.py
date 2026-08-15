@@ -16,12 +16,45 @@ Pure functions: no I/O, no clients, no settings.
 from __future__ import annotations
 
 import logging
+import re
 from decimal import Decimal
 
 from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch
 
 logger = logging.getLogger(__name__)
+
+_OR_GROUP_RE = re.compile(r"\(([^)]*)\)")
+_QUOTED_PHRASE_RE = re.compile(r'"([^"]*)"')
+
+
+def query_terms(query: str) -> list[list[str]]:
+    """Parse an eBay ``q`` string into AND-groups of acceptable alternatives.
+
+    eBay's grammar: space-separated terms are ANDed, ``(a, b)`` is an OR group,
+    ``"a b"`` is an exact phrase. ``'lincecum (auto, autograph)'`` parses to
+    ``[['auto', 'autograph'], ['lincecum']]`` — every group must match, a group
+    matches when any alternative does. Lowercased for the substring checks.
+    """
+    groups: list[list[str]] = []
+
+    def _grab_group(match: re.Match[str]) -> str:
+        alternatives = [a.strip().strip('"').lower() for a in match.group(1).split(",")]
+        alternatives = [a for a in alternatives if a]
+        if alternatives:
+            groups.append(alternatives)
+        return " "
+
+    def _grab_phrase(match: re.Match[str]) -> str:
+        phrase = match.group(1).strip().lower()
+        if phrase:
+            groups.append([phrase])
+        return " "
+
+    rest = _OR_GROUP_RE.sub(_grab_group, query)
+    rest = _QUOTED_PHRASE_RE.sub(_grab_phrase, rest)
+    groups.extend([term.strip('"').lower()] for term in rest.split() if term.strip('"'))
+    return groups
 
 
 def _set_clause(field: str, values: list[str]) -> str:
@@ -119,6 +152,17 @@ def rejection_reason(item: ItemSummary, search: ResolvedSearch) -> str | None:
     just dropping the row. First failing filter wins.
     """
     title = (item.title or "").lower()
+
+    # eBay pads a thin result set with looser matches that don't contain every
+    # query term ("results matching fewer words") -- without this re-check, a
+    # narrow search intermittently floods the channel with listings that match
+    # only part of the query. Substring matching on purpose: 'auto' should
+    # accept 'Autograph'.
+    if search.require_query_in_title and search.query:
+        for alternatives in query_terms(search.query):
+            if not any(alt in title for alt in alternatives):
+                wanted = " or ".join(repr(a) for a in alternatives)
+                return f"require_query_in_title: title missing {wanted}"
 
     # Browse has no negative keywords -- this is the one filter that can only
     # live here.

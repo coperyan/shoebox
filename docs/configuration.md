@@ -240,6 +240,7 @@ supports server-side.
 
 | Key | Why it can't be server-side |
 |---|---|
+| `require_query_in_title` (default `true`) | eBay pads thin result sets with looser matches missing some `q` terms; this re-checks the query against titles (AND terms, OR groups, quoted phrases) |
 | `title_exclude` | **eBay Browse has no negative-keyword support at all.** This is the unavoidable one |
 | `title_must_include_all` / `_any` | `q` matches the whole listing with Best-Match fuzz, not exact title substrings |
 | `seller_min_feedback_score` | No seller-quality filter exists. Unknown feedback fails an explicit threshold |

@@ -175,6 +175,12 @@ class SearchDefaults(_ConfigModel):
     free_shipping_only: bool = False
 
     # Post-filters (no eBay server-side equivalent — see transforms/search_filters.py)
+    # eBay pads thin result sets with looser matches that don't contain every
+    # query term ("results matching fewer words"), which can turn a narrow
+    # search into a hundred-item false-alert flood. This re-checks the query
+    # against titles on our side. Off per search if a query is deliberately
+    # meant to match item specifics rather than title words.
+    require_query_in_title: bool = True
     title_exclude: list[str] = Field(default_factory=list)
     title_must_include_all: list[str] = Field(default_factory=list)
     title_must_include_any: list[str] = Field(default_factory=list)
@@ -223,6 +229,7 @@ class SavedSearch(_ConfigModel):
     exclude_sellers: list[str] | None = None
     free_shipping_only: bool | None = None
 
+    require_query_in_title: bool | None = None
     title_exclude: list[str] | None = None
     title_must_include_all: list[str] | None = None
     title_must_include_any: list[str] | None = None
@@ -287,6 +294,7 @@ class ResolvedSearch(_ConfigModel):
     exclude_sellers: list[str]
     free_shipping_only: bool
 
+    require_query_in_title: bool
     title_exclude: list[str]
     title_must_include_all: list[str]
     title_must_include_any: list[str]

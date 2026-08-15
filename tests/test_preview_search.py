@@ -98,7 +98,7 @@ class TestPreviewSearch:
         df = preview_search(
             "s1",
             config_path=path,
-            fetch=fetcher([item("a"), item("b", title="Matt Cain REPRINT card")]),
+            fetch=fetcher([item("a"), item("b", title="Matt Cain Auto REPRINT card")]),
         )
         assert len(df) == 2
         rejected = df[~df["passed"]]
@@ -111,7 +111,7 @@ class TestPreviewSearch:
             "s1",
             config_path=path,
             passed_only=True,
-            fetch=fetcher([item("a"), item("b", title="Matt Cain REPRINT")]),
+            fetch=fetcher([item("a"), item("b", title="Matt Cain Auto REPRINT")]),
         )
         assert len(df) == 1
 
@@ -161,9 +161,9 @@ class TestPreviewSearch:
             fetch=fetcher(
                 [
                     item("a"),
-                    item("b", title="Cain reprint"),
-                    item("c", title="Cain reprint 2"),
-                    item("d", title="Cain card lot"),
+                    item("b", title="Matt Cain auto reprint"),
+                    item("c", title="Matt Cain auto reprint 2"),
+                    item("d", title="Matt Cain auto card lot"),
                 ]
             ),
         )

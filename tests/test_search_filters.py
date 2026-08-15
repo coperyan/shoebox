@@ -10,6 +10,8 @@ from shoebox.transforms.search_filters import (
     cheapest_shipping,
     filter_items,
     passes_post_filters,
+    query_terms,
+    rejection_reason,
 )
 
 
@@ -206,6 +208,71 @@ class TestPostFilters:
 
     def test_no_filters_passes_everything(self):
         assert passes_post_filters(item(), resolve(title_exclude=[]))
+
+
+class TestRequireQueryInTitle:
+    """eBay pads thin result sets with looser matches ("results matching fewer
+    words") — a 'tim lincecum auto' search intermittently returns every
+    Lincecum listing. This re-check is what stops the flood."""
+
+    def test_backfill_result_is_rejected(self):
+        search = resolve(query="tim lincecum auto")
+        padded = item(title="2010 Topps Tim Lincecum Base Card")
+        assert passes_post_filters(padded, search) is False
+        assert "require_query_in_title" in rejection_reason(padded, search)
+        assert "'auto'" in rejection_reason(padded, search)
+
+    def test_full_match_passes(self):
+        search = resolve(query="tim lincecum auto")
+        assert passes_post_filters(item(title="2010 Tim Lincecum AUTO /25"), search)
+
+    def test_substring_accepts_autograph_for_auto(self):
+        search = resolve(query="tim lincecum auto")
+        assert passes_post_filters(item(title="Tim Lincecum Autograph SP"), search)
+
+    def test_or_group_matches_any_alternative(self):
+        search = resolve(query="lincecum (auto, autograph)")
+        assert passes_post_filters(item(title="Lincecum Autograph"), search)
+        assert passes_post_filters(item(title="Lincecum Auto"), search)
+        assert not passes_post_filters(item(title="Lincecum Base"), search)
+
+    def test_quoted_phrase_must_appear_whole(self):
+        search = resolve(query='"tim lincecum" auto')
+        assert passes_post_filters(item(title="Tim Lincecum Auto"), search)
+        assert not passes_post_filters(item(title="Tim Wakefield Lincecum-style Auto"), search)
+
+    def test_matching_is_case_insensitive(self):
+        search = resolve(query="LINCECUM AUTO")
+        assert passes_post_filters(item(title="tim lincecum auto /99"), search)
+
+    def test_flag_off_lets_backfill_through(self):
+        search = resolve(query="tim lincecum auto", require_query_in_title=False)
+        assert passes_post_filters(item(title="2010 Topps Tim Lincecum Base"), search)
+
+    def test_category_only_search_is_unaffected(self):
+        search = resolve(query=None, category_ids=["261328"])
+        assert passes_post_filters(item(title="anything at all"), search)
+
+    def test_untitled_listing_is_rejected(self):
+        search = resolve(query="jordan")
+        assert not passes_post_filters(item(title=None), search)
+
+
+class TestQueryTerms:
+    def test_plain_terms_are_anded(self):
+        assert query_terms("tim lincecum auto") == [["tim"], ["lincecum"], ["auto"]]
+
+    def test_or_group(self):
+        assert query_terms("lincecum (auto, autograph)") == [
+            ["auto", "autograph"],
+            ["lincecum"],
+        ]
+
+    def test_quoted_phrase_kept_whole(self):
+        assert query_terms('"tim lincecum" auto') == [["tim lincecum"], ["auto"]]
+
+    def test_empty_group_and_extra_spaces(self):
+        assert query_terms("  jordan   ()  ") == [["jordan"]]
 
 
 class TestFilterItems:
