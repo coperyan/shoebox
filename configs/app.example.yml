@@ -73,6 +73,8 @@ slack:
   command_channel: C0123456789 # chat-triggered CLI commands (slack-bot service)
   # Saved-search hits (watch-searches). Optional -- falls back to notify_channel.
   search_channel: C0123456789
+  # send-offers prompts. Optional; falls back to pricing_channel when unset.
+  offers_channel: C0123456789
   # Slack user IDs allowed to run commands in command_channel; empty = anyone
   # in the channel. Find yours: Slack profile -> "..." -> Copy member ID.
   allowed_user_ids: []

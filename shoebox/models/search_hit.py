@@ -63,6 +63,8 @@ class SearchHit(Model):
     notified: bool = False
     notified_at: datetime | None = None
     slack_channel: str | None = None
+    # ts of the run's header message. Listings post in-channel (not threaded
+    # under it); the name predates that and is kept for the BigQuery schema.
     slack_parent_ts: str | None = None
 
     title: str | None = None

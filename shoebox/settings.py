@@ -92,6 +92,8 @@ class SlackSettings(BaseModel):
     # Saved-search hits. Optional so existing configs keep validating; falls
     # back to notify_channel when unset.
     search_channel: str = ""
+    # send-offers prompts. Optional; falls back to pricing_channel when unset.
+    offers_channel: str = ""
     # Slack user IDs allowed to run commands in command_channel.
     # Empty list = anyone in the channel may run commands.
     allowed_user_ids: list[str] = []

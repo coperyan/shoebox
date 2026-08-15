@@ -11,7 +11,7 @@ other way round, a crash re-alerts an item: visible and self-limiting. For an
 alerting system a duplicate is a shrug and a miss is the whole feature failing.
 
 **Commit per item, not per batch.** Combined with the above, this bounds a crash
-mid-thread to exactly one duplicate rather than the entire run's worth.
+mid-run to exactly one duplicate rather than the entire run's worth.
 """
 
 from __future__ import annotations
@@ -118,15 +118,14 @@ def _post_item(
     channel: str,
     item: ItemSummary,
     search: ResolvedSearch,
-    thread_ts: str | None,
     now: datetime,
 ) -> None:
-    """Post one listing reply, dropping to the unfurl fallback when Slack
-    can't download the photo -- losing the alert over a flaky image would
-    invert the priorities."""
+    """Post one listing straight into the channel, dropping to the unfurl
+    fallback when Slack can't download the photo -- losing the alert over a
+    flaky image would invert the priorities."""
     message = fmt.build_item_message(item, search, now=now)
     try:
-        post(channel, message.text, thread_ts, message.unfurl_links, message.blocks)
+        post(channel, message.text, None, message.unfurl_links, message.blocks)
     except SlackApiError as exc:
         if message.blocks is None or not _image_download_failed(exc):
             raise
@@ -136,7 +135,7 @@ def _post_item(
             item.item_id,
         )
         fallback = fmt.build_unfurl_fallback(item, search, now=now)
-        post(channel, fallback.text, thread_ts, fallback.unfurl_links, fallback.blocks)
+        post(channel, fallback.text, None, fallback.unfurl_links, fallback.blocks)
 
 
 def _resolve_channel(search: ResolvedSearch) -> str:
@@ -212,8 +211,10 @@ def run_one_search(
             return SearchRunResult(search.name, seeded=True, fetched=len(items))
 
         # One line even when nothing is shown, so a working config is
-        # distinguishable from a broken one.
-        parent_ts = post(
+        # distinguishable from a broken one. Listings follow it in the channel
+        # itself -- not a thread -- so they're readable without a click; its ts
+        # is still recorded on each hit to tie the batch back to this run.
+        header_ts = post(
             channel, fmt.format_seed(search, len(items), shown=len(seed_shown)), None, False, None
         )
 
@@ -221,7 +222,7 @@ def run_one_search(
         for index, item in enumerate(seed_shown):
             if index:
                 time.sleep(pacing_seconds)
-            _post_item(post, channel, item, search, parent_ts, now)
+            _post_item(post, channel, item, search, now)
             store.append_seen(search.name, [_entry(item, notified=True)])
             store.append_hits(
                 [
@@ -231,7 +232,7 @@ def run_one_search(
                         notified=True,
                         notified_at=datetime.now(UTC),
                         slack_channel=channel,
-                        slack_parent_ts=parent_ts,
+                        slack_parent_ts=header_ts,
                     )
                 ]
             )
@@ -243,7 +244,7 @@ def run_one_search(
 
     # ---- Normal run -----------------------------------------------------
     if not fresh:
-        # No parent message: a "0 new" post every interval would drown the channel.
+        # No header message: a "0 new" post every interval would drown the channel.
         if not dry_run:
             store.append_seen(
                 search.name, [_entry(i, notified=False) for i in seen_refresh(items, seen)]
@@ -251,7 +252,7 @@ def run_one_search(
         return SearchRunResult(search.name, fetched=len(items))
 
     if dry_run:
-        logger.info("[dry-run] %s", fmt.format_parent(search, len(fresh)))
+        logger.info("[dry-run] %s", fmt.format_header(search, len(fresh)))
         for item in fresh[: search.max_notify]:
             logger.info(
                 "[dry-run] %s", fmt.format_item(item, search, include_bare_url=False, now=now)
@@ -263,13 +264,16 @@ def run_one_search(
             logger.info("[dry-run] %s", fmt.format_overflow(len(fresh), search.max_notify, search))
         return SearchRunResult(search.name, new_count=len(fresh), fetched=len(items))
 
-    parent_ts = post(channel, fmt.format_parent(search, len(fresh)), None, False, None)
+    # Header plus listings straight in the channel -- no thread, so hits are
+    # readable at a glance. The header's ts is still stamped on each hit to tie
+    # the batch back to this run.
+    header_ts = post(channel, fmt.format_header(search, len(fresh)), None, False, None)
 
     shown = fresh[: search.max_notify]
     for index, item in enumerate(shown):
         if index:
             time.sleep(pacing_seconds)
-        _post_item(post, channel, item, search, parent_ts, now)
+        _post_item(post, channel, item, search, now)
         # Committed immediately, so a crash costs at most this one duplicate.
         store.append_seen(search.name, [_entry(item, notified=True)])
         store.append_hits(
@@ -279,7 +283,7 @@ def run_one_search(
                     notified=True,
                     notified_at=datetime.now(UTC),
                     slack_channel=channel,
-                    slack_parent_ts=parent_ts,
+                    slack_parent_ts=header_ts,
                 )
             ]
         )
@@ -287,12 +291,12 @@ def run_one_search(
     overflow = fresh[search.max_notify :]
     if overflow:
         time.sleep(pacing_seconds)
-        post(channel, fmt.format_overflow(len(fresh), len(shown), search), parent_ts, False, None)
+        post(channel, fmt.format_overflow(len(fresh), len(shown), search), None, False, None)
         # Recorded as un-notified: without this they would re-alert forever.
         store.append_seen(search.name, [_entry(i, notified=False) for i in overflow])
         store.append_hits(
             [
-                _hit(i, notified=False, slack_channel=channel, slack_parent_ts=parent_ts)
+                _hit(i, notified=False, slack_channel=channel, slack_parent_ts=header_ts)
                 for i in overflow
             ]
         )

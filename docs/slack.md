@@ -70,6 +70,30 @@ pipeline has moved on. Clicks on the wrong message are ignored (matched by
 `ts`).
 
 ```python
+notify_batch_and_wait(channel, prompts, on_reply, timeout_s=900)
+    -> dict[key, outcome]
+```
+Batch counterpart to the approval helper: posts every `BatchPrompt`
+(`key`/`text`/`blocks`) up front — paced 1 s apart — then holds **one** Socket
+Mode connection and dispatches threaded replies to any of them as they arrive,
+in whatever order the user answers. Each reply invokes the async
+`on_reply(key, reply_text, post_thread)` callback: an outcome string resolves
+that prompt (its message is rewritten to show the outcome), `None` leaves it
+pending so the user can reply again (the callback posts its own threaded
+hint via `post_thread`). Prompts still pending at `timeout_s` are stamped
+`⌛ Expired` and returned with `EXPIRED_STATUS` instead of raising. Wrap
+blocking work inside `on_reply` in `asyncio.to_thread` — it runs on the
+listener's event loop.
+
+Socket Mode events are only the fast path: **Slack load-balances events
+across all of an app's open Socket Mode connections**, and the always-on
+slack-bot service usually holds one — so a reply's event may be delivered to
+a connection this waiter never sees. Every `sweep_interval_s` (default 15 s)
+the waiter therefore polls `conversations.replies` on each pending thread and
+processes anything the socket missed; replies are deduped between the two
+paths, so worst case a reply is acted on ~15 s late rather than lost.
+
+```python
 notify_and_wait_reaction(channel, message, timeout_s=600,
                          accepted_reactions=None) -> bool
 ```
@@ -118,7 +142,7 @@ tables):
 
 ## Price approval flows
 
-Three pipelines prompt the pricing channel. Replies are parsed by
+Four pipelines prompt the pricing channel. Replies are parsed by
 `utils/pricing.parse_price_reply`, which tolerates `$4.99`, ` 4.99 `,
 `1,299.99` and returns `None` for anything that isn't a positive price
 (`no`, `Y`, typos) — callers then apply an explicit policy:
@@ -127,8 +151,12 @@ Three pipelines prompt the pricing channel. Replies are parsed by
 |---|---|---|---|---|
 | `relist-listings` | `*Price approval:* <title>` with `Approve $X` button | Button click | Threaded reply with a number | **Skip the listing** (stays live untouched; next run retries). Rationale: approval is the point — never change a price without sign-off |
 | `create-listings --scrape-prices` | `Please confirm price: X - <card>` | Reply `Y`/`YES` | Reply with a number | **Proceed with the proposed price** (scraped price, or the queue price if scraping failed). Rationale: the card is queued to be listed; the best-known price beats aborting the whole run |
+| `send-offers` | One message per eligible listing (title, current price, photo), all posted up front — to `offers_channel` when set, else the pricing channel | Threaded reply with the offer amount → sends immediately | Reply `skip` to resolve without sending | **Unparseable/out-of-range reply or eBay rejection** → threaded hint, prompt stays pending for another reply. **Deadline (`--timeout-s`, default 900 s for the whole batch)** → prompt stamped `⌛ Expired`; the listing reappears next run. Rationale: no offer is ever sent without an explicit amount |
 
-Default timeout is 600 s per prompt (`timeout_s` parameter).
+Default timeout is 600 s per prompt (`timeout_s` parameter); `send-offers`
+uses a single 900 s deadline shared by the whole batch. Like `relist-listings`,
+`send-offers` blocks waiting on Slack and therefore stays out of the command
+bot's whitelist.
 
 ## The command bot (`services/slack_bot_service.py`)
 

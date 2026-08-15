@@ -99,6 +99,7 @@ An entry that is already an existing file path is used as-is.
 | `pricing_channel` | str | Channel ID for price confirmation/approval prompts |
 | `command_channel` | str | Channel ID watched by the `slack-bot` command service |
 | `search_channel` | str | Channel ID for saved-search hits (`watch-searches`). Optional — falls back to `notify_channel` when unset, so existing configs keep validating |
+| `offers_channel` | str | Channel ID for `send-offers` prompts. Optional — falls back to `pricing_channel` when unset |
 | `allowed_user_ids` | list[str] | Optional allowlist for the command bot. Empty (default) = anyone in the channel; non-empty = only these member IDs may run commands (others are ignored and logged) |
 
 ### `google_calendar`
@@ -199,7 +200,7 @@ destination.
 | `sort` | `newlyListed` | `newlyListed`, `endingSoonest`, `price`, `-price`. Best Match is intentionally unavailable: it returns an arbitrary slice of the result set, so new listings could stay invisible for days |
 | `max_results` | `200` | Items fetched per poll. One Browse call returns up to 200 |
 | `seed_max_results` | `2000` | Items fetched on the silent first run. Must be ≥ `max_results` — anything matching but not seeded surfaces later as a false "new listing" |
-| `max_notify` | `10` | Cap on Slack thread replies per run. Slack permits ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
+| `max_notify` | `10` | Cap on Slack listing messages per run. Slack permits ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
 | `notify_on_seed` | `false` | Post the first `max_notify` matches when the search seeds, rather than only the confirmation line. Applies to a first-ever seed and to `--reseed`; the automatic recovery seeds (lost cache, long-idle search) stay silent either way. See [search.md](search.md#seeing-the-initial-results) |
 | `enabled` | `true` | |
 | `channel` | `null` | Slack channel ID; falls back to `slack.search_channel` |

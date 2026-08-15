@@ -37,6 +37,12 @@ def item(
     )
 
 
+# Every message posts in-channel (thread_ts=None), so headers and listings are
+# told apart by content: run headers and the failure summary all start with a
+# bold emoji marker, listings (and the overflow line) don't.
+HEADER_PREFIXES = ("*🔎", "*🌱", "*⚠️")
+
+
 class Recorder:
     """Stand-in for Slack. Records every post and hands back fake ts values."""
 
@@ -51,12 +57,13 @@ class Recorder:
         return f"ts{len(self.posts)}"
 
     @property
-    def parents(self):
-        return [p for p in self.posts if p[2] is None]
+    def headers(self):
+        return [p for p in self.posts if p[1].startswith(HEADER_PREFIXES)]
 
     @property
-    def replies(self):
-        return [p for p in self.posts if p[2] is not None]
+    def items(self):
+        """Listing messages plus the overflow line -- everything non-header."""
+        return [p for p in self.posts if not p[1].startswith(HEADER_PREFIXES)]
 
 
 class ImageRejectingRecorder(Recorder):
@@ -115,7 +122,7 @@ class TestSeeding:
         # Exactly one line, and no per-item spam.
         assert len(post.posts) == 1
         assert "seeded with 3 existing listing(s)" in post.posts[0][1]
-        assert post.replies == []
+        assert post.items == []
         assert set(store.load_seen("s1")) == {"a", "b", "c"}
 
     def test_seed_marks_seeded_at(self, searches_yaml, store):
@@ -138,10 +145,10 @@ class TestSeeding:
         post = Recorder()
         run(path, store, [item("a"), item("b")], post, force=True)
 
-        assert len(post.parents) == 1
-        assert "1 new listing" in post.parents[0][1]
-        assert len(post.replies) == 1
-        assert "itm/b" in post.replies[0][1]
+        assert len(post.headers) == 1
+        assert "1 new listing" in post.headers[0][1]
+        assert len(post.items) == 1
+        assert "itm/b" in post.items[0][1]
 
     def test_wiped_cache_reseeds_silently(self, searches_yaml, store):
         """A deleted seen-file must not turn into a flood of false alerts.
@@ -156,7 +163,7 @@ class TestSeeding:
         post = Recorder()
         run(path, store, [item("a"), item("b")], post, force=True)
 
-        assert post.replies == []
+        assert post.items == []
         assert "seeded with 2" in post.posts[0][1]
         assert set(store.load_seen("s1")) == {"a", "b"}
 
@@ -172,8 +179,8 @@ class TestSeeding:
         post = Recorder()
         run(path, store, [item("a")], post, force=True)
 
-        assert len(post.replies) == 1
-        assert "itm/a" in post.replies[0][1]
+        assert len(post.items) == 1
+        assert "itm/a" in post.items[0][1]
 
 
 class TestNotifyOnSeed:
@@ -182,10 +189,10 @@ class TestNotifyOnSeed:
         post = Recorder()
         run(path, store, [item("a"), item("b")], post)
 
-        assert len(post.parents) == 1
-        assert "seeded with 2 existing listing(s), all shown below" in post.parents[0][1]
-        assert len(post.replies) == 2
-        posted = " ".join(r[1] for r in post.replies)
+        assert len(post.headers) == 1
+        assert "seeded with 2 existing listing(s), all shown below" in post.headers[0][1]
+        assert len(post.items) == 2
+        posted = " ".join(r[1] for r in post.items)
         assert "itm/a" in posted and "itm/b" in posted
 
     def test_seed_respects_max_notify(self, searches_yaml, store):
@@ -194,8 +201,8 @@ class TestNotifyOnSeed:
         post = Recorder()
         run(path, store, [item(str(i)) for i in range(5)], post)
 
-        assert len(post.replies) == 2
-        assert "seeded with 5 existing listing(s), showing 2 below" in post.parents[0][1]
+        assert len(post.items) == 2
+        assert "seeded with 5 existing listing(s), showing 2 below" in post.headers[0][1]
         # Every match still recorded, shown or not.
         assert len(store.load_seen("s1")) == 5
 
@@ -222,7 +229,7 @@ class TestNotifyOnSeed:
 
         post = Recorder()
         run(path, store, [item("a")], post, reseed=["s1"])
-        assert len(post.replies) == 1
+        assert len(post.items) == 1
 
     def test_recovery_reseed_stays_silent(self, searches_yaml, store):
         """A lost cache must not replay the whole result set as alerts.
@@ -237,13 +244,13 @@ class TestNotifyOnSeed:
         post = Recorder()
         run(path, store, [item("a"), item("b")], post, force=True)
 
-        assert post.replies == []
-        assert "seeded with 2 existing listing(s)." in post.parents[0][1]
+        assert post.items == []
+        assert "seeded with 2 existing listing(s)." in post.headers[0][1]
 
     def test_off_by_default(self, searches_yaml, store):
         post = Recorder()
         run(searches_yaml(), store, [item("a")], post)
-        assert post.replies == []
+        assert post.items == []
 
 
 class TestNotifyCap:
@@ -255,8 +262,8 @@ class TestNotifyCap:
         items = [item(str(i)) for i in range(5)]
         run(path, store, items, post, force=True)
 
-        assert len(post.replies) == 3  # 2 items + 1 overflow
-        assert "+3 more new listings not shown" in post.replies[-1][1]
+        assert len(post.items) == 3  # 2 items + 1 overflow
+        assert "+3 more new listings not shown" in post.items[-1][1]
         # All five recorded, or the hidden ones would alert again forever.
         assert len(store.load_seen("s1")) == 5
 
@@ -272,13 +279,25 @@ class TestNotifyCap:
 
 
 class TestOrdering:
+    def test_everything_posts_in_channel_not_in_a_thread(self, searches_yaml, store):
+        """Listings (and the overflow line) land in the channel itself: no post
+        anywhere in a run may carry a thread_ts."""
+        path = searches_yaml(max_notify=1)
+        run(path, store, [], Recorder())
+
+        post = Recorder()
+        run(path, store, [item("a"), item("b")], post, force=True)
+
+        assert len(post.posts) == 3  # header, one item, overflow line
+        assert all(p[2] is None for p in post.posts)
+
     def test_slack_failure_leaves_item_unseen(self, searches_yaml, store):
         """Slack-before-state: a failed post must not mark the item seen."""
         path = searches_yaml()
         run(path, store, [], Recorder())
 
         items = [item("a"), item("b"), item("c")]
-        # posts: 0 = parent, 1 = item a, 2 = item b -> fail on item c.
+        # posts: 0 = header, 1 = item a, 2 = item b -> fail on item c.
         post = Recorder(fail_on=3)
         run(path, store, items, post, force=True)
 
@@ -294,19 +313,19 @@ class TestOrdering:
 
         post = Recorder()
         run(path, store, items, post, force=True)
-        assert len(post.replies) == 1
-        assert "itm/c" in post.replies[0][1]
+        assert len(post.items) == 1
+        assert "itm/c" in post.items[0][1]
 
     def test_imageless_item_falls_back_to_unfurling(self, searches_yaml, store):
         path = searches_yaml()
         run(path, store, [], Recorder())
         post = Recorder()
         run(path, store, [item("a")], post, force=True)
-        channel, text, thread_ts, unfurl, blocks = post.replies[0]
+        channel, text, thread_ts, unfurl, blocks = post.items[0]
         assert unfurl is True
         assert blocks is None
         assert text.splitlines()[-1] == "https://ebay.com/itm/a"
-        assert post.parents[0][3] is False
+        assert post.headers[0][3] is False
 
     def test_item_with_photo_posts_an_image_block(self, searches_yaml, store):
         path = searches_yaml()
@@ -314,7 +333,7 @@ class TestOrdering:
         post = Recorder()
         run(path, store, [item("a", image="s-l225")], post, force=True)
 
-        channel, text, thread_ts, unfurl, blocks = post.replies[0]
+        channel, text, thread_ts, unfurl, blocks = post.items[0]
         # The photo is explicit, so nothing is left to Slack's crawler.
         assert unfurl is False
         assert [b["type"] for b in blocks] == ["section", "image", "divider"]
@@ -332,8 +351,8 @@ class TestOrdering:
         post = ImageRejectingRecorder()
         run(path, store, [item("a", image="s-l225")], post, force=True)
 
-        assert len(post.replies) == 1
-        channel, text, thread_ts, unfurl, blocks = post.replies[0]
+        assert len(post.items) == 1
+        channel, text, thread_ts, unfurl, blocks = post.items[0]
         assert blocks is None
         assert unfurl is True
         assert text.splitlines()[-1] == "https://ebay.com/itm/a"
@@ -349,7 +368,7 @@ class TestOrdering:
         )
         run(path, store, [item("a", image="s-l225")], post, force=True)
 
-        assert post.replies == []
+        assert post.items == []
         assert "a" not in store.load_seen("s1")
 
 

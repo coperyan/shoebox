@@ -6,10 +6,10 @@ from shoebox.utils.search_formatting import (
     IMAGE_SIZE_PX,
     MAX_TITLE_CHARS,
     build_item_message,
+    format_header,
     format_interval,
     format_item,
     format_overflow,
-    format_parent,
     format_run_summary,
     format_seed,
     format_time_left,
@@ -61,26 +61,26 @@ class TestFormatInterval:
         assert format_interval(timedelta(seconds=90)) == "90s"
 
 
-class TestFormatParent:
+class TestFormatHeader:
     def test_singular_and_plural(self):
-        assert "1 new listing\n" in format_parent(resolve(), 1)
-        assert "4 new listings\n" in format_parent(resolve(), 4)
+        assert "1 new listing\n" in format_header(resolve(), 1)
+        assert "4 new listings\n" in format_header(resolve(), 4)
 
     def test_includes_name_and_interval(self):
-        out = format_parent(resolve(interval="15m"), 2)
+        out = format_header(resolve(interval="15m"), 2)
         assert "*🔎 s1*" in out
         assert "every 15m" in out
 
     def test_price_range_rendered(self):
-        out = format_parent(resolve(price={"min": 25, "max": 200}), 1)
+        out = format_header(resolve(price={"min": 25, "max": 200}), 1)
         assert "$25.00–$200.00" in out
 
     def test_price_max_only_reads_as_under(self):
-        assert "under $50.00" in format_parent(resolve(price={"max": 50}), 1)
+        assert "under $50.00" in format_header(resolve(price={"max": 50}), 1)
 
     def test_buying_option_label(self):
-        assert "Buy It Now" in format_parent(resolve(buying_options=["FIXED_PRICE"]), 1)
-        assert "Auction" in format_parent(resolve(buying_options=["AUCTION"]), 1)
+        assert "Buy It Now" in format_header(resolve(buying_options=["FIXED_PRICE"]), 1)
+        assert "Auction" in format_header(resolve(buying_options=["AUCTION"]), 1)
 
 
 class TestFormatItem:
@@ -246,7 +246,7 @@ class TestBuildItemMessage:
         assert msg.blocks[0]["text"]["text"].startswith("*<https://ebay.com/itm/123|")
 
     def test_divider_closes_each_listing(self):
-        # Photo-per-reply threads run together without a boundary.
+        # Photo-per-listing messages run together without a boundary.
         msg = build_item_message(item(thumbnail_images=[{"image_url": THUMB}]), resolve())
         assert msg.blocks[-1] == {"type": "divider"}
 

@@ -147,10 +147,20 @@ Trading API: find active listings with zero remaining quantity, end them all
 
 ### `pipelines/send_offers.py`
 
-Negotiation API: `find_eligible_items()` → per listing, skip if price >
-`max_price` (default $19.99) → offer price = standard markdown of current
-price → send a 1-day offer with a fixed message to interested buyers.
-`--dry-run` logs the offers without sending them.
+Negotiation API: `find_eligible_items()` → post every eligible listing to
+Slack at once (`notify_batch_and_wait`, to `slack.offers_channel` falling back
+to the pricing channel), then handle
+threaded replies as they arrive: a parsed amount within
+`$0.99 <= amount < current price` sends a 1-day offer immediately, `skip`
+resolves without sending, and unparseable/out-of-range replies (or an eBay
+rejection) get a threaded hint and stay pending. Prompts still pending at
+`timeout_s` are stamped expired and reappear next run. A threaded tally
+(sent/skipped/expired) closes the parent summary message.
+
+`--auto` bypasses Slack and sends the standard markdown-matrix price for every
+eligible listing (prices above the matrix fall back to 5% off). `--dry-run`
+logs the prompts without contacting eBay or Slack. No state is kept between
+runs — eligibility comes fresh from eBay each time.
 
 ---
 
@@ -210,7 +220,7 @@ so a narrow search still alerts on its first genuine hit.
 first, a Slack failure would mark an item seen and it would never be alerted:
 silent and undetectable. The other way round, a crash re-alerts an item —
 visible and self-limiting. Committing per item rather than per batch bounds a
-mid-thread crash to exactly one duplicate.
+mid-run crash to exactly one duplicate.
 
 **Failure isolation.** One search raising doesn't stop the others, and a failed
 search **still advances `last_run_at`** — otherwise a permanently broken search
@@ -221,9 +231,10 @@ Because dedup runs off the local seen-cache and never off BigQuery, a GCS or
 BigQuery outage cannot cause a duplicate or a missed alert — it only delays the
 durable log, which the append buffer retries next run.
 
-**Slack shape.** One parent message per search *that has hits* (a "0 new" post
-every interval would drown the channel), with listings as thread replies capped
-at `max_notify` and an explicit overflow line. Each reply is a Block Kit
+**Slack shape.** One header message per search *that has hits* (a "0 new" post
+every interval would drown the channel), with listings posted right in the
+channel — not a thread — capped at `max_notify` and an explicit overflow line.
+Each listing is a Block Kit
 `section` + `image` + `divider` — mrkdwn detail (title, price with an italic
 auction countdown or Best Offer marker, shipping on its own line, seller) plus
 the listing photo at 500px and a closing rule — so the picture doesn't depend on

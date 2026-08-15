@@ -92,14 +92,18 @@ Ends every active "out of stock" listing (quantity − sold = 0) via the Trading
 API and notifies the Slack notify channel with the count.
 
 ### `send-offers`
-Finds listings with interested buyers (Negotiation API), applies the standard
-markdown matrix to compute the offer price, and sends each eligible buyer a
-24-hour offer.
+Finds listings with interested buyers (Negotiation API) and posts each one to
+Slack (title, current price, photo) — `slack.offers_channel`, falling back to
+the pricing channel. Reply in a prompt's thread with an amount to send that
+24-hour offer immediately, or `skip`; unanswered prompts expire at the
+deadline and reappear next run. Blocks on Slack, so it is run manually (not
+scheduled, not in the slack-bot whitelist).
 
 | Flag | Effect |
 |---|---|
-| `--dry-run` | Log the offers that would be sent without contacting eBay |
-| `--max-price N` | Only send offers on listings priced at or below `N` (default `19.99`) |
+| `--dry-run` | Log the prompts that would be posted without contacting eBay or Slack |
+| `--auto` | Skip the prompts and send the standard markdown-matrix price for every eligible listing |
+| `--timeout-s N` | Seconds to wait for replies before unanswered prompts expire (default `900`) |
 
 ## Monitoring
 
@@ -137,8 +141,8 @@ Full end-to-end guide (setup, YAML, filters, tuning, scheduling, state):
 
 ### `watch-searches`
 Runs the saved eBay searches defined in `configs/searches.yaml` that are **due**,
-and posts net-new listings to Slack — one parent message per search with each
-listing as a thread reply. See
+and posts net-new listings to Slack — one header message per search with each
+listing posted right in the channel. See
 [configuration.md](configuration.md#saved-searches-configssearchesyaml) for the
 YAML schema and [pipelines.md](pipelines.md#saved-search-watcher) for the
 internals.

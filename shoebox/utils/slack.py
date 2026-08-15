@@ -267,6 +267,174 @@ async def send_and_await_approval(
         await handler.close_async()
 
 
+@dataclass
+class BatchPrompt:
+    """One prompt message in a batch: ``key`` is the caller's identifier
+    (e.g. a listing id), ``text`` the mrkdwn body (also the notification
+    fallback when ``blocks`` are given)."""
+
+    key: str
+    text: str
+    blocks: list[dict] | None = None
+
+
+# Posts text into the prompt's own reply thread (hints, validation errors).
+PostThreadFn = Callable[[str], Awaitable[None]]
+
+# (key, reply_text, post_thread) -> outcome string to stamp on the prompt
+# message (resolves the item), or None to leave it pending for another reply.
+BatchReplyHandler = Callable[[str, str, PostThreadFn], Awaitable[str | None]]
+
+EXPIRED_STATUS = "⌛ Expired — no reply this run."
+
+
+async def send_batch_and_await_replies(
+    bot_token: str,
+    app_token: str,
+    channel: str,
+    prompts: list[BatchPrompt],
+    on_reply: BatchReplyHandler,
+    *,
+    timeout_s: int = 900,
+    pacing_seconds: float = 1.0,
+    sweep_interval_s: float = 15.0,
+) -> dict[str, str]:
+    """Post every prompt up front, then dispatch threaded replies to any of
+    them as they arrive, until all are resolved or the deadline passes.
+
+    Each reply to a prompt's thread invokes ``on_reply``; an outcome string
+    resolves that prompt (its message is rewritten to show the outcome), None
+    keeps it pending so the user can reply again. Returns {key: outcome} —
+    prompts still pending at the deadline are stamped and returned with
+    EXPIRED_STATUS rather than raising.
+
+    Socket Mode events are the fast path, but Slack load-balances events
+    across ALL of an app's open Socket Mode connections (the always-on
+    slack-bot service typically holds one), so replies can be delivered to a
+    connection this waiter never sees. A conversations.replies poll of every
+    pending thread runs every ``sweep_interval_s`` to pick those up.
+    """
+    app = _build_app(bot_token)
+    bot_user_id = (await app.client.auth_test())["user_id"]
+
+    pending: dict[str, BatchPrompt] = {}  # prompt ts -> prompt
+    in_flight: set[str] = set()
+    last_seen: dict[str, str] = {}  # prompt ts -> newest handled reply ts
+    results: dict[str, str] = {}
+    all_resolved = asyncio.Event()
+
+    async def process_reply(
+        prompt_ts: str | None, reply_ts: str, reply_text: str, user: str | None
+    ) -> None:
+        """Shared by the event handler and the sweep. The guards and state
+        mutations below have no awaits between them, so the two paths can't
+        double-process a reply."""
+        if user == bot_user_id or not reply_text:
+            return
+        if prompt_ts not in pending or prompt_ts in in_flight:
+            return
+        # Slack ts strings ("1723412345.123456") sort lexicographically.
+        if reply_ts <= last_seen.get(prompt_ts, ""):
+            return
+        in_flight.add(prompt_ts)
+        last_seen[prompt_ts] = reply_ts
+        try:
+            prompt = pending[prompt_ts]
+
+            async def post_thread(msg: str) -> None:
+                await app.client.chat_postMessage(channel=channel, text=msg, thread_ts=prompt_ts)
+
+            try:
+                outcome = await on_reply(prompt.key, reply_text, post_thread)
+            except Exception:
+                logger.exception("Reply handler failed for %s; leaving it pending", prompt.key)
+                return
+            if outcome is not None:
+                await _replace_with_outcome(app.client, channel, prompt_ts, prompt.text, outcome)
+                pending.pop(prompt_ts, None)
+                results[prompt.key] = outcome
+                if not pending:
+                    all_resolved.set()
+        finally:
+            in_flight.discard(prompt_ts)
+
+    @app.event("message")
+    async def on_message(event: dict) -> None:
+        if event.get("subtype") is not None or event.get("channel") != channel:
+            return
+        await process_reply(
+            event.get("thread_ts"),
+            event.get("ts") or "",
+            (event.get("text") or "").strip(),
+            event.get("user"),
+        )
+
+    async def sweep() -> None:
+        """Poll pending threads for replies the socket connection never saw."""
+        for prompt_ts in list(pending):
+            if prompt_ts in in_flight:
+                continue
+            try:
+                resp = await app.client.conversations_replies(
+                    channel=channel,
+                    ts=prompt_ts,
+                    oldest=last_seen.get(prompt_ts) or prompt_ts,
+                    limit=20,
+                )
+            except Exception as e:
+                logger.warning("Reply sweep failed for thread %s: %s", prompt_ts, e)
+                continue
+            for msg in resp.get("messages") or []:
+                if msg.get("subtype") is not None or msg.get("ts") == prompt_ts:
+                    continue
+                await process_reply(
+                    prompt_ts,
+                    msg.get("ts") or "",
+                    (msg.get("text") or "").strip(),
+                    msg.get("user"),
+                )
+                if prompt_ts not in pending:
+                    break
+
+    handler = AsyncSocketModeHandler(app, app_token)
+    await handler.connect_async()
+
+    try:
+        for i, prompt in enumerate(prompts):
+            if i and pacing_seconds:
+                await asyncio.sleep(pacing_seconds)
+            sent = await app.client.chat_postMessage(
+                channel=channel, text=prompt.text, blocks=prompt.blocks
+            )
+            pending[sent["ts"]] = prompt
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        while pending:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            try:
+                await asyncio.wait_for(
+                    all_resolved.wait(), timeout=min(sweep_interval_s, remaining)
+                )
+            except TimeoutError:
+                await sweep()
+            else:
+                if pending:
+                    # Set prematurely: every prompt posted *so far* resolved
+                    # while the posting loop was still running.
+                    all_resolved.clear()
+
+        for ts, prompt in list(pending.items()):
+            await _replace_with_outcome(app.client, channel, ts, prompt.text, EXPIRED_STATUS)
+            results[prompt.key] = EXPIRED_STATUS
+        return results
+    finally:
+        await handler.disconnect_async()
+        await handler.close_async()
+
+
 def notify(
     channel: str,
     message: str,
@@ -316,6 +484,27 @@ def notify_and_wait_approval(
             channel,
             message,
             approve_label=approve_label,
+            timeout_s=timeout_s,
+        )
+    )
+
+
+def notify_batch_and_wait(
+    channel: str,
+    prompts: list[BatchPrompt],
+    on_reply: BatchReplyHandler,
+    timeout_s: int = 900,
+) -> dict[str, str]:
+    """Sync wrapper for send_batch_and_await_replies. ``on_reply`` is still an
+    async callable (wrap blocking work in asyncio.to_thread)."""
+    slack = get_settings().slack
+    return asyncio.run(
+        send_batch_and_await_replies(
+            slack.bot_token,
+            slack.app_token,
+            channel,
+            prompts,
+            on_reply,
             timeout_s=timeout_s,
         )
     )

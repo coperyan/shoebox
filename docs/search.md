@@ -15,8 +15,8 @@ schema), [pipelines.md](pipelines.md#saved-search-watcher) (internals),
 
 A **saved search** is a YAML-declared eBay Browse query. A watcher runs the due
 ones, diffs the results against what it has already seen, and posts only the
-**net-new** listings to Slack — one parent message per search, each listing as a
-thread reply with its photo.
+**net-new** listings to Slack — one header message per search, each listing
+posted right in the channel with its photo.
 
 Three commands, one cron entry:
 
@@ -188,7 +188,7 @@ everything else in this document can live under `defaults:`.
 | `sort` | `newlyListed` | `newlyListed`, `endingSoonest`, `price`, `-price`. Best Match is intentionally unavailable — it returns an arbitrary slice of the result set, so a genuinely new listing could stay invisible for days |
 | `max_results` | `200` | Items fetched per poll. One Browse call returns up to 200, so raising this within that bound costs nothing extra |
 | `seed_max_results` | `2000` | Items fetched on the silent first run. Must be ≥ `max_results` — anything that matches but is not seeded resurfaces later as a false "new listing", so seed wide |
-| `max_notify` | `10` | Cap on Slack thread replies per run. Slack allows ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
+| `max_notify` | `10` | Cap on Slack listing messages per run. Slack allows ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
 | `notify_on_seed` | `false` | Post the first `max_notify` matches when the search seeds, instead of only the confirmation line — see [Seeing the initial results](#seeing-the-initial-results) |
 | `prune_seen_after_days` | `90` | Seen-cache entries older than this are dropped at the end of a run |
 
@@ -305,7 +305,7 @@ paying for 200 results and reading 20.
 shoebox watch-searches --dry-run --only jordan_psa10_bin
 ```
 
-Logs the parent message, up to `max_notify` item messages, the overflow line,
+Logs the header message, up to `max_notify` item messages, the overflow line,
 and a warning for any listing with no photo (those fall back to a link unfurl).
 No Slack, no state writes, no flush. On a search that hasn't seeded yet this
 prints a 15-row sample of what the seed would record.
@@ -368,7 +368,7 @@ redirect work — a bare `/tr` command line does not go through a shell. In the
 Task Scheduler GUI the equivalent is *Start in* = the repo root; omitting it is
 a silent, every-run failure. Tick **Run whether user is logged on or not** for
 an unattended host, and leave *Stop the task if it runs longer than* well above
-your longest expected run, since a run posting a full `max_notify` thread takes
+your longest expected run, since a run posting a full `max_notify` batch takes
 tens of seconds.
 
 Overlapping runs are prevented by a non-blocking advisory lock on
@@ -400,7 +400,7 @@ even constructing the eBay client.
 
 ## What lands in Slack
 
-**Parent message**, only for a search that actually has hits — a "0 new" post
+**Header message**, only for a search that actually has hits — a "0 new" post
 every interval would drown the channel:
 
 ```
@@ -408,7 +408,7 @@ every interval would drown the channel:
 $25.00–$200.00 · Buy It Now · every 15m
 ```
 
-**One thread reply per listing**, capped at `max_notify` — a Block Kit
+**One in-channel message per listing**, capped at `max_notify` — a Block Kit
 `section`, an `image` block with the listing photo at 500px, and a `divider`
 closing the card:
 
@@ -447,8 +447,8 @@ indistinguishable from a broken config:
 🌱 jordan_psa10_bin — seeded with 412 existing listing(s). Future runs alert on new ones only (every 15m).
 ```
 
-With `notify_on_seed: true` that line becomes the parent of a thread carrying
-the first `max_notify` matches — see
+With `notify_on_seed: true` that line is followed by the first `max_notify`
+matches in the channel — see
 [Seeing the initial results](#seeing-the-initial-results).
 
 **Failure summary**, posted only when something went wrong, plus a separate
@@ -502,8 +502,8 @@ searches:
     notify_on_seed: true
 ```
 
-The seed then posts its normal parent line plus the first `max_notify` matches
-as thread replies, identical in shape to a real alert:
+The seed then posts its normal header line plus the first `max_notify` matches
+in the channel, identical in shape to a real alert:
 
 ```
 🌱 barry_zito_autos — seeded with 412 existing listing(s), showing 10 below. Future runs alert on new ones only (every 15m).
@@ -540,7 +540,9 @@ a day) via GCS `logs/search_hits/…` into BigQuery.
 One flat row per observation. Notable columns: `run_id`, `search_name`,
 `item_id`, `cache_key`, `hit_type` (`NEW_LISTING` in v1 — the extension point
 for `PRICE_DROP`/`ENDING_SOON`), `hit_at`, `first_seen_at`, `is_seed`,
-`notified`, `notified_at`, `slack_channel`, `slack_parent_ts`, plus the listing
+`notified`, `notified_at`, `slack_channel`, `slack_parent_ts` (the ts of the
+run's header message — listings post in-channel, not threaded under it), plus
+the listing
 snapshot (`title`, `item_web_url`, `thumbnail_url`, `item_origin_date`,
 `last_price`, `current_bid`, `shipping_cost`, `free_shipping`, `buying_options`,
 `condition`, `seller_username`, `seller_feedback_score`,
@@ -566,7 +568,7 @@ ORDER BY alerts DESC;
 - **Slack first, then state, per item.** If state were committed first, a Slack
   failure would mark an item seen and it would never be alerted — silently and
   undetectably. This way a crash re-alerts an item: visible and self-limiting.
-  Committing per item rather than per batch bounds a mid-thread crash to exactly
+  Committing per item rather than per batch bounds a mid-run crash to exactly
   one duplicate. For an alerting system a duplicate is a shrug; a miss is the
   whole feature failing.
 - **One bad search doesn't stop the run.** Each search runs in its own

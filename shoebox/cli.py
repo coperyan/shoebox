@@ -81,13 +81,20 @@ def main() -> None:
     p_relist.add_argument("--dry-run", action="store_true")
 
     # Send offers to watchers
-    p_offers = sub.add_parser("send-offers", help="Send negotiation offers to eligible watchers")
+    p_offers = sub.add_parser(
+        "send-offers", help="Send negotiation offers to eligible watchers via Slack prompts"
+    )
     p_offers.add_argument("--dry-run", action="store_true")
     p_offers.add_argument(
-        "--max-price",
-        type=float,
-        default=19.99,
-        help="Only send offers on listings priced at or below this (default 19.99)",
+        "--auto",
+        action="store_true",
+        help="Send discount-matrix offers headlessly instead of prompting via Slack",
+    )
+    p_offers.add_argument(
+        "--timeout-s",
+        type=int,
+        default=900,
+        help="Seconds to wait for Slack replies before unanswered prompts expire (default 900)",
     )
 
     # Sync Topps Calendar
@@ -253,7 +260,7 @@ def main() -> None:
     if args.cmd == "send-offers":
         from shoebox.pipelines.send_offers import main as send_offers
 
-        send_offers(dry_run=args.dry_run, max_price=args.max_price)
+        send_offers(dry_run=args.dry_run, auto=args.auto, timeout_s=args.timeout_s)
         return
 
     if args.cmd == "watch-searches":

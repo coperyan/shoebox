@@ -4,7 +4,7 @@ Deliberately *not* using ``slack_formatting.table``: it renders inside a fenced
 code block, and Slack neither linkifies nor unfurls URLs there — which would
 defeat the entire point of an alert you want to click through.
 
-Item replies carry the listing photo as a Block Kit ``image`` block. Relying on
+Item messages carry the listing photo as a Block Kit ``image`` block. Relying on
 Slack's link unfurl instead would be leaving the most useful part of a card
 alert to chance: whether a preview appears at all depends on eBay's OG tags and
 Slack's crawler, and neither is under our control. Unfurling stays as the
@@ -24,7 +24,7 @@ from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch
 from ..transforms.search_filters import cheapest_shipping
 
-# Slack renders long titles poorly in a thread; eBay titles run to 80 chars.
+# Slack renders long titles poorly; eBay titles run to 80 chars.
 MAX_TITLE_CHARS = 90
 
 # Slack downscales anything wider than the message column, so a larger fetch is
@@ -134,8 +134,8 @@ def format_interval(delta) -> str:
     return f"{seconds}s"
 
 
-def format_parent(search: ResolvedSearch, new_count: int) -> str:
-    """The in-channel header. Items land in its thread."""
+def format_header(search: ResolvedSearch, new_count: int) -> str:
+    """The in-channel header. Listings follow it directly in the channel."""
     plural = "" if new_count == 1 else "s"
     bits: list[str] = []
     if search.price is not None:
@@ -163,7 +163,7 @@ def format_item(
     include_bare_url: bool = True,
     now: datetime | None = None,
 ) -> str:
-    """One thread reply per listing.
+    """One in-channel message per listing.
 
     Four lines: title, price, shipping, seller. Each is one fact, because the
     single dot-joined line this replaced made a $4.99 shipping cost read as part
@@ -246,8 +246,9 @@ def build_item_message(
             "image_url": image_url,
             "alt_text": (item.title or "listing photo")[:MAX_ALT_TEXT_CHARS],
         },
-        # Trailing rule: a photo-per-reply thread runs together otherwise, and
-        # the eye needs a boundary to know where one listing stops.
+        # Trailing rule: a channel full of photo-per-listing messages runs
+        # together otherwise, and the eye needs a boundary to know where one
+        # listing stops.
         {"type": "divider"},
     ]
     # Unfurling off: the photo is already here, and the title link is enough.
@@ -271,8 +272,8 @@ def format_seed(search: ResolvedSearch, count: int, *, shown: int = 0) -> str:
     A fully silent seed is indistinguishable from a broken config, so one line
     goes out — but no per-item spam.
 
-    ``shown`` > 0 means ``notify_on_seed`` is on and this line is the parent of a
-    thread carrying that many of the seeded listings. It states the count both
+    ``shown`` > 0 means ``notify_on_seed`` is on and this line is followed by
+    that many of the seeded listings in the channel. It states the count both
     ways, so "412 matched, you are seeing 10" can't be misread as "10 matched".
     """
     if shown >= count > 0:
