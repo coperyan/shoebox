@@ -14,6 +14,7 @@ from .inventory import InventoryClient
 from .marketing import MarketingClient
 from .negotiation import NegotiationClient
 from .session import EbayClientError, EbaySession, build_session
+from .stores import StoresClient
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,7 @@ class EbayClient:
         self.inventory = InventoryClient(self.session)
         self.marketing = MarketingClient(self.session)
         self.negotiation = NegotiationClient(self.session)
+        self.stores = StoresClient(self.session)
 
     def _call_with_retry(
         self,

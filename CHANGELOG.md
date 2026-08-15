@@ -5,6 +5,39 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Store category management moved from the Trading API to the REST Sell
+  Stores API.** New `StoresClient` (`clients/ebay_rest/stores.py`), reachable as
+  `EbayClient.stores`. It uses the same OAuth token as the other REST clients,
+  so managing categories no longer requires the Auth'n'Auth token in
+  `configs/ebay_legacy.json`.
+- The Trading-API store category methods added to `eBayLegacyClient` in 0.2.0
+  were removed: `get_store_categories`, `add_store_categories`,
+  `delete_store_categories`, `move_store_categories`, `rename_store_category`,
+  `rename_store_categories`, `get_store_category_update_status`,
+  `wait_for_store_category_update`, and the module-level
+  `flatten_store_categories` / `STORE_ROOT_CATEGORY_ID`. They shipped in 0.2.0
+  with no callers in the repo; the REST equivalents replace them one-for-one.
+
+Behavior differences worth noting when porting:
+
+- eBay's REST endpoints act on **one category per call**. The batch helpers
+  (`add_store_categories`, `delete_store_categories`, …) loop, so a run can fail
+  partway; they take `stop_on_error` (default `True`) and return per-item
+  outcomes.
+- Top-level placement is expressed by **omitting** the parent rather than by the
+  Trading API's `-999` sentinel.
+- The mutating calls are async and return a taskId, but the swagger-generated
+  client in `ebay_rest` discards the response body. Use
+  `stores.get_store_tasks()` / `get_failed_store_tasks()` to confirm a
+  restructure landed, and re-read `get_store_categories()` to pick up newly
+  assigned IDs. This replaces `wait_for_store_category_update`.
+- `StoreCategoryType` carries `level` natively, so flattened entries take it
+  from the API instead of computing it.
+
 ## [0.2.0] - 2026-08-15
 
 Adds saved eBay searches (the largest feature area to date), scheduled task
@@ -81,5 +114,6 @@ eBay's asynchronous task processing, and a `flatten_store_categories` helper.
 
 Initial public release.
 
+[Unreleased]: https://github.com/coperyan/shoebox/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/coperyan/shoebox/compare/v.0.1.0...v0.2.0
 [0.1.0]: https://github.com/coperyan/shoebox/releases/tag/v.0.1.0
