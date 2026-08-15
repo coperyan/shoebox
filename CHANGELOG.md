@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `StoresClient` calls bypass the generated `sell_stores_*` wrappers: in
+  `ebay_rest` 1.1.4 (latest) those pass `user_access_token=False`, sending an
+  application token to an API that only accepts authorization-code-grant user
+  tokens — every call failed with HTTP 403 / errorId 1100 regardless of scopes.
+  `StoresClient._invoke` re-issues the same call with the user token; drop it
+  once upstream fixes the flag.
+
+### Added
+
+- `scripts/refresh_ebay_token.py` — reset / re-consent / persist the eBay REST
+  user token. Needed after any scope change: scopes are fixed at consent time,
+  and `ebay_rest` neither re-consents while a refresh token is present nor
+  writes new tokens back to `ebay_rest.json`. Includes `--check`, `--reset`,
+  `--diagnose` (per-scope endpoint probe), and `--verify`.
+- The `sell.stores` OAuth scope in `configs/ebay_rest.example.json` and the
+  scope/re-mint documentation in `docs/setup.md`.
+
 ### Changed
 
 - **Store category management moved from the Trading API to the REST Sell

@@ -37,23 +37,42 @@ TREE_RESPONSE = {
 
 
 class FakeApi:
-    """Records sell_stores_* calls and replays queued responses."""
+    """
+    Fakes ebay_rest's private _method_single, which StoresClient._invoke uses
+    to force the user access token (the generated sell_stores_* wrappers send
+    an application token in ebay_rest 1.1.4 — always rejected by this API).
+    """
 
     def __init__(self, responses: dict[str, Any] | None = None):
-        self.calls: list[tuple[str, tuple, dict[str, Any]]] = []
+        self.calls: list[dict[str, Any]] = []
         self.responses = responses or {}
 
-    def __getattr__(self, name: str):
-        def call(*args, **kwargs):
-            self.calls.append((name, args, kwargs))
-            result = self.responses.get(name)
-            if isinstance(result, Exception):
-                raise result
-            if callable(result):
-                return result(*args, **kwargs)
-            return result
-
-        return call
+    def _method_single(
+        self,
+        configuration,
+        base_path,
+        api_class,
+        client_class,
+        method,
+        exception,
+        user_access_token,
+        rate_keys,
+        params=None,
+        **kwargs,
+    ):
+        self.calls.append(
+            {
+                "method": method,
+                "params": params,
+                "kwargs": kwargs,
+                "user_access_token": user_access_token,
+                "base_path": base_path,
+            }
+        )
+        result = self.responses.get(method)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class FakeSession:
@@ -67,6 +86,21 @@ def build_client(responses=None):
     return StoresClient(FakeSession(api)), api
 
 
+def test_every_call_uses_the_user_access_token():
+    # Regression test for the ebay_rest 1.1.4 workaround: the generated
+    # wrappers pass user_access_token=False and always 403 on this API.
+    client, api = build_client({"get_store_categories": TREE_RESPONSE})
+
+    client.get_store_categories()
+    client.add_store_category("Vintage")
+    client.delete_store_category(11)
+    client.move_store_category(11, parent_category_id=5)
+    client.rename_store_category(11, "Graded")
+
+    assert all(c["user_access_token"] is True for c in api.calls)
+    assert all(c["base_path"] == "/sell/stores/v1" for c in api.calls)
+
+
 def test_parse_store_categories_handles_nesting_and_none_children():
     tree = parse_store_categories(TREE_RESPONSE["store_categories"])
 
@@ -77,16 +111,16 @@ def test_parse_store_categories_handles_nesting_and_none_children():
 
 
 def test_get_store_categories_reads_store_categories_key():
-    client, api = build_client({"sell_stores_get_store_categories": TREE_RESPONSE})
+    client, api = build_client({"get_store_categories": TREE_RESPONSE})
 
     tree = client.get_store_categories()
 
-    assert api.calls[-1][0] == "sell_stores_get_store_categories"
+    assert api.calls[-1]["method"] == "get_store_categories"
     assert [c["name"] for c in tree] == ["Baseball", "Football"]
 
 
 def test_get_store_categories_tolerates_empty_response():
-    client, _ = build_client({"sell_stores_get_store_categories": None})
+    client, _ = build_client({"get_store_categories": None})
     assert client.get_store_categories() == []
 
 
@@ -103,18 +137,18 @@ def test_add_store_category_top_level_omits_parent():
     client, api = build_client()
     client.add_store_category("Vintage")
 
-    name, _, kwargs = api.calls[-1]
-    assert name == "sell_stores_add_store_category"
-    assert kwargs["body"] == {"categoryName": "Vintage"}
-    assert kwargs["content_type"] == "application/json"
+    call = api.calls[-1]
+    assert call["method"] == "add_store_category"
+    # Generated signature: add_store_category(content_type, body=...)
+    assert call["params"] == "application/json"
+    assert call["kwargs"]["body"] == {"categoryName": "Vintage"}
 
 
 def test_add_store_category_with_parent_and_listing_destination():
     client, api = build_client()
     client.add_store_category("Rookies", parent_category_id=1, listing_destination_category_id=9)
 
-    body = api.calls[-1][2]["body"]
-    assert body == {
+    assert api.calls[-1]["kwargs"]["body"] == {
         "categoryName": "Rookies",
         "destinationParentCategoryId": "1",
         "listingDestinationCategoryId": "9",
@@ -131,38 +165,42 @@ def test_delete_store_category_sends_id_as_path_param():
     client, api = build_client()
     client.delete_store_category(11, listing_destination_category_id=99)
 
-    name, _, kwargs = api.calls[-1]
-    assert name == "sell_stores_delete_store_category"
-    assert kwargs["category_id"] == "11"
-    assert kwargs["body"] == {"listingDestinationCategoryId": "99"}
+    call = api.calls[-1]
+    assert call["method"] == "delete_store_category"
+    # Generated signature: delete_store_category(category_id, body=...)
+    assert call["params"] == "11"
+    assert call["kwargs"]["body"] == {"listingDestinationCategoryId": "99"}
 
 
 def test_move_store_category_passes_body_then_content_type_positionally():
     client, api = build_client()
     client.move_store_category(11, parent_category_id=5)
 
-    name, args, _ = api.calls[-1]
-    assert name == "sell_stores_move_store_category"
-    # The generated signature is move_store_category(body, content_type).
-    assert args[0] == {"categoryId": "11", "destinationParentCategoryId": "5"}
-    assert args[1] == "application/json"
+    call = api.calls[-1]
+    assert call["method"] == "move_store_category"
+    # Generated signature: move_store_category(body, content_type) — positional tuple.
+    assert call["params"] == (
+        {"categoryId": "11", "destinationParentCategoryId": "5"},
+        "application/json",
+    )
 
 
 def test_move_to_top_level_omits_parent():
     client, api = build_client()
     client.move_store_category(11)
 
-    assert api.calls[-1][1][0] == {"categoryId": "11"}
+    assert api.calls[-1]["params"][0] == {"categoryId": "11"}
 
 
 def test_rename_store_category():
     client, api = build_client()
     client.rename_store_category(11, "Graded Cards")
 
-    name, _, kwargs = api.calls[-1]
-    assert name == "sell_stores_rename_store_category"
-    assert kwargs["category_id"] == "11"
-    assert kwargs["body"] == {"categoryName": "Graded Cards"}
+    call = api.calls[-1]
+    assert call["method"] == "rename_store_category"
+    # Generated signature: rename_store_category(content_type, category_id, body=...)
+    assert call["params"] == ("application/json", "11")
+    assert call["kwargs"]["body"] == {"categoryName": "Graded Cards"}
 
 
 def test_invalid_category_id_rejected():
@@ -181,8 +219,7 @@ def test_batch_delete_issues_one_call_per_id():
 
 
 def test_batch_stops_on_first_error_by_default():
-    boom = RuntimeError("gone")
-    client, api = build_client({"sell_stores_delete_store_category": boom})
+    client, api = build_client({"delete_store_category": RuntimeError("gone")})
 
     with pytest.raises(RuntimeError):
         client.delete_store_categories([11, 12, 13])
@@ -192,8 +229,9 @@ def test_batch_stops_on_first_error_by_default():
 
 
 def test_batch_collects_failures_when_not_stopping():
-    boom = RuntimeError("already deleted with its parent")
-    client, api = build_client({"sell_stores_delete_store_category": boom})
+    client, api = build_client(
+        {"delete_store_category": RuntimeError("already deleted with its parent")}
+    )
 
     results = client.delete_store_categories([11, 12], stop_on_error=False)
 
@@ -208,8 +246,8 @@ def test_add_store_categories_allows_per_item_parent_override():
         ["Top", {"name": "Child", "parent_category_id": 5}], parent_category_id=None
     )
 
-    assert api.calls[0][2]["body"] == {"categoryName": "Top"}
-    assert api.calls[1][2]["body"] == {
+    assert api.calls[0]["kwargs"]["body"] == {"categoryName": "Top"}
+    assert api.calls[1]["kwargs"]["body"] == {
         "categoryName": "Child",
         "destinationParentCategoryId": "5",
     }
@@ -225,23 +263,22 @@ def test_rename_store_categories_from_mapping():
     client, api = build_client()
     results = client.rename_store_categories({11: "A", 12: "B"})
 
-    assert [c[2]["category_id"] for c in api.calls] == ["11", "12"]
-    assert [c[2]["body"]["categoryName"] for c in api.calls] == ["A", "B"]
+    assert [c["params"][1] for c in api.calls] == ["11", "12"]
+    assert [c["kwargs"]["body"]["categoryName"] for c in api.calls] == ["A", "B"]
     assert all(r["status"] == "ok" for r in results)
 
 
 def test_get_store_task_unwraps_task():
-    client, _ = build_client(
-        {"sell_stores_get_store_task": {"task": {"id": "7", "status": "COMPLETED"}}}
-    )
+    client, api = build_client({"get_store_task": {"task": {"id": "7", "status": "COMPLETED"}}})
 
     assert client.get_store_task("7")["status"] == "COMPLETED"
+    assert api.calls[-1]["params"] == "7"
 
 
 def test_get_failed_store_tasks_filters():
     client, _ = build_client(
         {
-            "sell_stores_get_store_tasks": {
+            "get_store_tasks": {
                 "task": [
                     {"id": "1", "status": "COMPLETED"},
                     {"id": "2", "status": "FAILED", "message": "bad parent"},

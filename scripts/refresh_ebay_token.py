@@ -100,6 +100,60 @@ def reset(path: Path, config: dict[str, Any], user_key: str) -> None:
     print("Re-run without --reset to consent and save a new token.")
 
 
+def diagnose(api: Any) -> None:
+    """
+    Call one endpoint per scope on the current token.
+
+    If the older scopes succeed and sell.stores fails with 403/1100, the token
+    itself is fine and the scope was not granted — that is an account/keyset
+    problem on eBay's side, not something the config can fix.
+    """
+    # Stores calls go through StoresClient: its _invoke works around ebay_rest
+    # 1.1.4 sending an application token on the generated sell_stores_* wrappers.
+    stores = _stores_client(api)
+    probes = [
+        ("sell.marketing", "get_campaigns", lambda: api.sell_marketing_get_campaigns()),
+        (
+            "sell.inventory",
+            "get_inventory_locations",
+            lambda: api.sell_inventory_get_inventory_locations(),
+        ),
+        ("sell.stores", "get_store", stores.get_store),
+        ("sell.stores", "get_store_categories", stores.get_store_categories),
+    ]
+
+    print("\nPer-scope probe on the current token:")
+    denied = 0
+    for scope, method, fn in probes:
+        try:
+            fn()
+        except Exception as e:
+            text = str(e)
+            if "1100" in text:
+                denied += 1
+                print(f"  {scope:16} {method:24} 403 ACCESS — scope not granted")
+            else:
+                print(f"  {scope:16} {method:24} failed: {text.splitlines()[0][:60]}")
+        else:
+            print(f"  {scope:16} {method:24} OK")
+
+    if denied:
+        print(
+            "\nA 403 here with other scopes working means the token is valid but the\n"
+            "grant is missing that scope. Re-consenting will not change it until the\n"
+            "keyset is actually granted the scope; check the app's authorised\n"
+            "permissions in your eBay account, and the keyset on the developer portal."
+        )
+
+
+def _stores_client(api: Any):
+    """Wrap a raw ebay_rest API in StoresClient without a full EbaySession."""
+    from shoebox.clients.ebay_rest.stores import StoresClient
+
+    session_shim = type("SessionShim", (), {"api": api, "Error": Exception})()
+    return StoresClient(session_shim)
+
+
 def build_api(config_file: Path, user_key: str):
     """Construct an ebay_rest API bound to this config."""
     from ebay_rest import API
@@ -158,6 +212,11 @@ def main() -> int:
         help="Blank both token fields so the next run re-consents, then exit",
     )
     parser.add_argument(
+        "--diagnose",
+        action="store_true",
+        help="Probe one endpoint per scope on the current token, then exit",
+    )
+    parser.add_argument(
         "--verify", action="store_true", help="After saving, make a read-only Stores call"
     )
     args = parser.parse_args()
@@ -177,6 +236,10 @@ def main() -> int:
     if args.check:
         return 0
 
+    if args.diagnose:
+        diagnose(build_api(path, user_key))
+        return 0
+
     if args.reset:
         reset(path, config, user_key)
         return 0
@@ -194,10 +257,7 @@ def main() -> int:
 
     if args.verify:
         print("\nVerifying with a read-only getStoreCategories call...")
-        from shoebox.clients.ebay_rest.stores import parse_store_categories
-
-        resp = api.sell_stores_get_store_categories() or {}
-        categories = parse_store_categories(resp.get("store_categories"))
+        categories = _stores_client(api).get_store_categories()
         print(f"OK — {len(categories)} top-level store categories returned.")
 
     return 0
