@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from shoebox.settings import Settings
@@ -83,43 +82,6 @@ class EbayClient:
             "offer_id": record.get("offer_id"),
             "listing_status": listing.get("listing_status") or "NOT_LISTED",
         }
-
-    def promote_new_listing(
-        self,
-        *,
-        rate: int,
-        sku: str,
-        campaign_id: str | None = None,
-        max_tries: int = 2,
-        sleep_s: int = 10,
-    ) -> None:
-        campaign_id = campaign_id or self.session.settings.ebay.campaign_id
-        tries = 0
-
-        while tries < max_tries:
-            try:
-                self.api.sell_marketing_create_ad_by_listing_id(
-                    body={
-                        "bidPercentage": rate,
-                        "inventoryReferenceId": sku,
-                        "inventoryReferenceType": "INVENTORY_ITEM",
-                    },
-                    content_type="application/json",
-                    campaign_id=campaign_id,
-                )
-                return
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if error_details.get("errorId") == 35036:
-                    logger.info("Ad already exists for sku=%s", sku)
-                    return
-
-                tries += 1
-                if tries >= max_tries:
-                    logger.warning("Promoting listing failed: %s", e)
-                    return
-
-                time.sleep(sleep_s)
 
     def create_listing_from_inventory_flow(
         self,
@@ -212,7 +174,9 @@ class EbayClient:
             )
 
             if promote_listing:
-                self.promote_new_listing(rate=promote_rate, sku=sku, campaign_id=campaign_id)
+                self.marketing.promote_by_inventory_reference(
+                    sku=sku, rate=promote_rate, campaign_id=campaign_id
+                )
 
         return out
 
@@ -236,7 +200,7 @@ class EbayClient:
 
         if existing_ad_id and campaign_id:
             try:
-                self.api.sell_marketing_delete_ad(campaign_id=campaign_id, ad_id=existing_ad_id)
+                self.marketing.delete_ad(campaign_id=campaign_id, ad_id=existing_ad_id)
                 logger.info("Deleted ad ad_id=%s for sku=%s", existing_ad_id, sku)
             except Exception as e:
                 logger.warning("Failed to delete ad ad_id=%s: %s", existing_ad_id, e)
@@ -268,14 +232,8 @@ class EbayClient:
 
         if promote_listing and campaign_id:
             try:
-                self.api.sell_marketing_create_ads_by_inventory_reference(
-                    body={
-                        "bidPercentage": str(promote_rate),
-                        "inventoryReferenceId": sku,
-                        "inventoryReferenceType": "INVENTORY_ITEM",
-                    },
-                    content_type="application/json",
-                    campaign_id=campaign_id,
+                self.marketing.create_ads_by_inventory_reference(
+                    sku=sku, rate=promote_rate, campaign_id=campaign_id
                 )
                 logger.info("Promoted sku=%s campaign_id=%s", sku, campaign_id)
             except Exception as e:
@@ -430,7 +388,7 @@ class EbayClient:
 
             if promote_listing and listing_id:
                 logger.info("[%s] Promoting listing listing_id=%s...", group_key, listing_id)
-                self._promote_variation_listing(
+                self.marketing.promote_by_listing_id(
                     listing_id=listing_id,
                     rate=promote_rate,
                     campaign_id=campaign_id,
@@ -444,7 +402,7 @@ class EbayClient:
                     volume_discount_tiers,
                 )
                 try:
-                    self.create_volume_discount_promotion(
+                    self.marketing.create_volume_discount_promotion(
                         listing_id=str(listing_id),
                         name=item_group.get("title", group_key),
                         discount_tiers=volume_discount_tiers,
@@ -463,118 +421,6 @@ class EbayClient:
                 logger.info("[%s] No volume_discount_tiers set, skipping promotion", group_key)
 
         return out
-
-    def create_volume_discount_promotion(
-        self,
-        *,
-        listing_id: str,
-        name: str,
-        discount_tiers: list[dict[int, int]],
-        end_date: str | None = None,
-        max_tries: int | None = 10,
-    ) -> dict[str, Any]:
-        """
-        Create a VOLUME_DISCOUNT item promotion for listing_id.
-
-        discount_tiers: list of single-entry dicts mapping min_quantity → pct_off_order.
-            e.g. [{2: 15}, {3: 20}, {4: 25}]
-        A base rule of {1: 0} is automatically inserted when not provided.
-        """
-        rules_map: dict[int, int] = {}
-        for tier in discount_tiers:
-            for qty, pct in tier.items():
-                rules_map[qty] = pct
-        if 1 not in rules_map:
-            rules_map[1] = 0
-
-        now = datetime.now(UTC)
-        start = (now + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        end = end_date or (now + timedelta(days=365 * 3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-
-        body = {
-            "marketplaceId": "EBAY_US",
-            "promotionType": "VOLUME_DISCOUNT",
-            "promotionStatus": "SCHEDULED",
-            "name": name,
-            "priority": "PRIORITY_1",
-            "startDate": start,
-            "endDate": end,
-            "inventoryCriterion": {
-                "inventoryCriterionType": "INVENTORY_BY_VALUE",
-                "listingIds": [listing_id],
-            },
-            "discountRules": [
-                {
-                    "ruleOrder": i + 1,
-                    "discountBenefit": {"percentageOffOrder": str(pct)},
-                    "discountSpecification": {"minQuantity": qty},
-                }
-                for i, (qty, pct) in enumerate(sorted(rules_map.items()))
-            ],
-        }
-
-        logger.debug("Body for volume pricing request: %s", body)
-
-        for attempt in range(1, max_tries + 1):
-            try:
-                result = self.api.sell_marketing_create_item_promotion(
-                    body=body,
-                    content_type="application/json",
-                )
-                logger.info(
-                    "Created volume discount promotion listing_id=%s name=%r", listing_id, name
-                )
-                return result
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if error_details.get("errorId") == 38227 and attempt < max_tries:
-                    wait = attempt * 30
-                    logger.warning(
-                        "Listing not yet visible to marketing API (attempt %d/%d), retrying in %ds...",
-                        attempt,
-                        max_tries,
-                        wait,
-                    )
-                    time.sleep(wait)
-                    body["startDate"] = (datetime.now(UTC) + timedelta(minutes=1)).strftime(
-                        "%Y-%m-%dT%H:%M:%S.000Z"
-                    )
-                else:
-                    raise
-
-    def _promote_variation_listing(
-        self,
-        *,
-        listing_id: str,
-        rate: int,
-        campaign_id: str | None = None,
-        max_tries: int = 2,
-        sleep_s: int = 10,
-    ) -> None:
-        campaign_id = campaign_id or self.session.settings.ebay.campaign_id
-        tries = 0
-        while tries < max_tries:
-            try:
-                self.api.sell_marketing_create_ad_by_listing_id(
-                    body={"bidPercentage": rate, "listingId": str(listing_id)},
-                    content_type="application/json",
-                    campaign_id=campaign_id,
-                )
-                return
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if error_details.get("errorId") == 35036:
-                    logger.info("Ad already exists for listing_id=%s", listing_id)
-                    return
-                tries += 1
-                if tries >= max_tries:
-                    logger.warning(
-                        "Promoting variation listing failed listing_id=%s: %s",
-                        listing_id,
-                        e,
-                    )
-                    return
-                time.sleep(sleep_s)
 
 
 _default: EbayClient | None = None

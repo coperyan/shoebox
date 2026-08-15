@@ -1,5 +1,6 @@
 import json
-from collections.abc import Iterable
+import time
+from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 import requests
@@ -7,6 +8,12 @@ import xmltodict
 
 # Default namespace used by eBay Trading API responses/requests
 EBAY_NS = "urn:ebay:apis:eBLBaseComponents"
+
+# DestinationParentCategoryID value that means "the top level of the store tree".
+STORE_ROOT_CATEGORY_ID = -999
+
+# Actions accepted by Trading API SetStoreCategories.
+STORE_CATEGORY_ACTIONS = ("Add", "Delete", "Move", "Rename")
 
 
 def _xml_escape(value: str) -> str:
@@ -83,6 +90,80 @@ def _money_to_parts(m: Any) -> tuple[str | None, str | None]:
     if isinstance(m, str):
         return m, None
     return None, None
+
+
+def _category_id_str(category_id: Any) -> str:
+    """
+    Normalize a store category id to the string form used in request XML.
+
+    Store CategoryIDs are longs, so this also doubles as validation: anything
+    that is not integer-like is rejected before it reaches the request body.
+    """
+    try:
+        return str(int(str(category_id).strip()))
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid store category id: {category_id!r}") from None
+
+
+def _parse_store_categories(node: Any) -> list[dict[str, Any]]:
+    """
+    Convert CustomCategory node(s) into a nested list of plain dicts.
+
+    eBay nests subcategories under <ChildCategory>, so this recurses to keep the
+    tree shape: {"category_id", "name", "order", "children": [...]}.
+    """
+    out: list[dict[str, Any]] = []
+    for cat in _ensure_list(node):
+        if not isinstance(cat, dict):
+            continue
+        out.append(
+            {
+                "category_id": cat.get("CategoryID"),
+                "name": cat.get("Name"),
+                "order": cat.get("Order"),
+                "children": _parse_store_categories(cat.get("ChildCategory")),
+            }
+        )
+    return out
+
+
+def flatten_store_categories(
+    categories: Iterable[dict[str, Any]],
+    *,
+    parent_id: str | None = None,
+    level: int = 1,
+    path: tuple[str, ...] = (),
+) -> list[dict[str, Any]]:
+    """
+    Flatten the nested tree from `get_store_categories` into a depth-first list.
+
+    Each entry carries `parent_id`, `level` (1 = top level) and `path` (tuple of
+    names from the root), which is what you want when reorganizing: deleting a
+    parent takes its children with it, so process deepest-first when unsure.
+    """
+    out: list[dict[str, Any]] = []
+    for cat in categories:
+        name = cat.get("name") or ""
+        cat_path = (*path, name)
+        out.append(
+            {
+                "category_id": cat.get("category_id"),
+                "name": cat.get("name"),
+                "order": cat.get("order"),
+                "parent_id": parent_id,
+                "level": level,
+                "path": cat_path,
+            }
+        )
+        out.extend(
+            flatten_store_categories(
+                cat.get("children") or [],
+                parent_id=cat.get("category_id"),
+                level=level + 1,
+                path=cat_path,
+            )
+        )
+    return out
 
 
 class eBayLegacyClient:
@@ -656,6 +737,325 @@ class eBayLegacyClient:
             "sku": sku,
             "fees": fees,
         }
+
+    def get_store_categories(
+        self,
+        *,
+        root_category_id: int | str | None = None,
+        level_limit: int | None = None,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> list[dict[str, Any]]:
+        """
+        Retrieve the store's custom category tree via Trading API GetStore.
+
+        Returns a nested list of {"category_id", "name", "order", "children"}.
+        Pass `root_category_id` to isolate one subtree, and `level_limit` to cap
+        depth (1 = top-level categories only). Use `flatten_store_categories` on
+        the result when you need a flat, depth-first view.
+        """
+        extras = "<CategoryStructureOnly>true</CategoryStructureOnly>"
+        if level_limit is not None:
+            if level_limit < 1:
+                raise ValueError("level_limit must be >= 1")
+            extras += f"<LevelLimit>{int(level_limit)}</LevelLimit>"
+        if root_category_id is not None:
+            extras += f"<RootCategoryID>{_category_id_str(root_category_id)}</RootCategoryID>"
+
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <GetStoreRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                {extras}
+                </GetStoreRequest>"""
+
+        payload = self._trading_call(
+            call_name="GetStore",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return _parse_store_categories(
+            _dig(payload, ["Store", "CustomCategories", "CustomCategory"], None)
+        )
+
+    def _set_store_categories(
+        self,
+        *,
+        action: str,
+        categories: Sequence[Mapping[str, Any]],
+        destination_parent_category_id: int | str | None = None,
+        item_destination_category_id: int | str | None = None,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Issue a SetStoreCategories call for one action over a list of categories.
+
+        Each `categories` entry may carry "category_id", "name" and "order";
+        which of those are required depends on the action. eBay may process the
+        change asynchronously, in which case the returned `status` is "Pending"
+        and `task_id` is non-zero — poll it with `get_store_category_update_status`.
+        """
+        if action not in STORE_CATEGORY_ACTIONS:
+            raise ValueError(f"action must be one of {STORE_CATEGORY_ACTIONS}, got {action!r}")
+        if not categories:
+            raise ValueError("categories must not be empty")
+
+        blocks: list[str] = []
+        for cat in categories:
+            parts: list[str] = []
+            # Element order follows StoreCustomCategoryType: CategoryID, Name, Order.
+            category_id = cat.get("category_id")
+            if category_id is not None:
+                parts.append(f"<CategoryID>{_category_id_str(category_id)}</CategoryID>")
+            name = cat.get("name")
+            if name is not None:
+                name = str(name).strip()
+                if not name:
+                    raise ValueError("store category name must not be blank")
+                parts.append(f"<Name>{_xml_escape(name)}</Name>")
+            order = cat.get("order")
+            if order is not None:
+                parts.append(f"<Order>{int(order)}</Order>")
+            blocks.append(f"<CustomCategory>{''.join(parts)}</CustomCategory>")
+
+        # Element order follows SetStoreCategoriesRequestType.
+        extras = ""
+        if destination_parent_category_id is not None:
+            extras += (
+                "<DestinationParentCategoryID>"
+                f"{_category_id_str(destination_parent_category_id)}"
+                "</DestinationParentCategoryID>"
+            )
+        if item_destination_category_id is not None:
+            extras += (
+                "<ItemDestinationCategoryID>"
+                f"{_category_id_str(item_destination_category_id)}"
+                "</ItemDestinationCategoryID>"
+            )
+
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <SetStoreCategoriesRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <Action>{action}</Action>
+                {extras}
+                <StoreCategories>{"".join(blocks)}</StoreCategories>
+                </SetStoreCategoriesRequest>"""
+
+        payload = self._trading_call(
+            call_name="SetStoreCategories",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return {
+            "ack": payload.get("Ack", "Success"),
+            "action": action,
+            "status": payload.get("Status"),
+            "task_id": payload.get("TaskID"),
+            "category_structure_version": payload.get("CategoryStructureVersion"),
+            "categories": _parse_store_categories(payload.get("CustomCategory")),
+        }
+
+    def add_store_categories(
+        self,
+        categories: Sequence[str | Mapping[str, Any]],
+        *,
+        parent_category_id: int | str = STORE_ROOT_CATEGORY_ID,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Add one or more store categories under a parent.
+
+        `categories` accepts plain names, or dicts with "name" and optional
+        "order" (display position among siblings). `parent_category_id` defaults
+        to STORE_ROOT_CATEGORY_ID (-999), which means the top level of the store.
+        A store can hold up to 300 categories total.
+
+        The returned "categories" list carries the CategoryIDs eBay assigned, in
+        request order, when the call is processed synchronously.
+        """
+        specs: list[dict[str, Any]] = []
+        for cat in categories:
+            if isinstance(cat, str):
+                specs.append({"name": cat})
+                continue
+            if "name" not in cat:
+                raise ValueError(f"category spec is missing 'name': {cat!r}")
+            specs.append({"name": cat["name"], "order": cat.get("order")})
+
+        return self._set_store_categories(
+            action="Add",
+            categories=specs,
+            destination_parent_category_id=parent_category_id,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+    def delete_store_categories(
+        self,
+        category_ids: Sequence[int | str],
+        *,
+        item_destination_category_id: int | str | None = None,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Delete one or more store categories.
+
+        Deleting a category also deletes its subcategories. If the deletion
+        displaces listings, eBay requires `item_destination_category_id` — a
+        surviving category with no children — to receive them; without it the
+        call fails rather than silently relocating items.
+        """
+        return self._set_store_categories(
+            action="Delete",
+            categories=[{"category_id": cid} for cid in category_ids],
+            item_destination_category_id=item_destination_category_id,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+    def move_store_categories(
+        self,
+        category_ids: Sequence[int | str],
+        *,
+        parent_category_id: int | str = STORE_ROOT_CATEGORY_ID,
+        item_destination_category_id: int | str | None = None,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Move one or more store categories under a new parent.
+
+        `parent_category_id` defaults to STORE_ROOT_CATEGORY_ID (-999) to promote
+        categories to the top level. Pass `item_destination_category_id` if the
+        move displaces listings.
+        """
+        return self._set_store_categories(
+            action="Move",
+            categories=[{"category_id": cid} for cid in category_ids],
+            destination_parent_category_id=parent_category_id,
+            item_destination_category_id=item_destination_category_id,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+    def rename_store_categories(
+        self,
+        renames: Mapping[int | str, str],
+        *,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Rename store categories from a {category_id: new_name} mapping.
+        """
+        return self._set_store_categories(
+            action="Rename",
+            categories=[{"category_id": cid, "name": name} for cid, name in renames.items()],
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+    def rename_store_category(
+        self,
+        category_id: int | str,
+        name: str,
+        *,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Rename a single store category.
+        """
+        return self.rename_store_categories(
+            {category_id: name},
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+    def get_store_category_update_status(
+        self,
+        task_id: int | str,
+        *,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Check the progress of an asynchronous SetStoreCategories task.
+
+        `task_id` is the "task_id" returned by a SetStoreCategories call whose
+        status came back "Pending". Status is one of Pending, InProgress,
+        Complete or Failed.
+        """
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <GetStoreCategoryUpdateStatusRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <TaskID>{_category_id_str(task_id)}</TaskID>
+                </GetStoreCategoryUpdateStatusRequest>"""
+
+        payload = self._trading_call(
+            call_name="GetStoreCategoryUpdateStatus",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return {
+            "ack": payload.get("Ack", "Success"),
+            "task_id": task_id,
+            "status": payload.get("Status"),
+        }
+
+    def wait_for_store_category_update(
+        self,
+        task_id: int | str,
+        *,
+        timeout: float = 300.0,
+        poll_interval: float = 5.0,
+        site_id: str = "0",
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Poll `get_store_category_update_status` until the task settles.
+
+        Returns the final status dict once Status is Complete or Failed. Raises
+        TimeoutError if the task is still Pending/InProgress after `timeout`
+        seconds; the task keeps running on eBay's side either way.
+        """
+        if poll_interval <= 0:
+            raise ValueError("poll_interval must be > 0")
+
+        deadline = time.monotonic() + timeout
+        while True:
+            result = self.get_store_category_update_status(
+                task_id,
+                site_id=site_id,
+                compatibility_level=compatibility_level,
+            )
+            if result.get("status") in ("Complete", "Failed"):
+                return result
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    f"Store category task {task_id} still {result.get('status')!r} after {timeout}s"
+                )
+            time.sleep(poll_interval)
 
 
 # test = eBayLegacyClient()
