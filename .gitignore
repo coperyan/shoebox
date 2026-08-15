@@ -46,3 +46,5 @@ CLAUDE.bat
 tools/*
 !tools/README.md
 !tools/checklist_parallel_metadata.sample.xlsx
+
+.dev/*

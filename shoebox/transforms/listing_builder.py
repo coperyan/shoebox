@@ -18,27 +18,54 @@ _CONDITION_DESCRIPTORS = {
 # Store description footer appended to every listing. `{store_name}` is filled
 # from settings.store.name at build time (see store_footer_html).
 _STORE_FOOTER_TEMPLATE = """
-<hr/>
-<div>Thank you for visiting {store_name} on eBay!</div>
-<div><br></div>
-<div><b>Shipping:</b></div>
-<div>
-   <ul>
-      <li>Unless indicated by my account (out of office), I ship all orders same day. <br></li>
-      <li>Shipping is calculated based on weight, and is paid by buyer (excluding complete your set listings). If multiple items are ordered, I will combine shipping &amp; refund you.</li>
-      <li>PWE Shipping (less than $20) - cards will be sleeved, stored in a card saver, a team bag and shipped in a rigid mailer. Note: eBay's PWE shipping can have delays in updating tracking, keep this in mind. <br></li>
-      <li>USPS Ground Shipping (more than $20) - cards will be sleeved, stored in a top loader, a team bag, secured between two ding defenders and shipped in a bubble mailer with tracking. <br></li>
-   </ul>
-   <div>
-      <div><b>Other:</b></div>
-      <div>
-         <ul>
-            <li>Cards are in condition shown, images are captured via scanner. I am happy to provide additional images on-demand if needed.</li>
-            <li>If you are interested in negotiating a bulk deal, please message me. I've done many deals for 50+ cards before and will agree to a fair price for both sides. <br></li>
-         </ul>
-      </div>
-      <br>
-   </div>
+<div style="font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 1.55; color: #1a1a1a; max-width: 760px;">
+ 
+  <p style="margin: 0 0 16px;">
+    Thanks for visiting <strong>{{store name}}</strong> &mdash; 12,000+ cards shipped, 100% positive feedback.
+    Every card is scanned front and back, so what you see is exactly what ships.
+  </p>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">Flat shipping &mdash; buy as many cards as you want</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li><strong>Shipping starts at $0.78 and barely moves.</strong> Add more cards for just $0.30 each &mdash; your cart shows the real total up front, with nothing to refund after the fact. <em>Add everything to your cart and check out once</em> so the combined rate applies.</li>
+    <li><strong>Free shipping on orders over $20.</strong> Higher-value cards ship free, fully tracked and insured.</li>
+    <li><strong>Orders ship same day</strong> when placed by 5:00 PM Pacific, Monday through Saturday.</li>
+    <li><strong>International buyers welcome</strong> via eBay International Shipping &mdash; duties and delivery handled by eBay, tracked end to end.</li>
+  </ul>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">How your cards are packed</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li><strong>Orders under $20:</strong> penny sleeve &rarr; card saver &rarr; team bag &rarr; protective envelope, shipped via eBay Standard Envelope with tracking.</li>
+    <li><strong>Orders over $20 (ships free):</strong> penny sleeve &rarr; top loader &rarr; team bag &rarr; secured between two ding defenders &rarr; bubble mailer, shipped USPS Ground Advantage with full tracking and insurance.</li>
+  </ul>
+  <p style="margin: 0 0 16px; font-size: 14px; color: #444;">
+    A note on envelope tracking: scans sometimes update a day or two behind the actual delivery. This is normal for
+    letter mail and your card is on its way. If anything looks off, message me and I'll sort it out.
+  </p>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">Condition &amp; returns</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li><strong>30-day returns, free.</strong> If a card isn't what you expected, tell me and I'll make it right &mdash; no hassle, no restocking fee.</li>
+    <li>Cards are in the condition shown in the scans. Any notable flaw is called out in the listing; if I haven't mentioned one, the scan is the full story.</li>
+    <li><strong>Want a closer look before you buy?</strong> Message me and I'll send additional images or closeups of any corner, edge, or surface. Happy to do it.</li>
+  </ul>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">Building a set? Buying in bulk?</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li>I run <strong>Complete Your Set</strong> listings for most modern Topps and Bowman releases &mdash; pick exactly the numbers you still need, with volume discounts as your order grows.</li>
+    <li><strong>Bulk deals:</strong> message me. I've put together plenty of 50+ card deals and I'll land on a price that works for both of us.</li>
+    <li>Looking for a specific player, team, or parallel that isn't listed? Ask &mdash; there's a good chance it's in the box and not yet scanned.</li>
+  </ul>
+ 
+  <div style="margin: 24px 0 8px; padding: 14px 16px; background: #f5f5f5; border-left: 3px solid #333;">
+    <strong>Follow {{store name}}</strong> to get first look at new listings &mdash; I add cards several times a week,
+    and set-completion inventory moves quickly. Hit "Save Seller" at the top of this page.
+  </div>
+ 
+  <p style="margin: 16px 0 0; font-size: 14px; color: #444;">
+    Questions, offers, or you just want to talk ball &mdash; message me anytime. I usually reply within a few hours.
+  </p>
+ 
 </div>
 """
 
@@ -166,7 +193,11 @@ def replace_title_elements(title: str, ctr: int, card_number) -> str:
     elif ctr == 2:
         return title.replace(f" #{card_number}", "")
     elif ctr == 3:
-        return title.replace(" Baseball", "").replace(" Basketball", "").replace(" Football", "")
+        return (
+            title.replace(" Baseball", "")
+            .replace(" Basketball", "")
+            .replace(" Football", "")
+        )
     elif ctr == 4:
         return title.replace(" Refractor", "")
     elif ctr == 5:
@@ -246,7 +277,9 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Sport"] = sport(row.set_name)
     aspects["Player/Athlete"] = multi_str_split(row.player)
     aspects["Season"] = row.set_year
-    aspects["Year Manufactured"] = row.set_year if len(row.set_year) == 4 else row.set_year[:4]
+    aspects["Year Manufactured"] = (
+        row.set_year if len(row.set_year) == 4 else row.set_year[:4]
+    )
     aspects["Features"] = features(row)
     aspects["Set"] = row.set_name
     if row.team:
@@ -256,7 +289,9 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Card Number"] = row.card_number
     aspects["Type"] = "Sports Trading Card"
     aspects["Card Size"] = "Standard"
-    aspects["Card Thickness"] = "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
+    aspects["Card Thickness"] = (
+        "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
+    )
     aspects["Country/Region of Manufacture"] = "United States"
     aspects["Graded"] = "No"
     aspects["Vintage"] = "No"
@@ -277,7 +312,9 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     return aspects
 
 
-def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> dict[str, Any]:
+def base_inventory_item_payload(
+    *, quantity: int, product: dict[str, Any]
+) -> dict[str, Any]:
     """Shared inventory-item skeleton for every card listing.
 
     Condition descriptor 40001/400010 is eBay's trading-card grade
@@ -355,7 +392,9 @@ def build_offer_payload(*, draft: EbayListingDraft) -> dict[str, Any]:
 def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     """Rebuild an inventory item payload from an existing eBay API item response."""
     return base_inventory_item_payload(
-        quantity=existing_item["availability"]["ship_to_location_availability"]["quantity"],
+        quantity=existing_item["availability"]["ship_to_location_availability"][
+            "quantity"
+        ],
         product={
             "title": existing_item["product"]["title"],
             "description": store_footer_html(),
@@ -415,7 +454,9 @@ def build_draft(
     aspects = build_aspects(row)
 
     if schedule:
-        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
     else:
         listing_start_date = None
 
