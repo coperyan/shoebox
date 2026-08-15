@@ -190,6 +190,7 @@ everything else in this document can live under `defaults:`.
 | `seed_max_results` | `2000` | Items fetched on the silent first run. Must be ≥ `max_results` — anything that matches but is not seeded resurfaces later as a false "new listing", so seed wide |
 | `max_notify` | `10` | Cap on Slack listing messages per run. Slack allows ~1 message/sec/channel, so this is a time budget as much as a noise budget. Overflow is summarized in one line and recorded, never silently dropped |
 | `notify_on_seed` | `false` | Post the first `max_notify` matches when the search seeds, instead of only the confirmation line — see [Seeing the initial results](#seeing-the-initial-results) |
+| `defer_missing_image` | `true` | Hold an image-less new listing for one interval so the alert carries its photo; it posts on the next run either way |
 | `prune_seen_after_days` | `90` | Seen-cache entries older than this are dropped at the end of a run |
 
 A search's effective cadence is `max(interval, cron period)`, with a 10% grace
@@ -430,9 +431,13 @@ only way to mark it as secondary — and reads `8d 13h left` on an auction (from
 fixed-price listing that accepts offers.
 
 Carrying the photo ourselves means the picture doesn't depend on eBay's OG tags
-and Slack's crawler. Listings with **no** photo fall back to a bare URL with
-unfurling on, and get no divider: blocks would put the URL inside one, and the
-unfurl that path exists for keys off the URL being in the message text.
+and Slack's crawler. eBay's image CDN often lags a brand-new listing, so a
+fresh find with **no** photo is held for one interval (`defer_missing_image`,
+on by default) and alerts on its next appearance — usually with the photo that
+has shown up by then. A listing still photo-less at that point posts anyway,
+as a bare URL with unfurling on, and gets no divider: blocks would put the URL
+inside one, and the unfurl that path exists for keys off the URL being in the
+message text.
 
 **Overflow line** when `max_notify` truncates, so nothing disappears quietly:
 

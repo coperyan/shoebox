@@ -69,6 +69,13 @@ defaults:
   # exist to prevent an alert storm over listings that are already old.
   notify_on_seed: false
 
+  # eBay's image CDN often lags a brand-new listing, so alerting the moment a
+  # listing appears tends to post a card with no photo. true (default): hold
+  # image-less new listings for one interval -- they alert on the next run,
+  # with the photo if it has appeared by then, without it otherwise. false:
+  # alert immediately, photo or not.
+  defer_missing_image: true
+
   # An alias from the channels: block above, or a literal channel ID.
   # null falls back to slack.search_channel in app.yaml.
   channel: card_alerts

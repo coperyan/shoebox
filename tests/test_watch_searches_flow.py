@@ -20,9 +20,11 @@ def item(
     item_id: str,
     title: str = "Michael Jordan Rookie",
     price: str = "100.00",
-    image: str | None = None,
+    image: str | None = "s-l225",
 ) -> ItemSummary:
-    """``image`` is the eBay size segment (``s-l225``); None means no photo."""
+    """``image`` is the eBay size segment (``s-l225``); None means no photo.
+    Defaults to having one, since defer_missing_image holds photo-less finds
+    for a run — tests about deferral pass image=None explicitly."""
     return ItemSummary(
         item_id=item_id,
         title=title,
@@ -317,10 +319,13 @@ class TestOrdering:
         assert "itm/c" in post.items[0][1]
 
     def test_imageless_item_falls_back_to_unfurling(self, searches_yaml, store):
+        """A deferred listing whose photo never appeared posts on its second
+        sighting as a bare URL, leaving the image to Slack's link unfurl."""
         path = searches_yaml()
         run(path, store, [], Recorder())
+        run(path, store, [item("a", image=None)], Recorder(), force=True)  # deferred
         post = Recorder()
-        run(path, store, [item("a")], post, force=True)
+        run(path, store, [item("a", image=None)], post, force=True)
         channel, text, thread_ts, unfurl, blocks = post.items[0]
         assert unfurl is True
         assert blocks is None
@@ -521,6 +526,135 @@ class TestScheduling:
             other = SearchStateStore(base_dir=store.base_dir)
             results = run(path, other, [item("a")], post)
         assert results == []
+        assert post.posts == []
+
+
+class TestImageDeferral:
+    """defer_missing_image: image-less new listings wait exactly one run.
+
+    eBay's image CDN lags brand-new listings, so alerting instantly posts a
+    photo-less card. The deferral trades one interval of latency for the photo
+    — and alerts on the second sighting even when the photo never appeared.
+    """
+
+    def test_imageless_new_listing_waits_one_run(self, searches_yaml, store):
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+
+        post = Recorder()
+        run(path, store, [item("a", image=None)], post, force=True)
+        assert post.posts == []  # held, not alerted
+        entry = store.load_seen("s1")["a"]
+        assert entry.deferred is True and entry.notified is False
+
+        post = Recorder()
+        run(path, store, [item("a", image=None)], post, force=True)
+        assert len(post.headers) == 1  # second sighting alerts, photo or not
+        assert "itm/a" in post.items[0][1]
+        assert store.load_seen("s1")["a"].notified is True
+
+    def test_deferred_listing_posts_with_its_late_photo(self, searches_yaml, store):
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        run(path, store, [item("a", image=None)], Recorder(), force=True)
+
+        post = Recorder()
+        run(path, store, [item("a", image="s-l225")], post, force=True)
+
+        channel, text, thread_ts, unfurl, blocks = post.items[0]
+        assert [b["type"] for b in blocks] == ["section", "image", "divider"]
+        assert blocks[1]["image_url"].endswith("/s-l500.jpg")
+
+    def test_deferred_listing_does_not_realert(self, searches_yaml, store):
+        """The steady-state refresh must not resurrect the stale deferred entry
+        once the alert has gone out."""
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        run(path, store, [item("a", image=None)], Recorder(), force=True)
+        run(path, store, [item("a", image=None)], Recorder(), force=True)  # alerts
+
+        post = Recorder()
+        run(path, store, [item("a", image=None)], post, force=True)
+        assert post.posts == []
+
+    def test_deferral_keeps_first_seen_at(self, searches_yaml, store):
+        """The alert (and its BigQuery hit) belong to the run that first saw
+        the listing, not the run that posted it."""
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        run(path, store, [item("a", image=None)], Recorder(), force=True)
+        first = store.load_seen("s1")["a"].first_seen_at
+
+        run(path, store, [item("a", image=None)], Recorder(), force=True)
+        assert store.load_seen("s1")["a"].first_seen_at == first
+
+    def test_deferred_and_fresh_share_one_header(self, searches_yaml, store):
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+        run(path, store, [item("a", image=None)], Recorder(), force=True)
+
+        post = Recorder()
+        run(path, store, [item("a", image=None), item("b")], post, force=True)
+
+        assert len(post.headers) == 1
+        assert "2 new listings" in post.headers[0][1]
+        posted = " ".join(p[1] for p in post.items)
+        assert "itm/a" in posted and "itm/b" in posted
+
+    def test_defer_missing_image_false_alerts_immediately(self, searches_yaml, store):
+        path = searches_yaml(defer_missing_image=False)
+        run(path, store, [], Recorder())
+
+        post = Recorder()
+        run(path, store, [item("a", image=None)], post, force=True)
+        assert len(post.items) == 1
+        assert "itm/a" in post.items[0][1]
+
+    def test_flag_off_still_alerts_a_previously_deferred_listing(self, tmp_path, store):
+        """Flipping defer_missing_image off must not strand a listing that was
+        already deferred under the old config."""
+        import yaml as yaml_mod
+
+        def write(defer: bool):
+            path = tmp_path / "searches.yaml"
+            search = {
+                "name": "s1",
+                "query": "jordan",
+                "interval": "15m",
+                "defer_missing_image": defer,
+            }
+            path.write_text(yaml_mod.safe_dump({"version": 1, "searches": [search]}))
+            return path
+
+        run(write(True), store, [], Recorder())
+        run(write(True), store, [item("a", image=None)], Recorder(), force=True)  # deferred
+
+        post = Recorder()
+        run(write(False), store, [item("a", image=None)], post, force=True)
+        assert len(post.items) == 1
+
+    def test_dry_run_reports_deferral_and_writes_nothing(self, searches_yaml, store, caplog):
+        path = searches_yaml()
+        run(path, store, [], Recorder())
+
+        post = Recorder()
+        with caplog.at_level("INFO"):
+            run(path, store, [item("a", image=None)], post, dry_run=True, force=True)
+
+        assert "would defer 1 image-less new listing(s)" in caplog.text
+        assert post.posts == []
+        assert "a" not in store.load_seen("s1")
+
+    def test_seed_records_imageless_items_without_deferring(self, searches_yaml, store):
+        """Seeds are existing (old) listings: record them as seen outright, or
+        they'd all alert one run later."""
+        path = searches_yaml()
+        post = Recorder()
+        run(path, store, [item("a", image=None)], post)
+        assert store.load_seen("s1")["a"].deferred is False
+
+        post = Recorder()
+        run(path, store, [item("a", image=None)], post, force=True)
         assert post.posts == []
 
 

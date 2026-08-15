@@ -156,6 +156,10 @@ class SearchDefaults(_ConfigModel):
     # --reseed; the automatic recovery re-seeds (lost cache, long-idle search)
     # stay silent, since those exist precisely to avoid alerting on stale hits.
     notify_on_seed: bool = False
+    # eBay's image CDN often lags a brand-new listing, so alerting the instant
+    # a listing appears tends to post a photo-less card. Hold image-less finds
+    # for one interval; they alert on their next appearance, photo or not.
+    defer_missing_image: bool = True
     channel: str | None = None
 
     currency: str = "USD"
@@ -207,6 +211,7 @@ class SavedSearch(_ConfigModel):
     seed_max_results: int | None = Field(default=None, ge=1)
     max_notify: int | None = Field(default=None, ge=1)
     notify_on_seed: bool | None = None
+    defer_missing_image: bool | None = None
     channel: str | None = None
 
     currency: str | None = None
@@ -270,6 +275,7 @@ class ResolvedSearch(_ConfigModel):
     seed_max_results: int
     max_notify: int
     notify_on_seed: bool
+    defer_missing_image: bool
     channel: str | None
 
     currency: str

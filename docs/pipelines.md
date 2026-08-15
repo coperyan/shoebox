@@ -238,7 +238,10 @@ Each listing is a Block Kit
 `section` + `image` + `divider` — mrkdwn detail (title, price with an italic
 auction countdown or Best Offer marker, shipping on its own line, seller) plus
 the listing photo at 500px and a closing rule — so the picture doesn't depend on
-Slack's link unfurler. Listings with no photo fall back to a bare URL and
+Slack's link unfurler. A brand-new listing whose photo hasn't propagated
+through eBay's image CDN yet is held for one interval (`defer_missing_image`,
+default on) and alerts on its next appearance, photo or not. Listings still
+photo-less then fall back to a bare URL and
 `unfurl_links=True`, without a divider, since the unfurl needs the URL in the
 message text rather than inside a block. `slack_formatting.table()` is
 deliberately unused because URLs inside its code fence are neither clickable nor

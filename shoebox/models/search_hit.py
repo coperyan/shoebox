@@ -43,6 +43,9 @@ class SeenEntry(Model):
     # False for seeded items and for hits past the max_notify cap -- they are
     # recorded precisely so they never alert.
     notified: bool = False
+    # True while an image-less new listing is held for one interval (see
+    # defer_missing_image). deferred and not notified => alert on next sighting.
+    deferred: bool = False
 
     @property
     def cache_key(self) -> str:

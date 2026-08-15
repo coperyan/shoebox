@@ -145,7 +145,8 @@ class TestRunState:
         s.mark("s1", last_run_at=NOW, status="reseed", seeded_at=None, seed_count=None)
         loaded = s.load_state()["s1"]
         assert loaded.seeded_at is None
-        assert loaded.seed_count is None
+        # seed_count is a plain int; cleared reads back as 0 ("nothing seeded").
+        assert loaded.seed_count == 0
 
     def test_error_is_truncated(self, tmp_path):
         s = store(tmp_path)

@@ -52,11 +52,21 @@ FetchFn = Callable[[ResolvedSearch, int], list[ItemSummary]]
 
 
 class SearchRunResult:
-    def __init__(self, name: str, *, seeded: bool = False, new_count: int = 0, fetched: int = 0):
+    def __init__(
+        self,
+        name: str,
+        *,
+        seeded: bool = False,
+        new_count: int = 0,
+        fetched: int = 0,
+        deferred: int = 0,
+    ):
         self.name = name
         self.seeded = seeded
         self.new_count = new_count
         self.fetched = fetched
+        # Image-less new listings held for the next run (defer_missing_image).
+        self.deferred = deferred
 
 
 def _default_fetch(search: ResolvedSearch, max_results: int) -> list[ItemSummary]:
@@ -170,26 +180,34 @@ def run_one_search(
     seen = store.load_seen(search.name)
     fresh = [i for i in items if i.item_id and i.item_id not in seen]
 
-    def _entry(item: ItemSummary, *, notified: bool) -> SeenEntry:
+    def _entry(item: ItemSummary, *, notified: bool, deferred: bool = False) -> SeenEntry:
+        # A prior entry exists when this item was deferred last run: its
+        # first_seen_at is the truth, not this run's timestamp.
+        prior = seen.get(item.item_id or "")
         return SeenEntry(
             search_name=search.name,
             item_id=item.item_id or "",
-            first_seen_at=now,
+            first_seen_at=prior.first_seen_at if prior else now,
             last_seen_at=now,
             last_price=item.price_decimal,
             last_price_currency=item.price.currency if item.price else None,
             title=item.title,
             notified=notified,
+            deferred=deferred,
         )
 
     def _hit(item: ItemSummary, **kw) -> SearchHit:
+        prior = seen.get(item.item_id or "")
+        if prior is not None:
+            kw.setdefault("first_seen_at", prior.first_seen_at)
         return SearchHit.from_item(item, search_name=search.name, run_id=run_id, hit_at=now, **kw)
 
     def _refresh_entry(item: ItemSummary, prior: SeenEntry) -> SeenEntry:
         """Update last_seen_at/last_price while carrying the prior entry's
-        first_seen_at and notified through — the refresh exists to keep those
-        histories current, not to erase them (a future price-drop alert reads
-        first_seen_at, and `notified` records that an alert already went out)."""
+        first_seen_at, notified, and deferred through — the refresh exists to
+        keep those histories current, not to erase them (a future price-drop
+        alert reads first_seen_at, and `notified` records that an alert
+        already went out)."""
         return SeenEntry(
             search_name=search.name,
             item_id=item.item_id or "",
@@ -199,6 +217,7 @@ def run_one_search(
             last_price_currency=item.price.currency if item.price else None,
             title=item.title,
             notified=prior.notified,
+            deferred=prior.deferred,
         )
 
     # ---- Seed: record everything; alert nothing unless notify_on_seed ----
@@ -259,34 +278,77 @@ def run_one_search(
         return SearchRunResult(search.name, seeded=True, fetched=len(items))
 
     # ---- Normal run -----------------------------------------------------
-    if not fresh:
-        # No header message: a "0 new" post every interval would drown the channel.
-        if not dry_run:
-            store.append_seen(
-                search.name,
-                [_refresh_entry(i, seen[i.item_id]) for i in seen_refresh(items, seen)],
-            )
-        return SearchRunResult(search.name, fetched=len(items))
+    # Alert whatever was deferred last run first: one held interval is the
+    # deal, photo or no photo — an indefinite wait would trade a missing image
+    # for a missing alert. (Checked regardless of defer_missing_image, so
+    # flipping the flag off can't strand an already-deferred listing.)
+    deferred_due = [
+        i
+        for i in items
+        if i.item_id and (prior := seen.get(i.item_id)) and prior.deferred and not prior.notified
+    ]
+
+    # eBay's image CDN often lags a brand-new listing, so alerting the moment
+    # it appears posts a photo-less card. Hold image-less finds one interval.
+    defer_now: list[ItemSummary] = []
+    if search.defer_missing_image:
+        defer_now = [i for i in fresh if not i.thumbnail()]
+        fresh = [i for i in fresh if i.thumbnail()]
+
+    to_alert = deferred_due + fresh
 
     if dry_run:
-        logger.info("[dry-run] %s", fmt.format_header(search, len(fresh)))
-        for item in fresh[: search.max_notify]:
+        if defer_now:
+            logger.info(
+                "[dry-run] would defer %d image-less new listing(s) to the next run",
+                len(defer_now),
+            )
+        if not to_alert:
+            return SearchRunResult(search.name, fetched=len(items), deferred=len(defer_now))
+        logger.info("[dry-run] %s", fmt.format_header(search, len(to_alert)))
+        for item in to_alert[: search.max_notify]:
             logger.info(
                 "[dry-run] %s", fmt.format_item(item, search, include_bare_url=False, now=now)
             )
             if not item.thumbnail():
-                # Worth knowing before the run goes live: this one gets no photo.
+                # A deferred listing whose photo never appeared: it posts anyway.
                 logger.info("[dry-run]   (no image — will fall back to link unfurl)")
-        if len(fresh) > search.max_notify:
-            logger.info("[dry-run] %s", fmt.format_overflow(len(fresh), search.max_notify, search))
-        return SearchRunResult(search.name, new_count=len(fresh), fetched=len(items))
+        if len(to_alert) > search.max_notify:
+            logger.info(
+                "[dry-run] %s", fmt.format_overflow(len(to_alert), search.max_notify, search)
+            )
+        return SearchRunResult(
+            search.name, new_count=len(to_alert), fetched=len(items), deferred=len(defer_now)
+        )
+
+    if defer_now:
+        # Recorded before anything else can fail: the point of a deferral is
+        # remembering the sighting, so the next run alerts instead of
+        # re-deferring. No hit row yet — that is written when the alert goes
+        # out, keeping BigQuery at one row per new listing.
+        logger.info(
+            "%s: deferring %d image-less new listing(s) to the next run",
+            search.name,
+            len(defer_now),
+        )
+        store.append_seen(
+            search.name, [_entry(i, notified=False, deferred=True) for i in defer_now]
+        )
+
+    if not to_alert:
+        # No header message: a "0 new" post every interval would drown the channel.
+        store.append_seen(
+            search.name,
+            [_refresh_entry(i, seen[i.item_id]) for i in seen_refresh(items, seen)],
+        )
+        return SearchRunResult(search.name, fetched=len(items), deferred=len(defer_now))
 
     # Header plus listings straight in the channel -- no thread, so hits are
     # readable at a glance. The header's ts is still stamped on each hit to tie
     # the batch back to this run.
-    header_ts = post(channel, fmt.format_header(search, len(fresh)), None, False, None)
+    header_ts = post(channel, fmt.format_header(search, len(to_alert)), None, False, None)
 
-    shown = fresh[: search.max_notify]
+    shown = to_alert[: search.max_notify]
     for index, item in enumerate(shown):
         if index:
             time.sleep(pacing_seconds)
@@ -305,11 +367,12 @@ def run_one_search(
             ]
         )
 
-    overflow = fresh[search.max_notify :]
+    overflow = to_alert[search.max_notify :]
     if overflow:
         time.sleep(pacing_seconds)
-        post(channel, fmt.format_overflow(len(fresh), len(shown), search), None, False, None)
-        # Recorded as un-notified: without this they would re-alert forever.
+        post(channel, fmt.format_overflow(len(to_alert), len(shown), search), None, False, None)
+        # Recorded as un-notified (deferred cleared): without this they would
+        # re-alert forever.
         store.append_seen(search.name, [_entry(i, notified=False) for i in overflow])
         store.append_hits(
             [
@@ -319,12 +382,23 @@ def run_one_search(
         )
 
     # Refresh already-seen items so last_price/last_seen_at stay current -- the
-    # seam a future price-drop alert builds on.
+    # seam a future price-drop alert builds on. Items handled above are
+    # excluded: a refresh carries the *loaded* entry forward, and for a
+    # just-alerted deferral that stale entry would resurrect deferred=True and
+    # re-alert it next run.
+    handled = {i.item_id for i in to_alert}
     store.append_seen(
-        search.name, [_refresh_entry(i, seen[i.item_id]) for i in seen_refresh(items, seen)]
+        search.name,
+        [
+            _refresh_entry(i, seen[i.item_id])
+            for i in seen_refresh(items, seen)
+            if i.item_id not in handled
+        ],
     )
 
-    return SearchRunResult(search.name, new_count=len(fresh), fetched=len(items))
+    return SearchRunResult(
+        search.name, new_count=len(to_alert), fetched=len(items), deferred=len(defer_now)
+    )
 
 
 def _log_sample(items: list[ItemSummary], search: ResolvedSearch) -> None:
@@ -505,9 +579,7 @@ def _run_locked(
         for name in reseed:
             store.clear_seen(name)
             if name in state:
-                store.mark(
-                    name, last_run_at=now, status="reseed", seeded_at=None, seed_count=None
-                )
+                store.mark(name, last_run_at=now, status="reseed", seeded_at=None, seed_count=None)
         state = store.load_state()
     due = [
         s
@@ -521,7 +593,6 @@ def _run_locked(
 
     results: list[SearchRunResult] = []
     failures: list[tuple[str, str]] = []
-    any_new = False
 
     for search in due:
         run_state = state.get(search.name)
@@ -554,7 +625,6 @@ def _run_locked(
                 pacing_seconds=pacing_seconds,
             )
             results.append(result)
-            any_new = any_new or bool(result.new_count) or result.seeded
             if not dry_run:
                 store.mark(
                     search.name,
@@ -569,10 +639,11 @@ def _run_locked(
                     prune_before=now - timedelta(days=search.prune_seen_after_days),
                 )
             logger.info(
-                "%s: fetched=%d new=%d%s",
+                "%s: fetched=%d new=%d deferred=%d%s",
                 search.name,
                 result.fetched,
                 result.new_count,
+                result.deferred,
                 " (seeded)" if result.seeded else "",
             )
         except Exception as exc:  # noqa: BLE001 - one search must not kill the run
