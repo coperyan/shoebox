@@ -461,6 +461,17 @@ def notify(
     )
 
 
+def notify_best_effort(channel: str, message: str) -> None:
+    """``notify()``, but a Slack failure logs instead of raising.
+
+    For progress pings from data pipelines: the sync is the job, the ping is a
+    courtesy, and a Slack outage must not abort an eBay/BigQuery run."""
+    try:
+        notify(channel, message)
+    except Exception:
+        logger.warning("Slack notify failed (channel=%s); continuing", channel, exc_info=True)
+
+
 def notify_and_wait(channel: str, message: str, timeout_s: int = 600) -> str:
     slack = get_settings().slack
     return asyncio.run(

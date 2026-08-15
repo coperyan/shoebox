@@ -7,7 +7,7 @@ from shoebox.clients.ebay_rest.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.settings import get_settings
 from shoebox.utils.jsonl import write_jsonl
-from shoebox.utils.slack import notify
+from shoebox.utils.slack import notify_best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ def sync_active_listing_details():
     bq_client = BigQueryClient()
     settings = get_settings()
 
-    notify(settings.slack.notify_channel, "Starting sync_active_listing_details..")
+    notify_best_effort(settings.slack.notify_channel, "Starting sync_active_listing_details..")
 
     active_listings = ebay_api.legacy_api.get_active_listings()
 
@@ -60,7 +60,7 @@ def sync_active_listing_details():
         write_disposition="WRITE_APPEND",
     )
 
-    notify(settings.slack.notify_channel, "Completed sync_active_listing_details..")
+    notify_best_effort(settings.slack.notify_channel, "Completed sync_active_listing_details..")
 
 
 def main():

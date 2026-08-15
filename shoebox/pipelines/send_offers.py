@@ -7,8 +7,10 @@ anything unparseable gets a threaded hint and stays pending. Listings still
 pending at the deadline simply reappear next run (eBay keeps returning them
 while buyers remain interested).
 
-``--auto`` preserves the old headless behavior: send the discount-matrix
-price for every eligible listing with no prompts.
+``--auto`` skips the prompts and sends the discount-matrix price for every
+eligible listing. Unlike the old headless pipeline there is no ``--max-price``
+cap anymore: listings priced above the matrix's top tier get a flat 5%-off
+offer instead of being skipped.
 """
 
 import asyncio

@@ -8,7 +8,7 @@ from shoebox.clients.ebay_rest.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.settings import get_settings
 from shoebox.utils.jsonl import write_jsonl
-from shoebox.utils.slack import notify
+from shoebox.utils.slack import notify_best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ def sync_orders():
     bq_client = BigQueryClient()
     settings = get_settings()
 
-    notify(settings.slack.notify_channel, "Starting sync_orders..")
+    notify_best_effort(settings.slack.notify_channel, "Starting sync_orders..")
 
     now = datetime.now(UTC)
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -80,4 +80,4 @@ def sync_orders():
     bq_client.run_query(sql="tbl_orders_current.sql", return_df=False)
 
     logger.info("Created orders_current table. Sync-orders done.")
-    notify(settings.slack.notify_channel, "Completed sync_orders..")
+    notify_best_effort(settings.slack.notify_channel, "Completed sync_orders..")

@@ -299,6 +299,13 @@ def run_listings(
     # Persist image log
     img_client.flush_append_log()
 
+    if not results_path.exists():
+        # Every item failed (or nothing was queued): there are no results to
+        # sync, and letting sync_results_to_bq raise FileNotFoundError here
+        # would bury the failure summary logged above.
+        logger.warning("No listing results to sync; skipping GCS/BigQuery.")
+        return
+
     object_name = sync_results_to_bq(
         delete_local=True,
         local_jsonl=results_path,

@@ -50,7 +50,7 @@ paths:
 
 ebay:
   # application/user/header name the entries to use in ebay_rest.json
-  # (see configs/ebay_rest.json.example and the ebay_rest package docs:
+  # (see configs/ebay_rest.example.json and the ebay_rest package docs:
   # https://github.com/matecsaj/ebay_rest).
   application: production_1
   user: production_1

@@ -34,16 +34,16 @@ checked-in `.example` template:
 | File | Template | Purpose |
 |---|---|---|
 | `configs/app.yaml` | `app.example.yml` | Central application settings (validated by `settings.py`; see [configuration.md](configuration.md)) |
-| `configs/ebay_rest.json` | `ebay_rest.json.example` | eBay REST credentials for the `ebay_rest` library (applications / users / headers / key_pairs) |
-| `configs/ebay_legacy.json` | `ebay_legacy.json.example` | eBay Trading API auth token (`{"token": "..."}`) |
-| `configs/gcp.json` | `gcp.json.example` | GCP service-account key (standard downloadable JSON) |
+| `configs/ebay_rest.json` | `ebay_rest.example.json` | eBay REST credentials for the `ebay_rest` library (applications / users / headers / key_pairs) |
+| `configs/ebay_legacy.json` | `ebay_legacy.example.json` | eBay Trading API auth token (`{"token": "..."}`) |
+| `configs/gcp.json` | `gcp.example.json` | GCP service-account key (standard downloadable JSON) |
 | `configs/searches.yaml` | `searches.example.yml` | Saved eBay searches for `watch-searches` (optional; only needed for that command) |
 
 ```bash
 cp configs/app.example.yml configs/app.yaml
-cp configs/ebay_rest.json.example configs/ebay_rest.json
-cp configs/ebay_legacy.json.example configs/ebay_legacy.json
-cp configs/gcp.json.example configs/gcp.json
+cp configs/ebay_rest.example.json configs/ebay_rest.json
+cp configs/ebay_legacy.example.json configs/ebay_legacy.json
+cp configs/gcp.example.json configs/gcp.json
 cp configs/searches.example.yml configs/searches.yaml   # optional
 # then edit each with real values
 ```

@@ -284,12 +284,20 @@ def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> di
     "Near Mint or Better"; the package is a one-ounce plain-white-envelope
     style LETTER (7x5x1 in).
     """
+    descriptor = get_settings().store.condition_descriptor
+    if descriptor not in _CONDITION_DESCRIPTORS:
+        # Settings doesn't validate this value, so a typo in app.yaml would
+        # otherwise surface as a bare KeyError mid-listing-build.
+        raise ValueError(
+            f"store.condition_descriptor {descriptor!r} in app.yaml is not one of "
+            f"{sorted(_CONDITION_DESCRIPTORS)}"
+        )
     return {
         "condition": get_settings().store.condition,
         "conditionDescriptors": [
             {
                 "name": "40001",
-                "values": [_CONDITION_DESCRIPTORS[get_settings().store.condition_descriptor]],
+                "values": [_CONDITION_DESCRIPTORS[descriptor]],
             }
         ],
         "packageWeightAndSize": {

@@ -26,7 +26,7 @@ from pathlib import Path
 
 from slack_sdk.errors import SlackApiError
 
-from ..clients.search_state import SearchStateStore
+from ..clients.search_state import UNCHANGED, SearchStateStore
 from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch, load_searches_file
 from ..models.search_hit import SearchHit, SeenEntry
@@ -185,6 +185,22 @@ def run_one_search(
     def _hit(item: ItemSummary, **kw) -> SearchHit:
         return SearchHit.from_item(item, search_name=search.name, run_id=run_id, hit_at=now, **kw)
 
+    def _refresh_entry(item: ItemSummary, prior: SeenEntry) -> SeenEntry:
+        """Update last_seen_at/last_price while carrying the prior entry's
+        first_seen_at and notified through — the refresh exists to keep those
+        histories current, not to erase them (a future price-drop alert reads
+        first_seen_at, and `notified` records that an alert already went out)."""
+        return SeenEntry(
+            search_name=search.name,
+            item_id=item.item_id or "",
+            first_seen_at=prior.first_seen_at,
+            last_seen_at=now,
+            last_price=item.price_decimal,
+            last_price_currency=item.price.currency if item.price else None,
+            title=item.title,
+            notified=prior.notified,
+        )
+
     # ---- Seed: record everything; alert nothing unless notify_on_seed ----
     if seed:
         # Only ever the first max_notify: a seed fetches seed_max_results (2000
@@ -247,7 +263,8 @@ def run_one_search(
         # No header message: a "0 new" post every interval would drown the channel.
         if not dry_run:
             store.append_seen(
-                search.name, [_entry(i, notified=False) for i in seen_refresh(items, seen)]
+                search.name,
+                [_refresh_entry(i, seen[i.item_id]) for i in seen_refresh(items, seen)],
             )
         return SearchRunResult(search.name, fetched=len(items))
 
@@ -303,7 +320,9 @@ def run_one_search(
 
     # Refresh already-seen items so last_price/last_seen_at stay current -- the
     # seam a future price-drop alert builds on.
-    store.append_seen(search.name, [_entry(i, notified=False) for i in seen_refresh(items, seen)])
+    store.append_seen(
+        search.name, [_refresh_entry(i, seen[i.item_id]) for i in seen_refresh(items, seen)]
+    )
 
     return SearchRunResult(search.name, new_count=len(fresh), fetched=len(items))
 
@@ -459,6 +478,25 @@ def _run_locked(
     run_id = uuid.uuid4().hex
     state = store.load_state()
 
+    candidates = [s for s in searches if s.enabled]
+    if only:
+        candidates = [s for s in candidates if s.name in set(only)]
+
+    # Validate reseed names against the searches that will actually run,
+    # *before* destroying anything: clearing the cache of a search that then
+    # doesn't run would hand it to a later silent recovery seed (or, if its
+    # recorded seed matched zero items, to a false alert storm) — and a typo'd
+    # name would silently do nothing.
+    if reseed:
+        runnable = {s.name for s in candidates}
+        unknown = sorted(set(reseed) - runnable)
+        if unknown:
+            raise ValueError(
+                f"--reseed target(s) not in this run: {', '.join(unknown)}. "
+                "A reseed target must be an enabled search, and must match "
+                "--only when that filter is given."
+            )
+
     # Discarding a seen-cache is the most destructive thing this command does,
     # and --dry-run promises no state writes -- so a dry run only *rehearses* a
     # reseed. The names are still forced due below and still take the seed path,
@@ -467,12 +505,10 @@ def _run_locked(
         for name in reseed:
             store.clear_seen(name)
             if name in state:
-                store.mark(name, last_run_at=now, status="reseed", seeded_at=None)
+                store.mark(
+                    name, last_run_at=now, status="reseed", seeded_at=None, seed_count=None
+                )
         state = store.load_state()
-
-    candidates = [s for s in searches if s.enabled]
-    if only:
-        candidates = [s for s in candidates if s.name in set(only)]
     due = [
         s
         for s in candidates
@@ -525,8 +561,8 @@ def _run_locked(
                     last_run_at=now,
                     status="ok",
                     new_count=result.new_count,
-                    seeded_at=now if seed_reason else None,
-                    seed_count=result.fetched if seed_reason else None,
+                    seeded_at=now if seed_reason else UNCHANGED,
+                    seed_count=result.fetched if seed_reason else UNCHANGED,
                 )
                 store.compact_seen(
                     search.name,
@@ -547,7 +583,10 @@ def _run_locked(
                 # retried every tick would burn the Browse quota for nothing.
                 store.mark(search.name, last_run_at=now, status="error", error=str(exc))
 
-    if flush and any_new and not dry_run:
+    if flush and not dry_run:
+        # Attempted every run, not just runs with new hits: flush_append_log
+        # no-ops on an empty buffer, and gating on any_new would strand a
+        # buffer left behind by a failed flush until the next hit came along.
         try:
             obj = store.flush_append_log()
             if obj:

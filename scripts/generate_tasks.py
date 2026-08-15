@@ -273,11 +273,13 @@ def build_settings(task: dict[str, Any], defaults: dict[str, Any]) -> list[str]:
         lines.append(f"  <{name}>{values[name]}</{name}>")
 
     if restart := setting("restart_on_failure"):
-        lines[1:1] = _indent(
+        # Interval-then-Count, appended last: the order and position the Task
+        # Scheduler XSD prescribes and the GUI's own XML exports use.
+        lines += _indent(
             [
                 "<RestartOnFailure>",
-                f"  <Count>{restart['count']}</Count>",
                 f"  <Interval>{restart['interval']}</Interval>",
+                f"  <Count>{restart['count']}</Count>",
                 "</RestartOnFailure>",
             ],
             1,

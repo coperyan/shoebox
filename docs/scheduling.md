@@ -1,7 +1,7 @@
 # Scheduling
 
 On the Windows host, the recurring pipelines run as Task Scheduler tasks in the
-`\ebay\` folder. Those tasks are **generated from
+`\shoebox\` folder. Those tasks are **generated from
 [`scripts/tasks.yaml`](../scripts/tasks.yaml)** rather than hand-built in the
 GUI, so a task's schedule, working directory, and retry policy are reviewable in
 the repo instead of living only in the scheduler database.
@@ -143,7 +143,7 @@ registration.
 ## Verifying
 
 ```powershell
-Get-ScheduledTaskInfo -TaskName watch-searches -TaskPath \ebay\
+Get-ScheduledTaskInfo -TaskName watch-searches -TaskPath \shoebox\
 ```
 
 `LastTaskResult` is the command's exit code — `0` is success, and `1` is usually

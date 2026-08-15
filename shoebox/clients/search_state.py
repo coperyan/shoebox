@@ -50,6 +50,11 @@ GCS_PREFIX = "logs/search_hits"
 # Compact a seen file once it holds this many times more lines than unique items.
 _COMPACT_RATIO = 2
 
+# Sentinel for mark(): "keep the stored value" — distinct from an explicit None,
+# which clears it. (`seeded_at=None` must be expressible, so None can't be the
+# default.)
+UNCHANGED = object()
+
 # A search whose last_run_at is this many intervals stale (asleep machine,
 # long-disabled search) re-seeds silently instead of alerting: those listings
 # are hours or days old and no longer actionable.
@@ -236,18 +241,22 @@ class SearchStateStore:
         status: str,
         error: str | None = None,
         new_count: int = 0,
-        seeded_at: datetime | None = None,
-        seed_count: int | None = None,
+        seeded_at: datetime | None | object = UNCHANGED,
+        seed_count: int | None | object = UNCHANGED,
     ) -> None:
+        """Record a run. ``seeded_at``/``seed_count`` keep their previous value
+        unless passed; passing ``None`` explicitly *clears* them (a reseed must
+        be able to forget the old seed, or a crash between clearing the cache
+        and re-seeding leaves the state claiming "seeded")."""
         state = self.load_state()
         previous = state.get(name, SearchRunState())
         state[name] = SearchRunState(
             last_run_at=last_run_at,
-            seeded_at=seeded_at or previous.seeded_at,
+            seeded_at=previous.seeded_at if seeded_at is UNCHANGED else seeded_at,
             last_status=status,
             last_error=(error[:500] if error else None),
             last_new_count=new_count,
-            seed_count=previous.seed_count if seed_count is None else seed_count,
+            seed_count=previous.seed_count if seed_count is UNCHANGED else seed_count,
         )
         self.save_state(state)
 

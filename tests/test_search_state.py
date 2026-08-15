@@ -136,6 +136,17 @@ class TestRunState:
         s.mark("s1", last_run_at=NOW + timedelta(hours=1), status="ok")
         assert s.load_state()["s1"].seeded_at == NOW
 
+    def test_mark_clears_seeded_at_on_explicit_none(self, tmp_path):
+        """A reseed must be able to forget the old seed — otherwise a crash
+        between clearing the cache and re-seeding leaves the state claiming
+        "seeded" against an empty cache."""
+        s = store(tmp_path)
+        s.mark("s1", last_run_at=NOW, status="ok", seeded_at=NOW, seed_count=5)
+        s.mark("s1", last_run_at=NOW, status="reseed", seeded_at=None, seed_count=None)
+        loaded = s.load_state()["s1"]
+        assert loaded.seeded_at is None
+        assert loaded.seed_count is None
+
     def test_error_is_truncated(self, tmp_path):
         s = store(tmp_path)
         s.mark("s1", last_run_at=NOW, status="error", error="x" * 900)

@@ -480,6 +480,40 @@ class TestScheduling:
         assert len(post.posts) == 1
         assert "seeded with 2" in post.posts[0][1]
 
+    def test_reseed_unknown_name_raises_before_clearing(self, searches_yaml, store):
+        """A typo'd --reseed must fail loudly, and must not have deleted any
+        cache first — a cleared cache on a search that then doesn't run decays
+        into a silent recovery seed (or worse, a false alert storm)."""
+        path = searches_yaml()
+        run(path, store, [item("a")], Recorder())
+
+        with pytest.raises(ValueError, match="reseed"):
+            run(path, store, [item("a")], Recorder(), reseed=["typo"])
+        assert set(store.load_seen("s1")) == {"a"}
+
+    def test_reseed_of_disabled_search_raises(self, searches_yaml, store):
+        path = searches_yaml(enabled=False)
+        with pytest.raises(ValueError, match="reseed"):
+            run(path, store, [item("a")], Recorder(), reseed=["s1"])
+
+    def test_reseed_outside_only_filter_raises(self, tmp_path, store):
+        path = tmp_path / "searches.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "searches": [
+                        {"name": "one", "query": "x", "interval": "15m"},
+                        {"name": "two", "query": "y", "interval": "15m"},
+                    ],
+                }
+            )
+        )
+        run(path, store, [item("a")], Recorder())
+        with pytest.raises(ValueError, match="reseed"):
+            run(path, store, [item("a")], Recorder(), only=["one"], reseed=["two"])
+        assert set(store.load_seen("two")) == {"a"}
+
     def test_lock_prevents_a_concurrent_run(self, searches_yaml, store):
         path = searches_yaml()
         post = Recorder()
@@ -488,6 +522,43 @@ class TestScheduling:
             results = run(path, other, [item("a")], post)
         assert results == []
         assert post.posts == []
+
+
+class TestStateHygiene:
+    def test_refresh_preserves_first_seen_and_notified(self, searches_yaml, store):
+        """A steady-state run must not erase alert history: first_seen_at and
+        notified are the seam a future price-drop alert builds on."""
+        path = searches_yaml()
+        run(path, store, [], Recorder())  # seed empty
+        run(path, store, [item("a")], Recorder(), force=True)  # alerts item a
+
+        before = store.load_seen("s1")["a"]
+        assert before.notified is True
+
+        run(path, store, [item("a")], Recorder(), force=True)  # steady-state refresh
+        after = store.load_seen("s1")["a"]
+        assert after.notified is True
+        assert after.first_seen_at == before.first_seen_at
+        assert after.last_seen_at >= before.last_seen_at
+
+    def test_flush_is_attempted_even_when_nothing_is_new(self, searches_yaml, store):
+        """A buffer left behind by a failed flush must retry on the next run,
+        not wait until some search next finds a hit."""
+        path = searches_yaml()
+        run(path, store, [item("a")], Recorder())
+
+        calls: list[bool] = []
+        store.flush_append_log = lambda: calls.append(True)  # type: ignore[method-assign]
+        watch_searches(
+            config_path=path,
+            store=store,
+            fetch=lambda search, limit: [item("a")],
+            post=Recorder(),
+            flush=True,
+            pacing_seconds=0,
+            force=True,
+        )
+        assert calls
 
 
 class TestDryRun:
