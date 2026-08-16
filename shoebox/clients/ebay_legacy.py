@@ -793,6 +793,67 @@ class eBayLegacyClient:
             "title": title,
         }
 
+    def revise_store_category(
+        self,
+        item_id: str,
+        category_id: str | int,
+        secondary_category_id: str | int | None = None,
+        *,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Move a listing into store categories via Trading `ReviseFixedPriceItem`.
+
+        The counterpart to the Sell Inventory route, which addresses categories
+        by name: Trading wants the numeric store category IDs, so callers
+        resolve names to IDs from ``StoresClient.get_store_categories`` first.
+
+        This is the path for listings with no SKU. eBay rejects Trading
+        revisions on Inventory-API listings, so reach for it only when the
+        inventory path doesn't apply.
+        """
+        primary = str(int(str(category_id).strip()))
+        secondary = (
+            str(int(str(secondary_category_id).strip()))
+            if secondary_category_id is not None
+            else None
+        )
+        if secondary == primary:
+            # eBay rejects a listing filed twice in the same category.
+            secondary = None
+
+        second_xml = f"<StoreCategory2ID>{secondary}</StoreCategory2ID>" if secondary else ""
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <ReviseFixedPriceItemRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <Item>
+                    <ItemID>{item_id}</ItemID>
+                    <Storefront>
+                        <StoreCategoryID>{primary}</StoreCategoryID>
+                        {second_xml}
+                    </Storefront>
+                </Item>
+                </ReviseFixedPriceItemRequest>"""
+
+        payload = self._trading_call(
+            call_name="ReviseFixedPriceItem",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return {
+            "ack": payload.get("Ack", "Success"),
+            "item_id": payload.get("ItemID", item_id),
+            "store_category_id": primary,
+            "store_category_2_id": secondary,
+        }
+
     def add_sku_to_listing(
         self,
         item_id: str,

@@ -143,6 +143,25 @@ def main() -> None:
         "--apply", action="store_true", help="Create them (default: preview only)"
     )
 
+    # Move live listings into their planned store categories
+    p_assign = sub.add_parser(
+        "assign-store-categories",
+        help="Move live listings into their planned store categories",
+    )
+    p_assign.add_argument("--plan", help="Category plan CSV; defaults to the working copy")
+    p_assign.add_argument(
+        "--sport", default="Baseball", help="Sport branch to move; 'all' for every sport"
+    )
+    p_assign.add_argument(
+        "--with-hits",
+        action="store_true",
+        help="Also push the planned Hits category, overwriting any set by hand",
+    )
+    p_assign.add_argument(
+        "--apply", action="store_true", help="Push to eBay (default: preview only)"
+    )
+    p_assign.add_argument("--limit", type=int, help="Cap how many listings are moved")
+
     # Sync Topps Calendar
     sub.add_parser("sync-topps-calendar")
 
@@ -313,6 +332,18 @@ def main() -> None:
         create_store_categories(
             plan_path=Path(args.plan) if args.plan else None,
             apply=args.apply,
+        )
+        return
+
+    if args.cmd == "assign-store-categories":
+        from shoebox.pipelines.assign_store_categories import assign_store_categories
+
+        assign_store_categories(
+            plan_path=Path(args.plan) if args.plan else None,
+            sport=None if str(args.sport).casefold() == "all" else args.sport,
+            with_hits=args.with_hits,
+            apply=args.apply,
+            limit=args.limit,
         )
         return
 

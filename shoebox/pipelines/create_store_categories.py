@@ -154,16 +154,12 @@ def create_categories(
                 created_here.append(path)
             except Exception as e:
                 logger.warning("Failed to create /%s: %s", "/".join(path), e)
-                records.append(
-                    {"path": "/" + "/".join(path), "status": "failed", "error": str(e)}
-                )
+                records.append({"path": "/" + "/".join(path), "status": "failed", "error": str(e)})
 
         if created_here:
             existing = _refresh_until_present(ebay_api, created_here)
 
-    return pd.DataFrame.from_records(
-        records, columns=["path", "status", "error"]
-    )
+    return pd.DataFrame.from_records(records, columns=["path", "status", "error"])
 
 
 def create_store_categories(

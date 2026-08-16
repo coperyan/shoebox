@@ -194,11 +194,7 @@ def replace_title_elements(title: str, ctr: int, card_number) -> str:
     elif ctr == 2:
         return title.replace(f" #{card_number}", "")
     elif ctr == 3:
-        return (
-            title.replace(" Baseball", "")
-            .replace(" Basketball", "")
-            .replace(" Football", "")
-        )
+        return title.replace(" Baseball", "").replace(" Basketball", "").replace(" Football", "")
     elif ctr == 4:
         return title.replace(" Refractor", "")
     elif ctr == 5:
@@ -278,9 +274,7 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Sport"] = sport(row.set_name)
     aspects["Player/Athlete"] = multi_str_split(row.player)
     aspects["Season"] = row.set_year
-    aspects["Year Manufactured"] = (
-        row.set_year if len(row.set_year) == 4 else row.set_year[:4]
-    )
+    aspects["Year Manufactured"] = row.set_year if len(row.set_year) == 4 else row.set_year[:4]
     aspects["Features"] = features(row)
     aspects["Set"] = row.set_name
     if row.team:
@@ -290,9 +284,7 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Card Number"] = row.card_number
     aspects["Type"] = "Sports Trading Card"
     aspects["Card Size"] = "Standard"
-    aspects["Card Thickness"] = (
-        "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
-    )
+    aspects["Card Thickness"] = "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
     aspects["Country/Region of Manufacture"] = "United States"
     aspects["Graded"] = "No"
     aspects["Vintage"] = "No"
@@ -313,9 +305,7 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     return aspects
 
 
-def base_inventory_item_payload(
-    *, quantity: int, product: dict[str, Any]
-) -> dict[str, Any]:
+def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> dict[str, Any]:
     """Shared inventory-item skeleton for every card listing.
 
     Condition descriptor 40001/400010 is eBay's trading-card grade
@@ -393,9 +383,7 @@ def build_offer_payload(*, draft: EbayListingDraft) -> dict[str, Any]:
 def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     """Rebuild an inventory item payload from an existing eBay API item response."""
     return base_inventory_item_payload(
-        quantity=existing_item["availability"]["ship_to_location_availability"][
-            "quantity"
-        ],
+        quantity=existing_item["availability"]["ship_to_location_availability"]["quantity"],
         product={
             "title": existing_item["product"]["title"],
             "description": store_footer_html(),
@@ -450,7 +438,9 @@ def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[
     if package and package.weight and package.weight.value and package.weight.unit:
         pkg = package.model_dump(exclude_none=True, by_alias=False)
         body["packageWeightAndSize"] = {
-            _to_camel(k): ({_to_camel(ik): iv for ik, iv in v.items()} if isinstance(v, dict) else v)
+            _to_camel(k): (
+                {_to_camel(ik): iv for ik, iv in v.items()} if isinstance(v, dict) else v
+            )
             for k, v in pkg.items()
         }
 
@@ -496,6 +486,55 @@ def rebuild_offer_body(
     return d
 
 
+def offer_body_with_store_categories(existing_offer: dict, categories: list[str]) -> dict:
+    """Rebuild an offer payload changing only which store categories it sits in.
+
+    Unlike :func:`rebuild_offer_body`, nothing else is recomputed: the price,
+    quantity, description and policy IDs are carried across exactly as eBay
+    returned them. Re-deriving the fulfillment policy from price here would
+    silently reshuffle shipping on every listing whose price has drifted past
+    the threshold since it was created.
+
+    ``updateOffer`` is a full PUT, so every required field has to be present
+    even though only ``storeCategoryNames`` is changing.
+    """
+    policies = existing_offer.get("listing_policies") or {}
+    pricing = existing_offer.get("pricing_summary") or {}
+    price = pricing.get("price") or {}
+
+    listing_policies: dict[str, Any] = {
+        "fulfillmentPolicyId": policies.get("fulfillment_policy_id"),
+        "paymentPolicyId": policies.get("payment_policy_id"),
+        "returnPolicyId": policies.get("return_policy_id"),
+    }
+    if policies.get("best_offer_terms"):
+        listing_policies["bestOfferTerms"] = {"bestOfferEnabled": True}
+    listing_policies = {k: v for k, v in listing_policies.items() if v is not None}
+
+    body = {
+        "sku": existing_offer["sku"],
+        "marketplaceId": existing_offer.get("marketplace_id") or "EBAY_US",
+        "format": existing_offer.get("format") or "FIXED_PRICE",
+        "availableQuantity": existing_offer.get("available_quantity"),
+        "categoryId": existing_offer.get("category_id"),
+        "listingDescription": existing_offer.get("listing_description"),
+        "listingDuration": existing_offer.get("listing_duration") or "GTC",
+        "merchantLocationKey": (
+            existing_offer.get("merchant_location_key")
+            or get_settings().store.merchant_location_key
+        ),
+        "listingPolicies": listing_policies,
+        "storeCategoryNames": list(categories),
+        "pricingSummary": {
+            "price": {
+                "value": price.get("value"),
+                "currency": price.get("currency") or "USD",
+            }
+        },
+    }
+    return {k: v for k, v in body.items() if v is not None}
+
+
 def build_draft(
     *, row: ListingQueueRow, image_urls: list[str], sku: str, schedule: bool = False
 ) -> EbayListingDraft:
@@ -512,9 +551,7 @@ def build_draft(
     aspects = build_aspects(row)
 
     if schedule:
-        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        )
+        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime("%Y-%m-%dT%H:%M:%SZ")
     else:
         listing_start_date = None
 
