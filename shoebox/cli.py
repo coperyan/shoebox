@@ -44,9 +44,14 @@ def main() -> None:
     sub.add_parser("sync-active-listings", help="Update active listings in GCS/BigQuery..")
 
     # Active Listing Details
-    sub.add_parser(
+    p_details = sub.add_parser(
         "sync-active-listing-details",
         help="Update active listing details in GCS/BigQuery..",
+    )
+    p_details.add_argument(
+        "--workers",
+        type=int,
+        help="Concurrent GetItem calls (default 12); lower it if eBay starts throttling",
     )
 
     # Orders
@@ -95,6 +100,47 @@ def main() -> None:
         type=int,
         default=900,
         help="Seconds to wait for Slack replies before unanswered prompts expire (default 900)",
+    )
+
+    # Enhance titles on live listings
+    p_titles = sub.add_parser(
+        "enhance-listing-titles",
+        help="Add the team and expand RC/AU shorthand in existing listing titles",
+    )
+    p_titles.add_argument(
+        "--input",
+        help=(
+            "Listings export to read (.jsonl or .csv); "
+            "defaults to the BigQuery view ebay.v_active_listing_details"
+        ),
+    )
+    p_titles.add_argument(
+        "--apply", action="store_true", help="Push the new titles to eBay (default: preview only)"
+    )
+    p_titles.add_argument("--limit", type=int, help="Cap how many listings are updated")
+
+    # Plan the store category tree for live listings
+    p_cats = sub.add_parser(
+        "plan-store-categories",
+        help="Report the store category each active listing should be filed under",
+    )
+    p_cats.add_argument(
+        "--input",
+        help=(
+            "Listings export to read (.jsonl or .csv); "
+            "defaults to the BigQuery view ebay.v_active_listing_details"
+        ),
+    )
+    p_cats.add_argument("--sport", help="Only report one sport branch, e.g. Baseball")
+
+    # Create the planned store categories on eBay
+    p_mkcats = sub.add_parser(
+        "create-store-categories",
+        help="Create the planned store categories in your eBay store (no listings move)",
+    )
+    p_mkcats.add_argument("--plan", help="Category plan CSV; defaults to the working copy")
+    p_mkcats.add_argument(
+        "--apply", action="store_true", help="Create them (default: preview only)"
     )
 
     # Sync Topps Calendar
@@ -238,7 +284,36 @@ def main() -> None:
             sync_active_listing_details,
         )
 
-        sync_active_listing_details()
+        kwargs = {"max_workers": args.workers} if args.workers else {}
+        sync_active_listing_details(**kwargs)
+        return
+
+    if args.cmd == "enhance-listing-titles":
+        from shoebox.pipelines.enhance_listing_titles import enhance_listing_titles
+
+        enhance_listing_titles(
+            input_path=Path(args.input) if args.input else None,
+            apply=args.apply,
+            limit=args.limit,
+        )
+        return
+
+    if args.cmd == "plan-store-categories":
+        from shoebox.pipelines.plan_store_categories import plan_store_categories
+
+        plan_store_categories(
+            input_path=Path(args.input) if args.input else None,
+            sport=args.sport,
+        )
+        return
+
+    if args.cmd == "create-store-categories":
+        from shoebox.pipelines.create_store_categories import create_store_categories
+
+        create_store_categories(
+            plan_path=Path(args.plan) if args.plan else None,
+            apply=args.apply,
+        )
         return
 
     if args.cmd == "slack-bot":

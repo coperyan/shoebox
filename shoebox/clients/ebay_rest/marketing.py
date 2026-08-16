@@ -72,9 +72,16 @@ class MarketingClient:
                 "campaign_name": campaign.get("campaign_name"),
                 "campaign_status": campaign.get("campaign_status"),
             }
-            results.extend(
-                {**campaign_fields, **ad} for ad in self.get_ads(campaign.get("campaign_id"))
-            )
+            try:
+                results.extend(
+                    {**campaign_fields, **ad}
+                    for ad in self.get_ads(campaign.get("campaign_id"))
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Getting ads for campaign ID {campaign.get('campaign_id')} failed\n"
+                )
+                logger.warning(e)
         return results
 
     def delete_ad(self, *, campaign_id: str, ad_id: str) -> Any:
@@ -241,7 +248,9 @@ class MarketingClient:
 
         now = datetime.now(UTC)
         start = (now + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        end = end_date or (now + timedelta(days=365 * 3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        end = end_date or (now + timedelta(days=365 * 3)).strftime(
+            "%Y-%m-%dT%H:%M:%S.000Z"
+        )
 
         body = {
             "marketplaceId": marketplace_id,
@@ -271,7 +280,9 @@ class MarketingClient:
             try:
                 result = self.create_item_promotion(body)
                 logger.info(
-                    "Created volume discount promotion listing_id=%s name=%r", listing_id, name
+                    "Created volume discount promotion listing_id=%s name=%r",
+                    listing_id,
+                    name,
                 )
                 return result
             except self.session.Error as e:
@@ -288,8 +299,8 @@ class MarketingClient:
                         wait,
                     )
                     time.sleep(wait)
-                    body["startDate"] = (datetime.now(UTC) + timedelta(minutes=1)).strftime(
-                        "%Y-%m-%dT%H:%M:%S.000Z"
-                    )
+                    body["startDate"] = (
+                        datetime.now(UTC) + timedelta(minutes=1)
+                    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
                 else:
                     raise

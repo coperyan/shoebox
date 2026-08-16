@@ -2,10 +2,11 @@ import ast
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from shoebox.models.ebay.inventory_item import InventoryItem
 from shoebox.models.ebay_listing import EbayListingDraft
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.settings import get_settings
-from shoebox.utils.shorten_team import shorten_team_name
+from shoebox.utils.title_crosswalk import shorten_team_name
 
 ## Condition mapping
 _CONDITION_DESCRIPTORS = {
@@ -402,6 +403,63 @@ def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
             "imageUrls": image_urls,
         },
     )
+
+
+def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[str, Any]:
+    """Round-trip an existing inventory item with only ``product.title`` changed.
+
+    Unlike :func:`rebuild_inventory_item_body`, this preserves the item's own
+    description, images, condition, and packaging rather than rebuilding them
+    from settings -- a title edit must not quietly rewrite the rest of a live
+    listing. Values eBay omits fall back to the standard single-card payload.
+    """
+    product = item.product
+    if product is None:
+        raise ValueError(f"Inventory item {item.sku} has no product to retitle")
+
+    quantity = 1
+    if item.availability and item.availability.ship_to_location_availability:
+        quantity = item.availability.ship_to_location_availability.quantity or 1
+
+    body = base_inventory_item_payload(
+        quantity=quantity,
+        product={
+            "title": new_title,
+            "description": product.description,
+            # eBay accepts aspects only as arrays; the model normalizes
+            # single-value aspects down to plain strings on the way in.
+            "aspects": {
+                k: (v if isinstance(v, list) else [v]) for k, v in product.aspects.items() if v
+            },
+            "imageUrls": list(product.image_urls),
+        },
+    )
+
+    if item.condition:
+        body["condition"] = item.condition
+    if item.condition_descriptors:
+        body["conditionDescriptors"] = [
+            {"name": d.name, "values": list(d.values)} for d in item.condition_descriptors if d.name
+        ]
+    # Only carry the item's own packaging over when it is complete. Some older
+    # listings come back with a weight of 0 or none at all, and sending that
+    # back gets the whole update rejected (errorId 25020, "package weight is
+    # not valid or is missing") -- the standard single-card package is the
+    # safer answer there.
+    package = item.package_weight_and_size
+    if package and package.weight and package.weight.value and package.weight.unit:
+        pkg = package.model_dump(exclude_none=True, by_alias=False)
+        body["packageWeightAndSize"] = {
+            _to_camel(k): ({_to_camel(ik): iv for ik, iv in v.items()} if isinstance(v, dict) else v)
+            for k, v in pkg.items()
+        }
+
+    return body
+
+
+def _to_camel(snake: str) -> str:
+    head, *rest = snake.split("_")
+    return head + "".join(word.title() for word in rest)
 
 
 def rebuild_offer_body(
