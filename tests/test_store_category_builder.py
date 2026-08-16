@@ -104,9 +104,9 @@ class TestSportResolution:
 class TestHits:
     def test_autograph_relic_and_numbered_each_get_a_second_category(self):
         cases = [
-            ({"subset_name": "Rookie Autographs"}, "/Hits/Autographs"),
-            ({"features": "Relic"}, "/Hits/Relics"),
-            ({"print_run": "150"}, "/Hits/Numbered"),
+            ({"subset_name": "Rookie Autographs"}, "/A_Hits/Autographs"),
+            ({"features": "Relic"}, "/A_Hits/Relics"),
+            ({"print_run": "150"}, "/A_Hits/Numbered"),
         ]
         for kwargs, expected in cases:
             plan = plan_store_category(
@@ -141,7 +141,7 @@ class TestHits:
             title="a card", team="Dallas Mavericks", sport="Basketball", print_run="99"
         )
         assert plan.hit == "Numbered"
-        assert plan.categories == ["/Basketball Singles", "/Hits/Numbered"]
+        assert plan.categories == ["/Basketball Singles", "/A_Hits/Numbered"]
 
     def test_never_exceeds_the_ebay_cap(self):
         plan = plan_store_category(
@@ -248,7 +248,7 @@ class TestBuildCategoryPlan:
     def test_store_category_names_carry_both_slots(self):
         plan = build_category_plan(self._frame())
         assert plan.loc[0, "store_category_names"] == (
-            "/Baseball Singles/San Francisco Giants | /Hits/Autographs"
+            "/Baseball Singles/San Francisco Giants | /A_Hits/Autographs"
         )
         assert plan.loc[0, "category_count"] == 2
         assert plan.loc[1, "store_category_names"] == "/Complete Your Set - You Pick"
@@ -257,5 +257,5 @@ class TestBuildCategoryPlan:
         counts = category_counts(build_category_plan(self._frame()))
         by_category = dict(zip(counts["category"], counts["listings"], strict=True))
         assert by_category["/Baseball Singles/San Francisco Giants"] == 1
-        assert by_category["/Hits/Autographs"] == 1
+        assert by_category["/A_Hits/Autographs"] == 1
         assert by_category["/Basketball Singles"] == 1

@@ -6,7 +6,7 @@ The store tree this builds toward:
     /Baseball Singles/<team>
     /Basketball Singles
     /Football Singles
-    /Hits/{Autographs,Relics,Numbered}      -- secondary, every sport
+    /A_Hits/{Autographs,Relics,Numbered}    -- secondary, every sport
 
 Only baseball is broken out by team: it is 93% of the shelf, so its 30 clubs
 average ~50 listings each, while basketball (82 listings across 32 teams) and
@@ -29,8 +29,10 @@ from shoebox.utils.title_crosswalk import team_parents, team_sport
 # Level-one branch holding the multi-variation "Complete Your Set" listings.
 VARIATION_CATEGORY = "Complete Your Set - You Pick"
 
-# Parent of the secondary categories that call out the good stuff.
-HITS_PARENT = "Hits"
+# Parent of the secondary categories that call out the good stuff. The "A_"
+# prefix is load-bearing: it sorts the branch to the top of the store nav, and
+# it is the name the live store tree actually uses.
+HITS_PARENT = "A_Hits"
 
 # Sports whose singles are broken out by team. See the module docstring.
 TEAM_SUBCATEGORY_SPORTS = frozenset({"Baseball"})

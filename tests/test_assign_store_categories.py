@@ -17,7 +17,7 @@ def _plan() -> pd.DataFrame:
                 "sport": "Baseball",
                 "is_variation": "False",
                 "primary_category": "/Baseball Singles/Chicago Cubs",
-                "secondary_category": "/Hits/Numbered",
+                "secondary_category": "/A_Hits/Numbered",
             },
             {
                 "item_id": "2",
@@ -74,11 +74,11 @@ class TestBuildAssignments:
         # hand-set Hits category is not clobbered.
         out = build_assignments(_plan()).set_index("item_id")
         assert out.loc["1", "secondary_category"] == ""
-        assert out.loc["1", "planned_secondary"] == "/Hits/Numbered"
+        assert out.loc["1", "planned_secondary"] == "/A_Hits/Numbered"
 
     def test_with_hits_pushes_the_planned_category(self):
         out = build_assignments(_plan(), with_hits=True).set_index("item_id")
-        assert out.loc["1", "secondary_category"] == "/Hits/Numbered"
+        assert out.loc["1", "secondary_category"] == "/A_Hits/Numbered"
 
 
 class TestOfferBody:
@@ -122,11 +122,11 @@ class TestOfferBody:
 
     def test_two_categories_are_carried(self):
         body = offer_body_with_store_categories(
-            self._offer(), ["/Baseball Singles/Chicago Cubs", "/Hits/Numbered"]
+            self._offer(), ["/Baseball Singles/Chicago Cubs", "/A_Hits/Numbered"]
         )
         assert body["storeCategoryNames"] == [
             "/Baseball Singles/Chicago Cubs",
-            "/Hits/Numbered",
+            "/A_Hits/Numbered",
         ]
 
     def test_missing_optional_fields_are_dropped_not_nulled(self):

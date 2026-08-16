@@ -15,9 +15,17 @@ flushes GCS → BigQuery → clear), with two deliberate differences:
 Layout under ``<exports_dir>/jsonl/searches/``::
 
     search_state.json          per-search last_run_at / seeded_at / status
-    <name>_seen.jsonl          append-only SeenEntry log, last line wins
+    <scope>_seen.jsonl         append-only SeenEntry log, last line wins
     search_hits_append.jsonl   shared buffer -> one GCS object + one BQ load
     .lock                      advisory guard against overlapping scheduled runs
+
+**Scope vs search name.** Run state is per *search* — intervals and seeding are
+a property of one search. The seen-cache is keyed by an opaque *scope* string
+the caller chooses; ``watch_searches`` passes the Slack channel, so several
+searches posting to one channel share a cache and a listing matching more than
+one of them alerts once. Nothing here interprets the scope beyond using it as a
+filename, and each ``SeenEntry`` still records the ``search_name`` that saw it,
+which is what makes a per-search reseed possible inside a shared file.
 """
 
 from __future__ import annotations
@@ -260,7 +268,7 @@ class SearchStateStore:
         )
         self.save_state(state)
 
-    def cache_was_lost(self, name: str) -> bool:
+    def cache_was_lost(self, name: str, scope: str) -> bool:
         """True when a search believes it is seeded but its cache is gone.
 
         ``search_state.json`` and the ``*_seen.jsonl`` caches are separate files,
@@ -268,11 +276,17 @@ class SearchStateStore:
         the state behind — and every listing would then look brand new. The
         seed count distinguishes that from a search that legitimately seeded
         zero matches and is now seeing its first genuine hit.
+
+        Deliberately a question about the *file*, not about this search's own
+        entries. Scopes are shared and the last writer to touch an item owns it,
+        so a search whose entries were all re-owned by a sibling still dedups
+        perfectly well against them — treating that as a loss would make it
+        reseed silently and swallow the alert it should have posted.
         """
         state = self.load_state().get(name)
         if state is None or state.seeded_at is None or state.seed_count == 0:
             return False
-        return not self.seen_path(name).exists() or not self.load_seen(name)
+        return not self.seen_path(scope).exists() or not self.load_seen(scope)
 
     # ------------------------------------------------------------------
     # Due check
@@ -319,12 +333,12 @@ class SearchStateStore:
     # ------------------------------------------------------------------
     # Seen cache
     # ------------------------------------------------------------------
-    def seen_path(self, name: str) -> Path:
-        return self.base_dir / f"{name}_seen.jsonl"
+    def seen_path(self, scope: str) -> Path:
+        return self.base_dir / f"{scope}_seen.jsonl"
 
-    def load_seen(self, name: str) -> dict[str, SeenEntry]:
+    def load_seen(self, scope: str) -> dict[str, SeenEntry]:
         """Item id -> entry. Later lines win, so appends act as updates."""
-        path = self.seen_path(name)
+        path = self.seen_path(scope)
         if not path.exists():
             return {}
 
@@ -343,40 +357,17 @@ class SearchStateStore:
                 entries[entry.item_id] = entry
         return entries
 
-    def append_seen(self, name: str, entries: Iterable[SeenEntry]) -> None:
+    def append_seen(self, scope: str, entries: Iterable[SeenEntry]) -> None:
         entries = list(entries)
         if not entries:
             return
-        with self.seen_path(name).open("a", encoding="utf-8") as handle:
+        with self.seen_path(scope).open("a", encoding="utf-8") as handle:
             for entry in entries:
                 handle.write(json.dumps(to_jsonable_python(entry)) + "\n")
 
-    def compact_seen(self, name: str, *, prune_before: datetime | None = None) -> int:
-        """Rewrite the seen file to one line per item. Returns lines written.
-
-        Called once at the end of a run rather than per item.
-        """
-        path = self.seen_path(name)
-        if not path.exists():
-            return 0
-
-        line_count = sum(
-            1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-        )
-        entries = self.load_seen(name)
-
-        if prune_before is not None:
-            entries = {
-                item_id: entry
-                for item_id, entry in entries.items()
-                if entry.last_seen_at >= prune_before
-            }
-            pruned = len(self.load_seen(name)) - len(entries)
-            if pruned:
-                logger.info("%s: pruned %d seen entries older than %s", name, pruned, prune_before)
-        elif line_count <= len(entries) * _COMPACT_RATIO:
-            return line_count
-
+    def _rewrite_seen(self, scope: str, entries: dict[str, SeenEntry]) -> int:
+        """Atomically replace a seen file with exactly ``entries``."""
+        path = self.seen_path(scope)
         tmp = path.with_suffix(".tmp")
         with tmp.open("w", encoding="utf-8") as handle:
             for entry in entries.values():
@@ -384,8 +375,54 @@ class SearchStateStore:
         tmp.replace(path)
         return len(entries)
 
-    def clear_seen(self, name: str) -> None:
-        self.seen_path(name).unlink(missing_ok=True)
+    def compact_seen(self, scope: str, *, prune_before: datetime | None = None) -> int:
+        """Rewrite the seen file to one line per item. Returns lines written.
+
+        Called once at the end of a run rather than per item.
+        """
+        path = self.seen_path(scope)
+        if not path.exists():
+            return 0
+
+        line_count = sum(
+            1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
+        )
+        entries = self.load_seen(scope)
+
+        if prune_before is not None:
+            kept = {
+                item_id: entry
+                for item_id, entry in entries.items()
+                if entry.last_seen_at >= prune_before
+            }
+            pruned = len(entries) - len(kept)
+            entries = kept
+            if pruned:
+                logger.info("%s: pruned %d seen entries older than %s", scope, pruned, prune_before)
+        elif line_count <= len(entries) * _COMPACT_RATIO:
+            return line_count
+
+        return self._rewrite_seen(scope, entries)
+
+    def clear_seen(self, scope: str) -> None:
+        self.seen_path(scope).unlink(missing_ok=True)
+
+    def clear_seen_for(self, scope: str, name: str) -> int:
+        """Drop one search's entries from a shared scope. Returns lines kept.
+
+        A reseed must not blank the whole file: siblings sharing the channel
+        would then re-alert everything they already reported. Entries carry the
+        search that recorded them, so only that search's are removed.
+        """
+        path = self.seen_path(scope)
+        if not path.exists():
+            return 0
+        entries = self.load_seen(scope)
+        kept = {i: e for i, e in entries.items() if e.search_name != name}
+        dropped = len(entries) - len(kept)
+        if dropped:
+            logger.info("%s: cleared %d seen entries owned by %s", scope, dropped, name)
+        return self._rewrite_seen(scope, kept)
 
     # ------------------------------------------------------------------
     # Hits append log -> GCS -> BigQuery
