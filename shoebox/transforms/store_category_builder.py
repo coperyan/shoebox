@@ -124,9 +124,7 @@ def resolve_sport(team: object = None, sport: object = None) -> tuple[str, bool]
 
 def category_path(*segments: str) -> str:
     """Join category names into the ``/a/b`` path eBay expects."""
-    return "".join(
-        f"/{segment.strip()}" for segment in segments if segment and segment.strip()
-    )
+    return "".join(f"/{segment.strip()}" for segment in segments if segment and segment.strip())
 
 
 @dataclass(frozen=True)

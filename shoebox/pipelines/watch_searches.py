@@ -356,9 +356,7 @@ def run_one_search(
             search.name,
             len(defer_now),
         )
-        store.append_seen(
-            scope, [_entry(i, notified=False, deferred=True) for i in defer_now]
-        )
+        store.append_seen(scope, [_entry(i, notified=False, deferred=True) for i in defer_now])
 
     if not to_alert:
         # No header message: a "0 new" post every interval would drown the channel.

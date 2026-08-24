@@ -74,8 +74,7 @@ class MarketingClient:
             }
             try:
                 results.extend(
-                    {**campaign_fields, **ad}
-                    for ad in self.get_ads(campaign.get("campaign_id"))
+                    {**campaign_fields, **ad} for ad in self.get_ads(campaign.get("campaign_id"))
                 )
             except Exception as e:
                 logger.warning(
@@ -248,9 +247,7 @@ class MarketingClient:
 
         now = datetime.now(UTC)
         start = (now + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-        end = end_date or (now + timedelta(days=365 * 3)).strftime(
-            "%Y-%m-%dT%H:%M:%S.000Z"
-        )
+        end = end_date or (now + timedelta(days=365 * 3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
 
         body = {
             "marketplaceId": marketplace_id,
@@ -299,8 +296,8 @@ class MarketingClient:
                         wait,
                     )
                     time.sleep(wait)
-                    body["startDate"] = (
-                        datetime.now(UTC) + timedelta(minutes=1)
-                    ).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+                    body["startDate"] = (datetime.now(UTC) + timedelta(minutes=1)).strftime(
+                        "%Y-%m-%dT%H:%M:%S.000Z"
+                    )
                 else:
                     raise

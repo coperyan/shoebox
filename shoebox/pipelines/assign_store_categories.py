@@ -68,10 +68,7 @@ def category_ids(ebay_api: EbayClient) -> dict[str, str]:
     """Live store tree as ``{'/path': category_id}``, matched case-insensitively."""
     flat = flatten_store_categories(ebay_api.stores.get_store_categories())
     return {
-        "/"
-        + "/".join(s.strip() for s in entry["path"]).casefold(): str(
-            entry["category_id"]
-        )
+        "/" + "/".join(s.strip() for s in entry["path"]).casefold(): str(entry["category_id"])
         for entry in flat
     }
 
@@ -113,9 +110,7 @@ def build_assignments(
                 # Filled in per listing at apply time when not --with-hits,
                 # because it depends on what the listing currently carries.
                 "secondary_category": planned_secondary if with_hits else "",
-                "update_method": (
-                    "inventory" if str(row.get("sku") or "").strip() else "trading"
-                ),
+                "update_method": ("inventory" if str(row.get("sku") or "").strip() else "trading"),
             }
         )
     return pd.DataFrame.from_records(records)
@@ -171,9 +166,7 @@ def apply_assignments(
 
             resolved = [ids.get(_path_key(c)) for c in categories]
             if not sku and any(r is None for r in resolved):
-                missing = [
-                    c for c, r in zip(categories, resolved, strict=True) if r is None
-                ]
+                missing = [c for c, r in zip(categories, resolved, strict=True) if r is None]
                 raise ValueError(f"store category not found: {', '.join(missing)}")
 
             outcome = ebay_api.update_listing_store_categories(
@@ -206,9 +199,7 @@ def _log_summary(assignments: pd.DataFrame) -> None:
     from rich.console import Console
 
     logger.info("%d listing(s) to move", len(assignments))
-    logger.info(
-        "update route: %s", assignments["update_method"].value_counts().to_dict()
-    )
+    logger.info("update route: %s", assignments["update_method"].value_counts().to_dict())
 
     counts = (
         assignments["primary_category"]
@@ -245,9 +236,7 @@ def assign_store_categories(
         return assignments
 
     ebay_api = ebay_api or EbayClient()
-    results = apply_assignments(
-        assignments, ebay_api=ebay_api, with_hits=with_hits, limit=limit
-    )
+    results = apply_assignments(assignments, ebay_api=ebay_api, with_hits=with_hits, limit=limit)
 
     counts = results["status"].value_counts().to_dict()
     out_path = plan_path.with_name(plan_path.stem + "_applied.csv")
@@ -267,9 +256,7 @@ def assign_store_categories(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--plan", help="Category plan CSV; defaults to the working copy"
-    )
+    parser.add_argument("--plan", help="Category plan CSV; defaults to the working copy")
     parser.add_argument(
         "--sport",
         default="Baseball",

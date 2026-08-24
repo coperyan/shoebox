@@ -55,9 +55,7 @@ _SPECIFIC_FALLBACKS = {
 def _check_columns(df: pd.DataFrame, source: str) -> pd.DataFrame:
     missing = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
     if missing:
-        raise ValueError(
-            f"{source} is missing required column(s): {', '.join(missing)}"
-        )
+        raise ValueError(f"{source} is missing required column(s): {', '.join(missing)}")
     return df
 
 
@@ -72,9 +70,7 @@ def load_listings_from_bigquery(
         params={"dataset": settings.bigquery.ebay_dataset},
         return_df=True,
     )
-    return _check_columns(
-        df, f"{settings.bigquery.ebay_dataset}.v_active_listing_details"
-    )
+    return _check_columns(df, f"{settings.bigquery.ebay_dataset}.v_active_listing_details")
 
 
 def load_listings(path: Path) -> pd.DataFrame:
@@ -249,14 +245,10 @@ def _log_summary(plan: pd.DataFrame, counts: pd.DataFrame) -> None:
 
     hits = plan[plan["hit"].astype(bool)]
     if not hits.empty:
-        logger.info(
-            "secondary Hits categories: %s", hits["hit"].value_counts().to_dict()
-        )
+        logger.info("secondary Hits categories: %s", hits["hit"].value_counts().to_dict())
 
     notes = plan["notes"]
-    note_counts = (
-        notes[notes.astype(bool)].str.split(",").explode().value_counts().to_dict()
-    )
+    note_counts = notes[notes.astype(bool)].str.split(",").explode().value_counts().to_dict()
     if note_counts:
         logger.info("notes: %s", note_counts)
 
@@ -268,9 +260,7 @@ def _log_summary(plan: pd.DataFrame, counts: pd.DataFrame) -> None:
             dict(zip(thin["category"], thin["listings"], strict=True)),
         )
 
-    console.print(
-        render_table(counts.head(40), title="Planned store categories (top 40)")
-    )
+    console.print(render_table(counts.head(40), title="Planned store categories (top 40)"))
 
 
 def plan_store_categories(
@@ -294,9 +284,7 @@ def plan_store_categories(
         logger.info("Skipped %d listing(s) with no Sport item specific", skipped)
 
     if sport:
-        plan = plan[plan["sport"].str.casefold() == sport.casefold()].reset_index(
-            drop=True
-        )
+        plan = plan[plan["sport"].str.casefold() == sport.casefold()].reset_index(drop=True)
         logger.info("Filtered to %d %s listing(s)", len(plan), sport)
 
     counts = category_counts(plan)
