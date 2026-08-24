@@ -22,7 +22,7 @@ _STORE_FOOTER_TEMPLATE = """
 <div style="font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 1.55; color: #1a1a1a; max-width: 760px;">
  
   <p style="margin: 0 0 16px;">
-    Thanks for visiting <strong>{{store name}}</strong> &mdash; 12,000+ cards shipped, 100% positive feedback.
+    Thanks for visiting <strong>{store_name}</strong> &mdash; 12,000+ cards shipped, 100% positive feedback.
     Every card is scanned front and back, so what you see is exactly what ships.
   </p>
  
@@ -59,7 +59,7 @@ _STORE_FOOTER_TEMPLATE = """
   </ul>
  
   <div style="margin: 24px 0 8px; padding: 14px 16px; background: #f5f5f5; border-left: 3px solid #333;">
-    <strong>Follow {{store name}}</strong> to get first look at new listings &mdash; I add cards several times a week,
+    <strong>Follow {store_name}</strong> to get first look at new listings &mdash; I add cards several times a week,
     and set-completion inventory moves quickly. Hit "Save Seller" at the top of this page.
   </div>
  
@@ -194,7 +194,11 @@ def replace_title_elements(title: str, ctr: int, card_number) -> str:
     elif ctr == 2:
         return title.replace(f" #{card_number}", "")
     elif ctr == 3:
-        return title.replace(" Baseball", "").replace(" Basketball", "").replace(" Football", "")
+        return (
+            title.replace(" Baseball", "")
+            .replace(" Basketball", "")
+            .replace(" Football", "")
+        )
     elif ctr == 4:
         return title.replace(" Refractor", "")
     elif ctr == 5:
@@ -274,7 +278,9 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Sport"] = sport(row.set_name)
     aspects["Player/Athlete"] = multi_str_split(row.player)
     aspects["Season"] = row.set_year
-    aspects["Year Manufactured"] = row.set_year if len(row.set_year) == 4 else row.set_year[:4]
+    aspects["Year Manufactured"] = (
+        row.set_year if len(row.set_year) == 4 else row.set_year[:4]
+    )
     aspects["Features"] = features(row)
     aspects["Set"] = row.set_name
     if row.team:
@@ -284,7 +290,9 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     aspects["Card Number"] = row.card_number
     aspects["Type"] = "Sports Trading Card"
     aspects["Card Size"] = "Standard"
-    aspects["Card Thickness"] = "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
+    aspects["Card Thickness"] = (
+        "100 Pt." if "Memorabilia" in aspects["Features"] else "35 Pt."
+    )
     aspects["Country/Region of Manufacture"] = "United States"
     aspects["Graded"] = "No"
     aspects["Vintage"] = "No"
@@ -305,7 +313,9 @@ def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
     return aspects
 
 
-def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> dict[str, Any]:
+def base_inventory_item_payload(
+    *, quantity: int, product: dict[str, Any]
+) -> dict[str, Any]:
     """Shared inventory-item skeleton for every card listing.
 
     Condition descriptor 40001/400010 is eBay's trading-card grade
@@ -383,7 +393,9 @@ def build_offer_payload(*, draft: EbayListingDraft) -> dict[str, Any]:
 def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     """Rebuild an inventory item payload from an existing eBay API item response."""
     return base_inventory_item_payload(
-        quantity=existing_item["availability"]["ship_to_location_availability"]["quantity"],
+        quantity=existing_item["availability"]["ship_to_location_availability"][
+            "quantity"
+        ],
         product={
             "title": existing_item["product"]["title"],
             "description": store_footer_html(),
@@ -393,7 +405,9 @@ def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     )
 
 
-def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[str, Any]:
+def inventory_item_body_with_title(
+    item: InventoryItem, new_title: str
+) -> dict[str, Any]:
     """Round-trip an existing inventory item with only ``product.title`` changed.
 
     Unlike :func:`rebuild_inventory_item_body`, this preserves the item's own
@@ -417,7 +431,9 @@ def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[
             # eBay accepts aspects only as arrays; the model normalizes
             # single-value aspects down to plain strings on the way in.
             "aspects": {
-                k: (v if isinstance(v, list) else [v]) for k, v in product.aspects.items() if v
+                k: (v if isinstance(v, list) else [v])
+                for k, v in product.aspects.items()
+                if v
             },
             "imageUrls": list(product.image_urls),
         },
@@ -427,7 +443,9 @@ def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[
         body["condition"] = item.condition
     if item.condition_descriptors:
         body["conditionDescriptors"] = [
-            {"name": d.name, "values": list(d.values)} for d in item.condition_descriptors if d.name
+            {"name": d.name, "values": list(d.values)}
+            for d in item.condition_descriptors
+            if d.name
         ]
     # Only carry the item's own packaging over when it is complete. Some older
     # listings come back with a weight of 0 or none at all, and sending that
@@ -439,7 +457,9 @@ def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[
         pkg = package.model_dump(exclude_none=True, by_alias=False)
         body["packageWeightAndSize"] = {
             _to_camel(k): (
-                {_to_camel(ik): iv for ik, iv in v.items()} if isinstance(v, dict) else v
+                {_to_camel(ik): iv for ik, iv in v.items()}
+                if isinstance(v, dict)
+                else v
             )
             for k, v in pkg.items()
         }
@@ -486,7 +506,9 @@ def rebuild_offer_body(
     return d
 
 
-def offer_body_with_store_categories(existing_offer: dict, categories: list[str]) -> dict:
+def offer_body_with_store_categories(
+    existing_offer: dict, categories: list[str]
+) -> dict:
     """Rebuild an offer payload changing only which store categories it sits in.
 
     Unlike :func:`rebuild_offer_body`, nothing else is recomputed: the price,
@@ -551,7 +573,9 @@ def build_draft(
     aspects = build_aspects(row)
 
     if schedule:
-        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
     else:
         listing_start_date = None
 
