@@ -4,14 +4,26 @@ Replaces the Trading-API (XML) implementation that previously lived in
 ``clients/ebay_legacy.py``. This uses the same OAuth token as the rest of the
 REST pipelines, so no Auth'n'Auth token is involved.
 
+Requires the ``sell.stores`` OAuth scope on a token from the authorization
+code grant flow. A token without it fails with HTTP 403 / errorId 1100 /
+domain ACCESS; scopes are fixed at consent time, so the user token has to be
+re-minted after adding the scope (see docs/setup.md and
+scripts/refresh_ebay_token.py).
+
+Note the calls here bypass the generated ``sell_stores_*`` wrappers: in
+ebay_rest 1.1.4 those send an application token, which eBay always rejects for
+this API with the same 403/1100 — see :meth:`StoresClient._invoke`.
+
 Two shape differences from the Trading API are worth knowing:
 
 * eBay's REST endpoints act on **one category per call**, so the batch helpers
   here loop. That makes partial failure possible — see ``stop_on_error``.
-* The mutating calls are asynchronous and return a taskId, but the
-  swagger-generated client in ``ebay_rest`` discards the response body. Use
-  :meth:`StoresClient.get_store_tasks` to see recent task outcomes, and re-read
-  :meth:`StoresClient.get_store_categories` to pick up newly assigned IDs.
+* The mutating calls are asynchronous. eBay returns the task URI in the
+  ``Location`` response header rather than the body, and the swagger-generated
+  client in ``ebay_rest`` surfaces neither, so there is no taskId to hold onto.
+  Use :meth:`StoresClient.get_store_tasks` to see recent task outcomes, and
+  re-read :meth:`StoresClient.get_store_categories` to pick up newly assigned
+  IDs.
 """
 
 from __future__ import annotations
@@ -115,13 +127,42 @@ class StoresClient:
         self.session = session
         self.api = session.api
 
+    def _invoke(self, method: str, params: Any = None, **kwargs: Any) -> Any:
+        """
+        Call a Stores API method with the *user* access token.
+
+        Workaround for ebay_rest 1.1.4 (latest at the time of writing): its
+        generated ``sell_stores_*`` wrappers pass ``user_access_token=False``,
+        sending an application token to an API that only accepts tokens from
+        the authorization code grant flow. Application tokens can never carry
+        ``sell.stores``, so every call through those wrappers fails with
+        HTTP 403 / errorId 1100 regardless of the config. This re-issues the
+        same call with the flag set correctly. Drop it (and go back to
+        ``self.api.sell_stores_*``) once upstream fixes the flag.
+        """
+        from ebay_rest.api import sell_stores
+        from ebay_rest.api.sell_stores.rest import ApiException as SellStoresException
+
+        return self.api._method_single(
+            sell_stores.Configuration,
+            "/sell/stores/v1",
+            sell_stores.StoreApi,
+            sell_stores.ApiClient,
+            method,
+            SellStoresException,
+            True,  # user access token — the fix
+            ["sell.stores", "store"],
+            params,
+            **kwargs,
+        )
+
     # ------------------------------------------------------------------
     # Reads
     # ------------------------------------------------------------------
 
     def get_store(self) -> dict[str, Any]:
         """Return store profile information (name, URL, description)."""
-        return self.api.sell_stores_get_store()
+        return self._invoke("get_store")
 
     def get_store_categories(self) -> list[dict[str, Any]]:
         """
@@ -130,12 +171,12 @@ class StoresClient:
         Each node is {"category_id", "name", "order", "level", "children"}.
         Pass the result to `flatten_store_categories` for a flat view.
         """
-        resp = self.api.sell_stores_get_store_categories() or {}
+        resp = self._invoke("get_store_categories") or {}
         return parse_store_categories(resp.get("store_categories"))
 
     def get_store_task(self, task_id: str) -> dict[str, Any]:
         """Return the status of a single async store task."""
-        resp = self.api.sell_stores_get_store_task(task_id=task_id) or {}
+        resp = self._invoke("get_store_task", str(task_id)) or {}
         return resp.get("task") or {}
 
     def get_store_tasks(self) -> list[dict[str, Any]]:
@@ -146,7 +187,7 @@ class StoresClient:
         Since the client discards the taskId from mutating calls, this is how
         you confirm a restructure actually landed.
         """
-        resp = self.api.sell_stores_get_store_tasks() or {}
+        resp = self._invoke("get_store_tasks") or {}
         return resp.get("task") or []
 
     def get_failed_store_tasks(self) -> list[dict[str, Any]]:
@@ -178,10 +219,8 @@ class StoresClient:
         if listing_destination_category_id is not None:
             body["listingDestinationCategoryId"] = _category_id_str(listing_destination_category_id)
 
-        self.api.sell_stores_add_store_category(
-            content_type="application/json",
-            body=body,
-        )
+        # Generated signature: add_store_category(content_type, body=...)
+        self._invoke("add_store_category", "application/json", body=body)
         logger.info("Added store category name=%r parent=%s", name, parent_category_id)
 
     def delete_store_category(
@@ -200,10 +239,8 @@ class StoresClient:
         if listing_destination_category_id is not None:
             body["listingDestinationCategoryId"] = _category_id_str(listing_destination_category_id)
 
-        self.api.sell_stores_delete_store_category(
-            category_id=_category_id_str(category_id),
-            body=body,
-        )
+        # Generated signature: delete_store_category(category_id, body=...)
+        self._invoke("delete_store_category", _category_id_str(category_id), body=body)
         logger.info("Deleted store category category_id=%s", category_id)
 
     def move_store_category(
@@ -223,16 +260,18 @@ class StoresClient:
         if listing_destination_category_id is not None:
             body["listingDestinationCategoryId"] = _category_id_str(listing_destination_category_id)
 
-        self.api.sell_stores_move_store_category(body, "application/json")
+        # Generated signature: move_store_category(body, content_type) — positional tuple.
+        self._invoke("move_store_category", (body, "application/json"))
         logger.info(
             "Moved store category category_id=%s parent=%s", category_id, parent_category_id
         )
 
     def rename_store_category(self, category_id: str | int, name: str) -> None:
         """Rename one store category."""
-        self.api.sell_stores_rename_store_category(
-            content_type="application/json",
-            category_id=_category_id_str(category_id),
+        # Generated signature: rename_store_category(content_type, category_id, body=...)
+        self._invoke(
+            "rename_store_category",
+            ("application/json", _category_id_str(category_id)),
             body={"categoryName": _clean_name(name)},
         )
         logger.info("Renamed store category category_id=%s to %r", category_id, name)

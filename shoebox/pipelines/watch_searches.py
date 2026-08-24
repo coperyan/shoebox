@@ -17,6 +17,7 @@ mid-run to exactly one duplicate rather than the entire run's worth.
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
 import time
 import uuid
@@ -148,6 +149,22 @@ def _post_item(
         post(channel, fallback.text, None, fallback.unfurl_links, fallback.blocks)
 
 
+def seen_scope(channel: str) -> str:
+    """Seen-cache scope for a channel.
+
+    Dedup is per *channel*, not per search: several searches deliberately
+    overlap (a numbered autograph matches both a "numbered" and an "autos"
+    search), and keying the cache by search name alerts that one card once per
+    search. Sharing the cache across everything posting to the same channel
+    means the reader sees it once, while searches on different channels stay
+    independent.
+
+    Slack IDs are already path-safe; the sanitize is for a hand-set channel
+    value, since this becomes a filename.
+    """
+    return re.sub(r"[^A-Za-z0-9_-]", "_", channel) or "default"
+
+
 def _resolve_channel(search: ResolvedSearch) -> str:
     slack = get_settings().slack
     channel = search.channel or slack.search_channel or slack.notify_channel
@@ -177,7 +194,10 @@ def run_one_search(
     limit = search.seed_max_results if seed else search.max_results
     items = filter_items(fetch(search, limit), search)
 
-    seen = store.load_seen(search.name)
+    # Shared with every other search posting to this channel, so a listing that
+    # matches several of them is new only to the first one that sees it.
+    scope = seen_scope(channel)
+    seen = store.load_seen(scope)
     fresh = [i for i in items if i.item_id and i.item_id not in seen]
 
     def _entry(item: ItemSummary, *, notified: bool, deferred: bool = False) -> SeenEntry:
@@ -207,9 +227,14 @@ def run_one_search(
         first_seen_at, notified, and deferred through — the refresh exists to
         keep those histories current, not to erase them (a future price-drop
         alert reads first_seen_at, and `notified` records that an alert
-        already went out)."""
+        already went out).
+
+        ``search_name`` comes from the prior entry too: in a shared scope the
+        refresher is often not the search that found the item, and rewriting the
+        owner here would hand a sibling's entries to whoever refreshed them
+        last — which a per-search reseed then wouldn't clear."""
         return SeenEntry(
-            search_name=search.name,
+            search_name=prior.search_name,
             item_id=item.item_id or "",
             first_seen_at=prior.first_seen_at,
             last_seen_at=now,
@@ -258,7 +283,7 @@ def run_one_search(
             if index:
                 time.sleep(pacing_seconds)
             _post_item(post, channel, item, search, now)
-            store.append_seen(search.name, [_entry(item, notified=True)])
+            store.append_seen(scope, [_entry(item, notified=True)])
             store.append_hits(
                 [
                     _hit(
@@ -273,7 +298,7 @@ def run_one_search(
             )
 
         rest = items[len(seed_shown) :]
-        store.append_seen(search.name, [_entry(i, notified=False) for i in rest])
+        store.append_seen(scope, [_entry(i, notified=False) for i in rest])
         store.append_hits([_hit(i, is_seed=True) for i in rest])
         return SearchRunResult(search.name, seeded=True, fetched=len(items))
 
@@ -331,14 +356,12 @@ def run_one_search(
             search.name,
             len(defer_now),
         )
-        store.append_seen(
-            search.name, [_entry(i, notified=False, deferred=True) for i in defer_now]
-        )
+        store.append_seen(scope, [_entry(i, notified=False, deferred=True) for i in defer_now])
 
     if not to_alert:
         # No header message: a "0 new" post every interval would drown the channel.
         store.append_seen(
-            search.name,
+            scope,
             [_refresh_entry(i, seen[i.item_id]) for i in seen_refresh(items, seen)],
         )
         return SearchRunResult(search.name, fetched=len(items), deferred=len(defer_now))
@@ -354,7 +377,7 @@ def run_one_search(
             time.sleep(pacing_seconds)
         _post_item(post, channel, item, search, now)
         # Committed immediately, so a crash costs at most this one duplicate.
-        store.append_seen(search.name, [_entry(item, notified=True)])
+        store.append_seen(scope, [_entry(item, notified=True)])
         store.append_hits(
             [
                 _hit(
@@ -373,7 +396,7 @@ def run_one_search(
         post(channel, fmt.format_overflow(len(to_alert), len(shown), search), None, False, None)
         # Recorded as un-notified (deferred cleared): without this they would
         # re-alert forever.
-        store.append_seen(search.name, [_entry(i, notified=False) for i in overflow])
+        store.append_seen(scope, [_entry(i, notified=False) for i in overflow])
         store.append_hits(
             [
                 _hit(i, notified=False, slack_channel=channel, slack_parent_ts=header_ts)
@@ -576,8 +599,12 @@ def _run_locked(
     # reseed. The names are still forced due below and still take the seed path,
     # which is the whole point of rehearsing one.
     if reseed and not dry_run:
+        by_name = {s.name: s for s in candidates}
         for name in reseed:
-            store.clear_seen(name)
+            # Only this search's entries: the scope is shared with every other
+            # search on the same channel, and blanking the file would re-alert
+            # everything those siblings have already reported.
+            store.clear_seen_for(seen_scope(_resolve_channel(by_name[name])), name)
             if name in state:
                 store.mark(name, last_run_at=now, status="reseed", seeded_at=None, seed_count=None)
         state = store.load_state()
@@ -593,22 +620,34 @@ def _run_locked(
 
     results: list[SearchRunResult] = []
     failures: list[tuple[str, str]] = []
+    # scope -> longest retention among the searches sharing it. Compaction is
+    # per file, so the most generous prune window has to win: pruning a shared
+    # scope with a 30-day search's window would silently discard the history a
+    # 90-day sibling still dedups against, and those listings would re-alert.
+    prune_days: dict[str, int] = {}
 
     for search in due:
         run_state = state.get(search.name)
         seeded = run_state is not None and run_state.seeded_at is not None
-        # Seed when: explicitly asked; never seeded; the seen-cache was lost
-        # behind our back; or the last run is so stale that these listings are
-        # hours old and no longer actionable. Each case would otherwise dump a
-        # whole result page into Slack as "new".
-        seed_reason = _seed_reason(search, store=store, now=now, reseed=reseed, seeded=seeded)
-        # notify_on_seed covers the seeds a human caused and is expecting output
-        # from. The recovery seeds stay silent whatever the config says -- they
-        # exist to *suppress* an alert storm over listings that are already old.
-        notify_seed = search.notify_on_seed and seed_reason in ("first", "manual")
 
         try:
+            # Resolved first because the seen-cache is keyed by channel, so the
+            # cache-lost check can't run until we know which scope to look in.
             channel = _resolve_channel(search)
+            scope = seen_scope(channel)
+            prune_days[scope] = max(prune_days.get(scope, 0), search.prune_seen_after_days)
+            # Seed when: explicitly asked; never seeded; the seen-cache was lost
+            # behind our back; or the last run is so stale that these listings
+            # are hours old and no longer actionable. Each case would otherwise
+            # dump a whole result page into Slack as "new".
+            seed_reason = _seed_reason(
+                search, store=store, now=now, reseed=reseed, seeded=seeded, scope=scope
+            )
+            # notify_on_seed covers the seeds a human caused and is expecting
+            # output from. The recovery seeds stay silent whatever the config
+            # says -- they exist to *suppress* an alert storm over listings that
+            # are already old.
+            notify_seed = search.notify_on_seed and seed_reason in ("first", "manual")
             if seed_reason:
                 logger.info("%s: seeding (%s), notify=%s", search.name, seed_reason, notify_seed)
             result = run_one_search(
@@ -634,10 +673,6 @@ def _run_locked(
                     seeded_at=now if seed_reason else UNCHANGED,
                     seed_count=result.fetched if seed_reason else UNCHANGED,
                 )
-                store.compact_seen(
-                    search.name,
-                    prune_before=now - timedelta(days=search.prune_seen_after_days),
-                )
             logger.info(
                 "%s: fetched=%d new=%d deferred=%d%s",
                 search.name,
@@ -653,6 +688,12 @@ def _run_locked(
                 # Advance last_run_at anyway: a permanently broken search that
                 # retried every tick would burn the Browse quota for nothing.
                 store.mark(search.name, last_run_at=now, status="error", error=str(exc))
+
+    # Once per scope, after every search has finished appending to it — a
+    # per-search compaction would rewrite the same shared file repeatedly.
+    if not dry_run:
+        for scope, days in prune_days.items():
+            store.compact_seen(scope, prune_before=now - timedelta(days=days))
 
     if flush and not dry_run:
         # Attempted every run, not just runs with new hits: flush_append_log
@@ -683,6 +724,7 @@ def _seed_reason(
     now: datetime,
     reseed: list[str],
     seeded: bool,
+    scope: str,
 ) -> str | None:
     """Why this search is seeding, or None if it isn't.
 
@@ -695,7 +737,7 @@ def _seed_reason(
         return "manual"
     if not seeded:
         return "first"
-    if store.cache_was_lost(search.name):
+    if store.cache_was_lost(search.name, scope):
         return "recovered"
     if store.is_stale(search, now):
         return "stale"

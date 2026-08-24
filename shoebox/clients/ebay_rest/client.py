@@ -6,6 +6,10 @@ from collections.abc import Callable
 from typing import Any
 
 from shoebox.settings import Settings
+from shoebox.transforms.listing_builder import (
+    inventory_item_body_with_title,
+    offer_body_with_store_categories,
+)
 
 from .analytics import AnalyticsClient
 from .browse import BrowseClient
@@ -242,6 +246,158 @@ class EbayClient:
                 logger.warning("Failed to promote sku=%s: %s", sku, e)
 
         return out
+
+    def update_listing_title(
+        self,
+        *,
+        new_title: str,
+        sku: str | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Change the title of a published single-card listing.
+
+        Two routes, because a store accumulates listings from both APIs:
+
+        - **With a SKU** (created through the Sell Inventory API) the title
+          lives on the inventory item, so this is a createOrReplaceInventoryItem
+          round-trip: fetch the item, swap ``product.title``, put it back.
+        - **Without one** -- listed via the Trading API or eBay's own form --
+          the inventory API can't see the listing at all, so it goes through
+          Trading `ReviseFixedPriceItem` by item ID.
+
+        Either way the listing keeps its ID, watchers, and search standing.
+        When the inventory route fails on a listing that also has an item ID,
+        Trading is tried as a fallback; the returned ``method`` says which one
+        actually did the work.
+        """
+        if not sku and not item_id:
+            raise ValueError("update_listing_title needs a sku or an item_id")
+
+        if not sku:
+            self.legacy_api.revise_listing_title(item_id, new_title)
+            logger.info("Retitled item_id=%s via Trading: %r", item_id, new_title)
+            return {"item_id": item_id, "title": new_title, "method": "trading", "skipped": False}
+
+        try:
+            item = self.inventory.get_inventory_item(sku)
+            current = item.product.title if item.product else None
+            if current == new_title:
+                logger.info("Title already current for sku=%s; skipping", sku)
+                return {"sku": sku, "title": new_title, "method": "inventory", "skipped": True}
+
+            body = inventory_item_body_with_title(item, new_title)
+            self._call_with_retry(
+                lambda: self.api.sell_inventory_create_or_replace_inventory_item(
+                    body=body,
+                    content_language="en-US",
+                    content_type="application/json",
+                    sku=sku,
+                ),
+                label=f"retitle sku={sku}",
+            )
+        except Exception as inventory_error:
+            if not item_id:
+                raise
+            logger.warning(
+                "Inventory retitle failed for sku=%s (%s); trying Trading API",
+                sku,
+                inventory_error,
+            )
+            self.legacy_api.revise_listing_title(item_id, new_title)
+            logger.info("Retitled item_id=%s via Trading fallback: %r", item_id, new_title)
+            return {
+                "sku": sku,
+                "item_id": item_id,
+                "title": new_title,
+                "method": "trading_fallback",
+                "skipped": False,
+            }
+
+        logger.info("Retitled sku=%s: %r -> %r", sku, current, new_title)
+        return {
+            "sku": sku,
+            "item_id": item_id,
+            "title": new_title,
+            "previous_title": current,
+            "method": "inventory",
+            "skipped": False,
+        }
+
+    def update_listing_store_categories(
+        self,
+        *,
+        categories: list[str],
+        category_ids: list[str] | None = None,
+        sku: str | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Move a published listing into the given store categories.
+
+        Two routes, mirroring :meth:`update_listing_title`:
+
+        - **With a SKU** the categories live on the offer, so this is a
+          getOffers/updateOffer round-trip addressing them by name path.
+        - **Without one** it goes through Trading `ReviseFixedPriceItem`, which
+          addresses them by numeric ID -- hence ``category_ids``, which the
+          caller resolves from the store tree.
+
+        ``categories`` is the full replacement list eBay will store, capped at
+        two. A listing already in exactly these categories is skipped.
+        """
+        if not sku and not item_id:
+            raise ValueError("update_listing_store_categories needs a sku or an item_id")
+        if not categories:
+            raise ValueError("categories must not be empty")
+
+        if not sku:
+            if not category_ids:
+                raise ValueError(f"item_id={item_id} has no SKU, so Trading needs category_ids")
+            self.legacy_api.revise_store_category(
+                item_id, category_ids[0], category_ids[1] if len(category_ids) > 1 else None
+            )
+            logger.info("Recategorized item_id=%s via Trading: %s", item_id, categories)
+            return {
+                "item_id": item_id,
+                "categories": categories,
+                "method": "trading",
+                "skipped": False,
+            }
+
+        offers = self.api.sell_inventory_get_offers(sku=sku)
+        records = [x["record"] for x in offers if "record" in x]
+        if not records:
+            raise EbayClientError(f"No offer found for SKU {sku}")
+        offer = records[0]
+
+        current = list(offer.get("store_category_names") or [])
+        if current == list(categories):
+            logger.info("Store categories already current for sku=%s; skipping", sku)
+            return {
+                "sku": sku,
+                "categories": categories,
+                "method": "inventory",
+                "skipped": True,
+            }
+
+        body = offer_body_with_store_categories(offer, categories)
+        self._call_with_retry(
+            lambda: self.api.sell_inventory_update_offer(
+                offer_id=offer["offer_id"],
+                content_language="en-US",
+                content_type="application/json",
+                body=body,
+            ),
+            label=f"recategorize sku={sku}",
+        )
+        logger.info("Recategorized sku=%s: %s -> %s", sku, current, categories)
+        return {
+            "sku": sku,
+            "item_id": item_id,
+            "categories": categories,
+            "previous_categories": current,
+            "method": "inventory",
+            "skipped": False,
+        }
 
     def create_variation_listing_flow(
         self,

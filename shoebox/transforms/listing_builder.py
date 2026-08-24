@@ -2,10 +2,11 @@ import ast
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from shoebox.models.ebay.inventory_item import InventoryItem
 from shoebox.models.ebay_listing import EbayListingDraft
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.settings import get_settings
-from shoebox.utils.shorten_team import shorten_team_name
+from shoebox.utils.title_crosswalk import shorten_team_name
 
 ## Condition mapping
 _CONDITION_DESCRIPTORS = {
@@ -18,27 +19,54 @@ _CONDITION_DESCRIPTORS = {
 # Store description footer appended to every listing. `{store_name}` is filled
 # from settings.store.name at build time (see store_footer_html).
 _STORE_FOOTER_TEMPLATE = """
-<hr/>
-<div>Thank you for visiting {store_name} on eBay!</div>
-<div><br></div>
-<div><b>Shipping:</b></div>
-<div>
-   <ul>
-      <li>Unless indicated by my account (out of office), I ship all orders same day. <br></li>
-      <li>Shipping is calculated based on weight, and is paid by buyer (excluding complete your set listings). If multiple items are ordered, I will combine shipping &amp; refund you.</li>
-      <li>PWE Shipping (less than $20) - cards will be sleeved, stored in a card saver, a team bag and shipped in a rigid mailer. Note: eBay's PWE shipping can have delays in updating tracking, keep this in mind. <br></li>
-      <li>USPS Ground Shipping (more than $20) - cards will be sleeved, stored in a top loader, a team bag, secured between two ding defenders and shipped in a bubble mailer with tracking. <br></li>
-   </ul>
-   <div>
-      <div><b>Other:</b></div>
-      <div>
-         <ul>
-            <li>Cards are in condition shown, images are captured via scanner. I am happy to provide additional images on-demand if needed.</li>
-            <li>If you are interested in negotiating a bulk deal, please message me. I've done many deals for 50+ cards before and will agree to a fair price for both sides. <br></li>
-         </ul>
-      </div>
-      <br>
-   </div>
+<div style="font-family: Arial, Helvetica, sans-serif; font-size: 15px; line-height: 1.55; color: #1a1a1a; max-width: 760px;">
+ 
+  <p style="margin: 0 0 16px;">
+    Thanks for visiting <strong>{store_name}</strong> &mdash; 12,000+ cards shipped, 100% positive feedback.
+    Every card is scanned front and back, so what you see is exactly what ships.
+  </p>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">Flat shipping &mdash; buy as many cards as you want</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li><strong>Shipping starts at $0.78 and barely moves.</strong> Add more cards for just $0.30 each &mdash; your cart shows the real total up front, with nothing to refund after the fact. <em>Add everything to your cart and check out once</em> so the combined rate applies.</li>
+    <li><strong>Free shipping on orders over $20.</strong> Higher-value cards ship free, fully tracked and insured.</li>
+    <li><strong>Orders ship same day</strong> when placed by 5:00 PM Pacific, Monday through Saturday.</li>
+    <li><strong>International buyers welcome</strong> via eBay International Shipping &mdash; duties and delivery handled by eBay, tracked end to end.</li>
+  </ul>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">How your cards are packed</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li><strong>Orders under $20:</strong> penny sleeve &rarr; card saver &rarr; team bag &rarr; protective envelope, shipped via eBay Standard Envelope with tracking.</li>
+    <li><strong>Orders over $20 (ships free):</strong> penny sleeve &rarr; top loader &rarr; team bag &rarr; secured between two ding defenders &rarr; bubble mailer, shipped USPS Ground Advantage with full tracking and insurance.</li>
+  </ul>
+  <p style="margin: 0 0 16px; font-size: 14px; color: #444;">
+    A note on envelope tracking: scans sometimes update a day or two behind the actual delivery. This is normal for
+    letter mail and your card is on its way. If anything looks off, message me and I'll sort it out.
+  </p>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">Condition &amp; returns</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li><strong>30-day returns, free.</strong> If a card isn't what you expected, tell me and I'll make it right &mdash; no hassle, no restocking fee.</li>
+    <li>Cards are in the condition shown in the scans. Any notable flaw is called out in the listing; if I haven't mentioned one, the scan is the full story.</li>
+    <li><strong>Want a closer look before you buy?</strong> Message me and I'll send additional images or closeups of any corner, edge, or surface. Happy to do it.</li>
+  </ul>
+ 
+  <h3 style="margin: 22px 0 8px; font-size: 16px;">Building a set? Buying in bulk?</h3>
+  <ul style="margin: 0 0 16px; padding-left: 20px;">
+    <li>I run <strong>Complete Your Set</strong> listings for most modern Topps and Bowman releases &mdash; pick exactly the numbers you still need, with volume discounts as your order grows.</li>
+    <li><strong>Bulk deals:</strong> message me. I've put together plenty of 50+ card deals and I'll land on a price that works for both of us.</li>
+    <li>Looking for a specific player, team, or parallel that isn't listed? Ask &mdash; there's a good chance it's in the box and not yet scanned.</li>
+  </ul>
+ 
+  <div style="margin: 24px 0 8px; padding: 14px 16px; background: #f5f5f5; border-left: 3px solid #333;">
+    <strong>Follow {store_name}</strong> to get first look at new listings &mdash; I add cards several times a week,
+    and set-completion inventory moves quickly. Hit "Save Seller" at the top of this page.
+  </div>
+ 
+  <p style="margin: 16px 0 0; font-size: 14px; color: #444;">
+    Questions, offers, or you just want to talk ball &mdash; message me anytime. I usually reply within a few hours.
+  </p>
+ 
 </div>
 """
 
@@ -365,6 +393,65 @@ def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     )
 
 
+def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[str, Any]:
+    """Round-trip an existing inventory item with only ``product.title`` changed.
+
+    Unlike :func:`rebuild_inventory_item_body`, this preserves the item's own
+    description, images, condition, and packaging rather than rebuilding them
+    from settings -- a title edit must not quietly rewrite the rest of a live
+    listing. Values eBay omits fall back to the standard single-card payload.
+    """
+    product = item.product
+    if product is None:
+        raise ValueError(f"Inventory item {item.sku} has no product to retitle")
+
+    quantity = 1
+    if item.availability and item.availability.ship_to_location_availability:
+        quantity = item.availability.ship_to_location_availability.quantity or 1
+
+    body = base_inventory_item_payload(
+        quantity=quantity,
+        product={
+            "title": new_title,
+            "description": product.description,
+            # eBay accepts aspects only as arrays; the model normalizes
+            # single-value aspects down to plain strings on the way in.
+            "aspects": {
+                k: (v if isinstance(v, list) else [v]) for k, v in product.aspects.items() if v
+            },
+            "imageUrls": list(product.image_urls),
+        },
+    )
+
+    if item.condition:
+        body["condition"] = item.condition
+    if item.condition_descriptors:
+        body["conditionDescriptors"] = [
+            {"name": d.name, "values": list(d.values)} for d in item.condition_descriptors if d.name
+        ]
+    # Only carry the item's own packaging over when it is complete. Some older
+    # listings come back with a weight of 0 or none at all, and sending that
+    # back gets the whole update rejected (errorId 25020, "package weight is
+    # not valid or is missing") -- the standard single-card package is the
+    # safer answer there.
+    package = item.package_weight_and_size
+    if package and package.weight and package.weight.value and package.weight.unit:
+        pkg = package.model_dump(exclude_none=True, by_alias=False)
+        body["packageWeightAndSize"] = {
+            _to_camel(k): (
+                {_to_camel(ik): iv for ik, iv in v.items()} if isinstance(v, dict) else v
+            )
+            for k, v in pkg.items()
+        }
+
+    return body
+
+
+def _to_camel(snake: str) -> str:
+    head, *rest = snake.split("_")
+    return head + "".join(word.title() for word in rest)
+
+
 def rebuild_offer_body(
     existing_offer: dict, new_price: float, schedule_datetime: str = None
 ) -> dict:
@@ -397,6 +484,55 @@ def rebuild_offer_body(
     if schedule_datetime:
         d["listingStartDate"] = schedule_datetime
     return d
+
+
+def offer_body_with_store_categories(existing_offer: dict, categories: list[str]) -> dict:
+    """Rebuild an offer payload changing only which store categories it sits in.
+
+    Unlike :func:`rebuild_offer_body`, nothing else is recomputed: the price,
+    quantity, description and policy IDs are carried across exactly as eBay
+    returned them. Re-deriving the fulfillment policy from price here would
+    silently reshuffle shipping on every listing whose price has drifted past
+    the threshold since it was created.
+
+    ``updateOffer`` is a full PUT, so every required field has to be present
+    even though only ``storeCategoryNames`` is changing.
+    """
+    policies = existing_offer.get("listing_policies") or {}
+    pricing = existing_offer.get("pricing_summary") or {}
+    price = pricing.get("price") or {}
+
+    listing_policies: dict[str, Any] = {
+        "fulfillmentPolicyId": policies.get("fulfillment_policy_id"),
+        "paymentPolicyId": policies.get("payment_policy_id"),
+        "returnPolicyId": policies.get("return_policy_id"),
+    }
+    if policies.get("best_offer_terms"):
+        listing_policies["bestOfferTerms"] = {"bestOfferEnabled": True}
+    listing_policies = {k: v for k, v in listing_policies.items() if v is not None}
+
+    body = {
+        "sku": existing_offer["sku"],
+        "marketplaceId": existing_offer.get("marketplace_id") or "EBAY_US",
+        "format": existing_offer.get("format") or "FIXED_PRICE",
+        "availableQuantity": existing_offer.get("available_quantity"),
+        "categoryId": existing_offer.get("category_id"),
+        "listingDescription": existing_offer.get("listing_description"),
+        "listingDuration": existing_offer.get("listing_duration") or "GTC",
+        "merchantLocationKey": (
+            existing_offer.get("merchant_location_key")
+            or get_settings().store.merchant_location_key
+        ),
+        "listingPolicies": listing_policies,
+        "storeCategoryNames": list(categories),
+        "pricingSummary": {
+            "price": {
+                "value": price.get("value"),
+                "currency": price.get("currency") or "USD",
+            }
+        },
+    }
+    return {k: v for k, v in body.items() if v is not None}
 
 
 def build_draft(

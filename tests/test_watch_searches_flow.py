@@ -44,6 +44,11 @@ def item(
 # bold emoji marker, listings (and the overflow line) don't.
 HEADER_PREFIXES = ("*🔎", "*🌱", "*⚠️")
 
+# The seen-cache is keyed by Slack channel, not search name, so several searches
+# posting to one channel dedup against each other. These tests set no per-search
+# channel, so everything resolves to slack.search_channel from app.example.yml.
+SCOPE = "C0123456789"
+
 
 class Recorder:
     """Stand-in for Slack. Records every post and hands back fake ts values."""
@@ -125,7 +130,7 @@ class TestSeeding:
         assert len(post.posts) == 1
         assert "seeded with 3 existing listing(s)" in post.posts[0][1]
         assert post.items == []
-        assert set(store.load_seen("s1")) == {"a", "b", "c"}
+        assert set(store.load_seen(SCOPE)) == {"a", "b", "c"}
 
     def test_seed_marks_seeded_at(self, searches_yaml, store):
         run(searches_yaml(), store, [item("a")], Recorder())
@@ -160,14 +165,14 @@ class TestSeeding:
         """
         path = searches_yaml()
         run(path, store, [item("a"), item("b")], Recorder())
-        store.clear_seen("s1")
+        store.clear_seen(SCOPE)
 
         post = Recorder()
         run(path, store, [item("a"), item("b")], post, force=True)
 
         assert post.items == []
         assert "seeded with 2" in post.posts[0][1]
-        assert set(store.load_seen("s1")) == {"a", "b"}
+        assert set(store.load_seen(SCOPE)) == {"a", "b"}
 
     def test_first_real_hit_on_an_empty_search_still_alerts(self, searches_yaml, store):
         """A search that seeded zero matches must alert on its first hit.
@@ -206,7 +211,7 @@ class TestNotifyOnSeed:
         assert len(post.items) == 2
         assert "seeded with 5 existing listing(s), showing 2 below" in post.headers[0][1]
         # Every match still recorded, shown or not.
-        assert len(store.load_seen("s1")) == 5
+        assert len(store.load_seen(SCOPE)) == 5
 
     def test_notified_seed_items_do_not_realert(self, searches_yaml, store):
         path = searches_yaml(notify_on_seed=True)
@@ -221,7 +226,7 @@ class TestNotifyOnSeed:
         path = searches_yaml(notify_on_seed=True, max_notify=1)
         run(path, store, [item("a"), item("b")], Recorder())
 
-        seen = store.load_seen("s1")
+        seen = store.load_seen(SCOPE)
         assert seen["a"].notified is True
         assert seen["b"].notified is False
 
@@ -241,7 +246,7 @@ class TestNotifyOnSeed:
         """
         path = searches_yaml(notify_on_seed=True)
         run(path, store, [item("a"), item("b")], Recorder())
-        store.clear_seen("s1")
+        store.clear_seen(SCOPE)
 
         post = Recorder()
         run(path, store, [item("a"), item("b")], post, force=True)
@@ -267,7 +272,7 @@ class TestNotifyCap:
         assert len(post.items) == 3  # 2 items + 1 overflow
         assert "+3 more new listings not shown" in post.items[-1][1]
         # All five recorded, or the hidden ones would alert again forever.
-        assert len(store.load_seen("s1")) == 5
+        assert len(store.load_seen(SCOPE)) == 5
 
     def test_capped_items_do_not_realert(self, searches_yaml, store):
         path = searches_yaml(max_notify=2)
@@ -303,7 +308,7 @@ class TestOrdering:
         post = Recorder(fail_on=3)
         run(path, store, items, post, force=True)
 
-        seen = store.load_seen("s1")
+        seen = store.load_seen(SCOPE)
         assert set(seen) == {"a", "b"}
         assert "c" not in seen
 
@@ -361,7 +366,7 @@ class TestOrdering:
         assert blocks is None
         assert unfurl is True
         assert text.splitlines()[-1] == "https://ebay.com/itm/a"
-        assert set(store.load_seen("s1")) == {"a"}
+        assert set(store.load_seen(SCOPE)) == {"a"}
 
     def test_other_slack_api_errors_stay_fatal(self, searches_yaml, store):
         """Only the image-download rejection gets the retry: any other
@@ -374,7 +379,7 @@ class TestOrdering:
         run(path, store, [item("a", image="s-l225")], post, force=True)
 
         assert post.items == []
-        assert "a" not in store.load_seen("s1")
+        assert "a" not in store.load_seen(SCOPE)
 
 
 class TestFailureIsolation:
@@ -494,7 +499,7 @@ class TestScheduling:
 
         with pytest.raises(ValueError, match="reseed"):
             run(path, store, [item("a")], Recorder(), reseed=["typo"])
-        assert set(store.load_seen("s1")) == {"a"}
+        assert set(store.load_seen(SCOPE)) == {"a"}
 
     def test_reseed_of_disabled_search_raises(self, searches_yaml, store):
         path = searches_yaml(enabled=False)
@@ -517,7 +522,7 @@ class TestScheduling:
         run(path, store, [item("a")], Recorder())
         with pytest.raises(ValueError, match="reseed"):
             run(path, store, [item("a")], Recorder(), only=["one"], reseed=["two"])
-        assert set(store.load_seen("two")) == {"a"}
+        assert set(store.load_seen(SCOPE)) == {"a"}
 
     def test_lock_prevents_a_concurrent_run(self, searches_yaml, store):
         path = searches_yaml()
@@ -544,14 +549,14 @@ class TestImageDeferral:
         post = Recorder()
         run(path, store, [item("a", image=None)], post, force=True)
         assert post.posts == []  # held, not alerted
-        entry = store.load_seen("s1")["a"]
+        entry = store.load_seen(SCOPE)["a"]
         assert entry.deferred is True and entry.notified is False
 
         post = Recorder()
         run(path, store, [item("a", image=None)], post, force=True)
         assert len(post.headers) == 1  # second sighting alerts, photo or not
         assert "itm/a" in post.items[0][1]
-        assert store.load_seen("s1")["a"].notified is True
+        assert store.load_seen(SCOPE)["a"].notified is True
 
     def test_deferred_listing_posts_with_its_late_photo(self, searches_yaml, store):
         path = searches_yaml()
@@ -583,10 +588,10 @@ class TestImageDeferral:
         path = searches_yaml()
         run(path, store, [], Recorder())
         run(path, store, [item("a", image=None)], Recorder(), force=True)
-        first = store.load_seen("s1")["a"].first_seen_at
+        first = store.load_seen(SCOPE)["a"].first_seen_at
 
         run(path, store, [item("a", image=None)], Recorder(), force=True)
-        assert store.load_seen("s1")["a"].first_seen_at == first
+        assert store.load_seen(SCOPE)["a"].first_seen_at == first
 
     def test_deferred_and_fresh_share_one_header(self, searches_yaml, store):
         path = searches_yaml()
@@ -643,7 +648,7 @@ class TestImageDeferral:
 
         assert "would defer 1 image-less new listing(s)" in caplog.text
         assert post.posts == []
-        assert "a" not in store.load_seen("s1")
+        assert "a" not in store.load_seen(SCOPE)
 
     def test_seed_records_imageless_items_without_deferring(self, searches_yaml, store):
         """Seeds are existing (old) listings: record them as seen outright, or
@@ -651,7 +656,7 @@ class TestImageDeferral:
         path = searches_yaml()
         post = Recorder()
         run(path, store, [item("a", image=None)], post)
-        assert store.load_seen("s1")["a"].deferred is False
+        assert store.load_seen(SCOPE)["a"].deferred is False
 
         post = Recorder()
         run(path, store, [item("a", image=None)], post, force=True)
@@ -666,11 +671,11 @@ class TestStateHygiene:
         run(path, store, [], Recorder())  # seed empty
         run(path, store, [item("a")], Recorder(), force=True)  # alerts item a
 
-        before = store.load_seen("s1")["a"]
+        before = store.load_seen(SCOPE)["a"]
         assert before.notified is True
 
         run(path, store, [item("a")], Recorder(), force=True)  # steady-state refresh
-        after = store.load_seen("s1")["a"]
+        after = store.load_seen(SCOPE)["a"]
         assert after.notified is True
         assert after.first_seen_at == before.first_seen_at
         assert after.last_seen_at >= before.last_seen_at
@@ -732,7 +737,7 @@ class TestDryRun:
         run(path, store, [item("a")], post, dry_run=True)
 
         assert post.posts == []
-        assert store.load_seen("s1") == {}
+        assert store.load_seen(SCOPE) == {}
         assert store.load_state() == {}
 
     def test_dry_run_reseed_keeps_the_seen_cache(self, searches_yaml, store, caplog):
@@ -744,14 +749,14 @@ class TestDryRun:
         """
         path = searches_yaml()
         run(path, store, [item("a"), item("b")], Recorder())
-        before = store.load_seen("s1")
+        before = store.load_seen(SCOPE)
 
         post = Recorder()
         with caplog.at_level("INFO"):
             run(path, store, [item("a"), item("b")], post, reseed=["s1"], dry_run=True)
 
         assert post.posts == []
-        assert store.load_seen("s1").keys() == before.keys()
+        assert store.load_seen(SCOPE).keys() == before.keys()
         assert store.load_state()["s1"].seeded_at is not None
         assert "would seed s1 with 2 items" in caplog.text
 
@@ -876,3 +881,68 @@ class TestGitPull:
         watch_searches(config_path=clone / "searches.yaml", list_only=True)
 
         assert "jordan" in (clone / "searches.yaml").read_text()
+
+
+class TestChannelScopedDedup:
+    """One listing matching several searches should reach the reader once.
+
+    The overlap is deliberate -- a numbered autograph legitimately matches both
+    a "numbered" and an "autos" search -- so the cache is keyed by channel and
+    the second search sees the card as already reported.
+    """
+
+    OTHER = "C9876543210"
+
+    def _two_searches(self, tmp_path, *, channels: tuple[str, str]):
+        path = tmp_path / "searches.yaml"
+        path.write_text(
+            yaml.safe_dump(
+                {
+                    "version": 1,
+                    "searches": [
+                        {
+                            "name": "numbered",
+                            "query": "jordan",
+                            "interval": "15m",
+                            "channel": channels[0],
+                        },
+                        {
+                            "name": "autos",
+                            "query": "jordan",
+                            "interval": "15m",
+                            "channel": channels[1],
+                        },
+                    ],
+                }
+            )
+        )
+        return path
+
+    def _seed_then_new(self, tmp_path, store, channels):
+        path = self._two_searches(tmp_path, channels=channels)
+        run(path, store, [item("old")], Recorder())
+        post = Recorder()
+        run(path, store, [item("old"), item("new")], post, force=True)
+        return post
+
+    def test_same_channel_alerts_once(self, tmp_path, store):
+        post = self._seed_then_new(tmp_path, store, (SCOPE, SCOPE))
+        assert [p[1] for p in post.items].count("") == 0
+        assert len(post.items) == 1
+
+    def test_different_channels_alert_independently(self, tmp_path, store):
+        # Separate channels are separate readers, so each still gets the card.
+        post = self._seed_then_new(tmp_path, store, (SCOPE, self.OTHER))
+        assert len(post.items) == 2
+        assert {p[0] for p in post.items} == {SCOPE, self.OTHER}
+
+    def test_reseed_leaves_the_sibling_deduped(self, tmp_path, store):
+        """Reseeding one search must not re-alert what its sibling reported."""
+        path = self._two_searches(tmp_path, channels=(SCOPE, SCOPE))
+        run(path, store, [item("a")], Recorder())
+
+        post = Recorder()
+        run(path, store, [item("a")], post, reseed=["numbered"])
+
+        assert post.items == []
+        assert set(store.load_seen(SCOPE)) == {"a"}

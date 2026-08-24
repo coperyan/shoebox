@@ -1,0 +1,349 @@
+# Team and title crosswalk
+#
+# Lookups keyed off the eBay "Team" item specific, plus title shorthand:
+#
+#   teams:             eBay "Team" item specific  ->  short name used in titles
+#   store_categories:  eBay "Team" item specific  ->  eBay store category home
+#   token_expansions:  title shorthand            ->  the word buyers search
+#
+# Team groups are flattened into one map for title lookups, but the group name
+# is meaningful to store-category routing (see store_categories.group_sports),
+# so put a team in the group matching its league. Keys are matched
+# case-insensitively with whitespace collapsed, so "los angeles  dodgers" still
+# resolves. A team with no entry here is left out of the title rather than
+# guessed at, so add new/renamed franchises (and any misspellings eBay hands
+# back) as you hit them.
+#
+# Historical, minor-league, and college names live alongside current ones on
+# purpose: vintage and prospect cards carry those values in item specifics.
+
+teams:
+  mlb:
+    "Arizona Diamondbacks": "DBacks"
+    "Atlanta Braves": "Braves"
+    "Baltimore Orioles": "Orioles"
+    "Boston Red Sox": "Red Sox"
+    "Chicago Cubs": "Cubs"
+    "Chicago White Sox": "White Sox"
+    "Cincinnati Reds": "Reds"
+    "Cleveland Guardians": "Guardians"
+    "Colorado Rockies": "Rockies"
+    "Detroit Tigers": "Tigers"
+    "Houston Astros": "Astros"
+    "Kansas City Royals": "Royals"
+    "Los Angeles Angels": "Angels"
+    "Los Angeles Dodgers": "Dodgers"
+    "Miami Marlins": "Marlins"
+    "Milwaukee Brewers": "Brewers"
+    "Minnesota Twins": "Twins"
+    "New York Mets": "Mets"
+    "New York Yankees": "Yankees"
+    # eBay now returns the A's with no city; "Oakland Athletics" is kept
+    # distinct so older cards still read as Oakland.
+    "Athletics": "Athletics"
+    "Oakland Athletics": "Athletics"
+    "Philadelphia Phillies": "Phillies"
+    "Pittsburgh Pirates": "Pirates"
+    "San Diego Padres": "Padres"
+    "San Francisco Giants": "Giants"
+    "Seattle Mariners": "Mariners"
+    "St. Louis Cardinals": "Cardinals"
+    "Tampa Bay Rays": "Rays"
+    "Texas Rangers": "Rangers"
+    "Toronto Blue Jays": "Jays"
+    "Washington Nationals": "Nationals"
+
+  mlb_historical:
+    "Anaheim Angels": "Angels"
+    "California Angels": "Angels"
+    "California Los Angeles Angels": "Angels"
+    "Angels": "Angels"
+    "Boston Braves": "Braves"
+    "Milwaukee Braves": "Braves"
+    "Brooklyn Dodgers": "Dodgers"
+    # eBay sometimes returns the bare city for Cleveland.
+    "Cleveland": "Guardians"
+    "Cleveland Indians": "Indians"
+    "Florida Marlins": "Marlins"
+    "Montreal Expos": "Expos"
+    "Montréal Expos": "Expos"
+    # The historical NY baseball Giants -- same short name as the SF Giants.
+    "New York Giants": "Giants"
+    "Philadelphia Athletics": "Athletics"
+    "Kansas City Athletics": "Athletics"
+    "St. Louis Browns": "Browns"
+    "Seattle Pilots": "Pilots"
+    "Tampa Bay Devil Rays": "Rays"
+    "Washington Senators": "Senators"
+    # Negro leagues
+    "Homestead Grays": "Grays"
+    "Pittsburgh Crawfords": "Crawfords"
+    "Kansas City Monarchs": "Monarchs"
+    "Newark Eagles": "Eagles"
+    # Misspellings seen in eBay item specifics.
+    "Cincinatti Reds": "Reds"
+    "Kanas City Royals": "Royals"
+    # League-level values used on All-Star and leader cards.
+    "National League": "NL"
+    "American League": "AL"
+
+  nfl:
+    "Arizona Cardinals": "Cardinals"
+    "Atlanta Falcons": "Falcons"
+    "Baltimore Ravens": "Ravens"
+    "Buffalo Bills": "Bills"
+    "Carolina Panthers": "Panthers"
+    "Chicago Bears": "Bears"
+    "Cincinnati Bengals": "Bengals"
+    "Cleveland Browns": "Browns"
+    "Dallas Cowboys": "Cowboys"
+    "Denver Broncos": "Broncos"
+    "Detroit Lions": "Lions"
+    "Green Bay Packers": "Packers"
+    "Houston Texans": "Texans"
+    "Indianapolis Colts": "Colts"
+    "Jacksonville Jaguars": "Jaguars"
+    "Kansas City Chiefs": "Chiefs"
+    "Las Vegas Raiders": "Raiders"
+    "Los Angeles Chargers": "Chargers"
+    "Los Angeles Rams": "Rams"
+    "Miami Dolphins": "Dolphins"
+    "Minnesota Vikings": "Vikings"
+    "New England Patriots": "Patriots"
+    "New Orleans Saints": "Saints"
+    "New York Jets": "Jets"
+    "Philadelphia Eagles": "Eagles"
+    "Pittsburgh Steelers": "Steelers"
+    "San Francisco 49ers": "49ers"
+    "Seattle Seahawks": "Seahawks"
+    "Tampa Bay Buccaneers": "Bucs"
+    "Tennessee Titans": "Titans"
+    "Washington Commanders": "Commanders"
+    # Relocated / renamed
+    "Oakland Raiders": "Raiders"
+    "San Diego Chargers": "Chargers"
+    "St. Louis Rams": "Rams"
+    "Houston Oilers": "Oilers"
+    "Tennessee Oilers": "Oilers"
+    "Baltimore Colts": "Colts"
+    "Phoenix Cardinals": "Cardinals"
+    "St. Louis Cardinals (NFL)": "Cardinals"
+    # eBay blocks the former Washington nickname in titles; use the city.
+    "Washington Redskins": "Washington"
+    "Washington Football Team": "Washington"
+
+  nba:
+    "Atlanta Hawks": "Hawks"
+    "Boston Celtics": "Celtics"
+    "Brooklyn Nets": "Nets"
+    "Charlotte Hornets": "Hornets"
+    "Chicago Bulls": "Bulls"
+    "Cleveland Cavaliers": "Cavs"
+    "Dallas Mavericks": "Mavs"
+    "Denver Nuggets": "Nuggets"
+    "Detroit Pistons": "Pistons"
+    "Golden State Warriors": "Warriors"
+    "Houston Rockets": "Rockets"
+    "Indiana Pacers": "Pacers"
+    "Los Angeles Clippers": "Clippers"
+    "Los Angeles Lakers": "Lakers"
+    "Memphis Grizzlies": "Grizzlies"
+    "Miami Heat": "Heat"
+    "Milwaukee Bucks": "Bucks"
+    "Minnesota Timberwolves": "Wolves"
+    "New Orleans Pelicans": "Pelicans"
+    "New York Knicks": "Knicks"
+    "Oklahoma City Thunder": "Thunder"
+    "Orlando Magic": "Magic"
+    "Philadelphia 76ers": "76ers"
+    "Phoenix Suns": "Suns"
+    "Portland Trail Blazers": "Blazers"
+    # eBay returns this lowercase variant on some cards.
+    "Portland Trail blazers": "Blazers"
+    "Sacramento Kings": "Kings"
+    "San Antonio Spurs": "Spurs"
+    "Toronto Raptors": "Raptors"
+    "Utah Jazz": "Jazz"
+    "Washington Wizards": "Wizards"
+    # Relocated / renamed
+    "Charlotte Bobcats": "Bobcats"
+    "New Jersey Nets": "Nets"
+    "New Orleans Hornets": "Hornets"
+    "Seattle Supersonics": "Sonics"
+    "Seattle SuperSonics": "Sonics"
+    "Vancouver Grizzlies": "Grizzlies"
+    "Washington Bullets": "Bullets"
+
+  # Minor league and complex-league affiliates. Split from college below so
+  # store-category routing can send these to Baseball without guessing.
+  mlb_minors:
+    "ACL Dodgers": "Dodgers"
+    "Bowling Green Hot Rods": "Hot Rods"
+    "Fredericksburg Nationals": "Nationals"
+    "Jacksonville Jumbo Shrimp": "Jumbo Shrimp"
+    "Jupiter Hammerheads": "Hammerheads"
+    "Visalia Rawhide": "Rawhide"
+
+  # College programs field teams in several sports, so the name alone does not
+  # imply one. These deliberately have no sport in group_sports -- routing
+  # falls back to the listing's own Sport item specific.
+  college:
+    "Marquette Golden Eagles": "Marquette"
+    "Ole Miss Rebels": "Ole Miss"
+    "SMU Mustangs": "SMU"
+
+# eBay store category routing for the "Team" item specific.
+#
+# Two questions this answers, both of which the raw item specific gets wrong
+# often enough to matter:
+#
+#   which sport branch?   group_sports maps a `teams:` group to a sport, so a
+#                         card tagged "Denver Nuggets" lands under Basketball
+#                         even when its Sport item specific says Baseball.
+#                         A group mapped to null (college) has no implied
+#                         sport; callers fall back to the listing's Sport.
+#
+#   which team category?  team_parents folds a franchise's alternate, historical
+#                         and minor-league names into the one category a buyer
+#                         would look under. Only exceptions are listed: a team
+#                         with no entry keeps its own name, which is already the
+#                         full "City Nickname" for every current club.
+#
+# Categories use the full city name ("San Francisco Giants", not "Giants") --
+# unlike titles, which use the short forms in `teams:` above, where the space
+# is tight. Full names also keep the leagues apart on their own: short names
+# collide (NFL Arizona and MLB St. Louis are both "Cardinals") and full ones
+# do not.
+#
+# Both sides are full eBay team values: keys are the value eBay hands back,
+# values are the club it should file under, which must itself be a key in
+# `teams:` above -- naming one "Diamondbacks" while the club is "Arizona
+# Diamondbacks" silently splits it in two.
+store_categories:
+  # Where teams with no usable category go: league-level values on All-Star
+  # cards, college programs, and anything not yet in the crosswalk.
+  unmapped_team: "Other Teams"
+
+  group_sports:
+    mlb: Baseball
+    mlb_historical: Baseball
+    mlb_minors: Baseball
+    nfl: Football
+    nba: Basketball
+    college: null
+
+  team_parents:
+    # --- MLB: city variants and misspellings ---------------------------------
+    # eBay returns the A's with and without a city; all three eras are one club.
+    "Oakland Athletics": "Athletics"
+    "Philadelphia Athletics": "Athletics"
+    "Kansas City Athletics": "Athletics"
+    "Angels": "Los Angeles Angels"
+    "Anaheim Angels": "Los Angeles Angels"
+    "California Angels": "Los Angeles Angels"
+    "California Los Angeles Angels": "Los Angeles Angels"
+    "Cleveland": "Cleveland Guardians"
+    "Cincinatti Reds": "Cincinnati Reds"
+    "Kanas City Royals": "Kansas City Royals"
+
+    # --- MLB: renamed, relocated, or defunct ---------------------------------
+    "Cleveland Indians": "Cleveland Guardians"
+    "Boston Braves": "Atlanta Braves"
+    "Milwaukee Braves": "Atlanta Braves"
+    "Brooklyn Dodgers": "Los Angeles Dodgers"
+    "Florida Marlins": "Miami Marlins"
+    "Montreal Expos": "Washington Nationals"
+    "Montréal Expos": "Washington Nationals"
+    # The historical New York baseball Giants, not the NFL club of that name.
+    "New York Giants": "San Francisco Giants"
+    "St. Louis Browns": "Baltimore Orioles"
+    "Seattle Pilots": "Milwaukee Brewers"
+    "Tampa Bay Devil Rays": "Tampa Bay Rays"
+    # Deliberately absent: "Washington Senators". The name covers two
+    # franchises -- the 1961 Twins and the 1972 Rangers -- so it keeps its own
+    # category rather than being filed on a guess.
+
+    # --- MLB: minor-league affiliates -> parent club --------------------------
+    "ACL Dodgers": "Los Angeles Dodgers"
+    "Bowling Green Hot Rods": "Tampa Bay Rays"
+    "Fredericksburg Nationals": "Washington Nationals"
+    "Jacksonville Jumbo Shrimp": "Miami Marlins"
+    "Jupiter Hammerheads": "Miami Marlins"
+    "Visalia Rawhide": "Arizona Diamondbacks"
+
+    # --- Negro leagues -------------------------------------------------------
+    # Collected with the fallback rather than by club: one category keeps them
+    # findable instead of scattering single cards across four near-empty ones.
+    "Homestead Grays": "Other Teams"
+    "Kansas City Monarchs": "Other Teams"
+    "Newark Eagles": "Other Teams"
+    "Pittsburgh Crawfords": "Other Teams"
+
+    # --- League-level values on All-Star and leader cards ---------------------
+    "National League": "Other Teams"
+    "American League": "Other Teams"
+
+    # --- College: one or two cards each, so not worth their own categories ----
+    "Marquette Golden Eagles": "Other Teams"
+    "Ole Miss Rebels": "Other Teams"
+    "SMU Mustangs": "Other Teams"
+
+    # --- NBA: renamed or relocated -------------------------------------------
+    "Charlotte Bobcats": "Charlotte Hornets"
+    "New Jersey Nets": "Brooklyn Nets"
+    "New Orleans Hornets": "New Orleans Pelicans"
+    "Seattle Supersonics": "Oklahoma City Thunder"
+    "Seattle SuperSonics": "Oklahoma City Thunder"
+    "Vancouver Grizzlies": "Memphis Grizzlies"
+    "Washington Bullets": "Washington Wizards"
+    "Portland Trail blazers": "Portland Trail Blazers"
+
+    # --- NFL: renamed or relocated -------------------------------------------
+    "Oakland Raiders": "Las Vegas Raiders"
+    "San Diego Chargers": "Los Angeles Chargers"
+    "St. Louis Rams": "Los Angeles Rams"
+    "Baltimore Colts": "Indianapolis Colts"
+    "Houston Oilers": "Tennessee Titans"
+    "Tennessee Oilers": "Tennessee Titans"
+    "Phoenix Cardinals": "Arizona Cardinals"
+    "St. Louis Cardinals (NFL)": "Arizona Cardinals"
+    "Washington Redskins": "Washington Commanders"
+    "Washington Football Team": "Washington Commanders"
+
+# Title shorthand -> the word buyers actually search for.
+#
+# Applied to standalone tokens only, whether bare ("... Judge RC") or inside a
+# trailing group ("... Judge (AU,RC)"). Card numbers such as "#RC-6" are left
+# alone. A null value means the token is recognized -- so it keeps its place at
+# the end of the title, ahead of nothing and behind the team -- but is not
+# rewritten.
+token_expansions:
+  RC: "Rookie"
+  AU: "Auto"
+  AUTO: "Auto"
+  SP: null
+  SSP: null
+
+# Tokens dropped from titles entirely.
+token_removals:
+  - MEM
+
+# An expansion is skipped when the title already says the same thing another
+# way: "Rookie Revolution ... (RC)" keeps the insert name and drops the (RC)
+# rather than ending in "Rookie Rookie". Matched whole-word, case-insensitively.
+token_synonyms:
+  Rookie:
+    - Rookie
+    - Rookies
+    - RC
+  Auto:
+    - Auto
+    - Autos
+    - Autograph
+    - Autographs
+    - Autographed
+
+# Phrases stripped from every title, wherever they appear. Whitespace around
+# the removal is collapsed afterwards.
+title_removals:
+  - "Topps Baseball"

@@ -1,12 +1,32 @@
 import json
-from collections.abc import Iterable
+import logging
+from collections.abc import Callable, Iterable
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from itertools import islice
 from typing import Any
 
 import requests
 import xmltodict
+from requests.adapters import HTTPAdapter
+
+logger = logging.getLogger(__name__)
 
 # Default namespace used by eBay Trading API responses/requests
 EBAY_NS = "urn:ebay:apis:eBLBaseComponents"
+
+# Trading error code for "application has exceeded usage limit on this call".
+# The limit is a daily call allowance, so once it trips, every later call in
+# the same sweep is doomed -- worth recognizing rather than retrying into.
+_QUOTA_ERROR_CODE = "518"
+
+
+class TradingQuotaExceeded(RuntimeError):
+    """eBay's daily call allowance for this Trading call is used up.
+
+    Distinct from an ordinary failure because waiting is the only remedy: no
+    amount of retrying, backing off, or reducing concurrency helps until the
+    allowance resets.
+    """
 
 
 def _xml_escape(value: str) -> str:
@@ -96,9 +116,35 @@ class eBayLegacyClient:
     auth_path = "configs/ebay_legacy.json"
     trading_endpoint = "https://api.ebay.com/ws/api.dll"
 
+    # Connections held open for reuse. Sized for the widest concurrent fan-out
+    # in the codebase (get_item_details_bulk); a pool smaller than the worker
+    # count silently discards connections and gives the handshake back.
+    pool_size = 32
+
     def __init__(self) -> None:
         self.token: str | None = None
         self._authenticate()
+        self._session = self._build_session()
+
+    def _build_session(self) -> requests.Session:
+        """A session that keeps its TCP/TLS connections open between calls.
+
+        Every Trading call used to be a bare ``requests.post``: a fresh TCP
+        connection and TLS handshake each time, which is most of the latency on
+        a small XML request. Pooling removes that per-call cost.
+
+        Deliberately no automatic retries -- this session also carries mutating
+        calls (ReviseFixedPriceItem, EndItem), and a silent replay of one of
+        those is worse than an error the caller can see.
+        """
+        session = requests.Session()
+        adapter = HTTPAdapter(
+            pool_connections=self.pool_size,
+            pool_maxsize=self.pool_size,
+            max_retries=0,
+        )
+        session.mount("https://", adapter)
+        return session
 
     def _authenticate(self) -> None:
         with open(self.auth_path) as f:
@@ -128,7 +174,7 @@ class eBayLegacyClient:
             "Content-Type": "text/xml",
         }
 
-        resp = requests.post(
+        resp = self._session.post(
             self.trading_endpoint,
             data=body.encode("utf-8"),
             headers=headers,
@@ -161,6 +207,11 @@ class eBayLegacyClient:
                         "message": _dig(err, ["LongMessage"], None)
                         or _dig(err, ["ShortMessage"], ""),
                     }
+                )
+            if any(str(e.get("code")) == _QUOTA_ERROR_CODE for e in errs_out):
+                raise TradingQuotaExceeded(
+                    f"eBay daily call allowance exhausted for {call_name}; "
+                    "it resets at midnight Pacific."
                 )
             raise RuntimeError({"ack": ack, "errors": errs_out, "call_name": call_name})
 
@@ -245,6 +296,95 @@ class eBayLegacyClient:
             out["picture_urls"] = pics
 
         return out
+
+    def get_item_details_bulk(
+        self,
+        item_ids: list[str],
+        *,
+        max_workers: int = 8,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+        on_progress: Callable[[int, int], None] | None = None,
+    ) -> tuple[list[dict[str, Any]], dict[str, str]]:
+        """
+        Fetch details for many listings at once, concurrently.
+
+        There is no batch equivalent of GetItem for this data: GetSellerList
+        pages 200 listings per call but returns no ItemSpecifics at all, and the
+        Browse API's bulk `getItems` needs partner-level access. So the only
+        lever is overlapping the calls -- they are almost entirely network wait.
+
+        Results come back in the order the item IDs were given. A listing that
+        fails is collected rather than raised, so one bad item cannot throw away
+        a sweep of hundreds; callers get ``(details, {item_id: error})`` and
+        decide what an acceptable failure count is.
+
+        The exception is running out of daily call allowance: every remaining
+        call would fail the same way, so the sweep stops there and raises
+        :class:`TradingQuotaExceeded` instead of hammering the wall.
+
+        ``max_workers`` is capped at the connection-pool size. eBay's Trading
+        limits are a daily allowance rather than a rate, so concurrency buys
+        wall-clock but never additional calls -- a wide fan-out is still worth
+        keeping modest.
+        """
+        if not item_ids:
+            return [], {}
+
+        workers = max(1, min(max_workers, self.pool_size, len(item_ids)))
+        details: dict[str, dict[str, Any]] = {}
+        failures: dict[str, str] = {}
+        total = len(item_ids)
+
+        def fetch(item_id: str) -> dict[str, Any]:
+            return self.get_item_details(
+                item_id,
+                site_id=site_id,
+                compatibility_level=compatibility_level,
+            )
+
+        quota_error: TradingQuotaExceeded | None = None
+        remaining = iter(item_ids)
+        completed = 0
+
+        # Work is fed in a sliding window rather than submitted all at once.
+        # Queued-but-unstarted futures are the only ones cancel() can stop, so
+        # submitting everything up front would keep firing doomed calls for a
+        # long time after the allowance runs out.
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            pending = {
+                pool.submit(fetch, item_id): item_id for item_id in islice(remaining, workers * 2)
+            }
+            while pending:
+                finished, _ = wait(pending, return_when=FIRST_COMPLETED)
+                for future in finished:
+                    item_id = pending.pop(future)
+                    try:
+                        details[item_id] = future.result()
+                    except TradingQuotaExceeded as e:
+                        quota_error = quota_error or e
+                    except Exception as e:
+                        logger.warning("GetItem failed for item_id=%s: %s", item_id, e)
+                        failures[item_id] = str(e)
+                    completed += 1
+                    if on_progress:
+                        on_progress(completed, total)
+
+                if quota_error:
+                    for future in pending:
+                        future.cancel()
+                    break
+
+                for item_id in islice(remaining, len(finished)):
+                    pending[pool.submit(fetch, item_id)] = item_id
+
+        if quota_error:
+            raise TradingQuotaExceeded(
+                f"{quota_error} Fetched {len(details)} of {total} listing(s) first."
+            ) from quota_error
+
+        ordered = [details[item_id] for item_id in item_ids if item_id in details]
+        return ordered, failures
 
     def get_active_listings(
         self,
@@ -604,6 +744,115 @@ class eBayLegacyClient:
             )
             for item_id in item_ids
         ]
+
+    def revise_listing_title(
+        self,
+        item_id: str,
+        title: str,
+        *,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Change the title of a fixed-price listing via Trading `ReviseFixedPriceItem`.
+
+        This is the path for listings that have no SKU -- created outside the
+        Sell Inventory API, which is the only way to retitle the ones that do.
+        eBay rejects Trading revisions on Inventory-API listings, so callers
+        should reach for this only when the inventory path doesn't apply or has
+        already failed.
+        """
+        if not title or not title.strip():
+            raise ValueError("title must be a non-empty string")
+        if len(title) > 80:
+            raise ValueError(f"eBay titles are capped at 80 characters; got {len(title)}")
+
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <ReviseFixedPriceItemRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <Item>
+                    <ItemID>{item_id}</ItemID>
+                    <Title>{_xml_escape(title)}</Title>
+                </Item>
+                </ReviseFixedPriceItemRequest>"""
+
+        payload = self._trading_call(
+            call_name="ReviseFixedPriceItem",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return {
+            "ack": payload.get("Ack", "Success"),
+            "item_id": payload.get("ItemID", item_id),
+            "title": title,
+        }
+
+    def revise_store_category(
+        self,
+        item_id: str,
+        category_id: str | int,
+        secondary_category_id: str | int | None = None,
+        *,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Move a listing into store categories via Trading `ReviseFixedPriceItem`.
+
+        The counterpart to the Sell Inventory route, which addresses categories
+        by name: Trading wants the numeric store category IDs, so callers
+        resolve names to IDs from ``StoresClient.get_store_categories`` first.
+
+        This is the path for listings with no SKU. eBay rejects Trading
+        revisions on Inventory-API listings, so reach for it only when the
+        inventory path doesn't apply.
+        """
+        primary = str(int(str(category_id).strip()))
+        secondary = (
+            str(int(str(secondary_category_id).strip()))
+            if secondary_category_id is not None
+            else None
+        )
+        if secondary == primary:
+            # eBay rejects a listing filed twice in the same category.
+            secondary = None
+
+        second_xml = f"<StoreCategory2ID>{secondary}</StoreCategory2ID>" if secondary else ""
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <ReviseFixedPriceItemRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <Item>
+                    <ItemID>{item_id}</ItemID>
+                    <Storefront>
+                        <StoreCategoryID>{primary}</StoreCategoryID>
+                        {second_xml}
+                    </Storefront>
+                </Item>
+                </ReviseFixedPriceItemRequest>"""
+
+        payload = self._trading_call(
+            call_name="ReviseFixedPriceItem",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return {
+            "ack": payload.get("Ack", "Success"),
+            "item_id": payload.get("ItemID", item_id),
+            "store_category_id": primary,
+            "store_category_2_id": secondary,
+        }
 
     def add_sku_to_listing(
         self,

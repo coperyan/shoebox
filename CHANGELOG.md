@@ -7,8 +7,86 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `sync-active-listing-details` no longer throws away a whole sweep because one
+  listing failed, and no longer writes a snapshot that quietly omits listings:
+  failures are collected per item, and a run that loses more than 10% of the
+  store aborts before writing. Running out of eBay's daily call allowance
+  (error 518) now raises `TradingQuotaExceeded` and stops immediately instead
+  of firing hundreds more calls into the same wall.
+- `enhance-listing-titles` handles listings that have no SKU. They were created
+  outside the Sell Inventory API, which cannot see them, so they now go through
+  Trading `ReviseFixedPriceItem` by item ID (new
+  `eBayLegacyClient.revise_listing_title`); a failure on the inventory route
+  falls back to the same path. Previously a missing SKU arrived as pandas' NaN,
+  passed a `str(value or "")` guard as the truthy string `"nan"`, and reached
+  eBay as a float.
+- `enhance-listing-titles --apply` wrote one row per listing again. Its results
+  were merged back on `sku`, which is blank for Trading-API listings, so those
+  rows joined to each other — 132 SKU-less listings turned into ~18,000 report
+  rows. (The sweep itself was unaffected; only the report multiplied.)
+- A title update no longer sends back packaging with a missing or zero weight,
+  which eBay rejects with errorId 25020 and which killed the update for
+  listings whose inventory record carries incomplete package details.
+- `StoresClient` calls bypass the generated `sell_stores_*` wrappers: in
+  `ebay_rest` 1.1.4 (latest) those pass `user_access_token=False`, sending an
+  application token to an API that only accepts authorization-code-grant user
+  tokens — every call failed with HTTP 403 / errorId 1100 regardless of scopes.
+  `StoresClient._invoke` re-issues the same call with the user token; drop it
+  once upstream fixes the flag.
+
+### Added
+
+- **`enhance-listing-titles`** — improve the titles of listings already live.
+  Reads a listings dataframe — by default the BigQuery view
+  `<ebay_dataset>.v_active_listing_details`, or any CSV / JSONL with `item_id`,
+  `sku`, `title`, and a team via `--input` — and, inside eBay's
+  80-character limit: repairs mis-encoded characters, strips dead phrases,
+  expands `(RC)` → `Rookie` and `AU` → `Auto`, drops `MEM`, and adds the team
+  short name — none of it repeated when the title already says it. Writes a
+  full per-listing report to `exports/csv/`; `--apply` pushes the changes via
+  `createOrReplaceInventoryItem`, so listings keep their ID, watchers, and
+  search standing. New `pipelines/enhance_listing_titles.py`,
+  `transforms/title_enhancer.py`, and `EbayClient.update_listing_title`.
+- Character repair for titles that went through a bad encoding hop and are live
+  on eBay as mojibake ("Vidal BrujÃ¡n" for "Vidal Bruján") — 19 of them in the
+  current active set. `title_enhancer.normalize_characters` undoes the damage
+  and folds the result to plain ASCII; `has_illegal_characters` reports which
+  titles carry anything outside printable ASCII.
+- `configs/title_crosswalk.yaml` — the team short-name crosswalk (MLB, NFL, NBA,
+  plus historical, minor-league, and college names), the title shorthand
+  expansions, the tokens and phrases to drop, and the synonyms that suppress a
+  redundant expansion. Loaded by `utils/title_crosswalk.py`; editing the YAML is
+  now all it takes to teach the store a new team or a new title rule.
+- `scripts/refresh_ebay_token.py` — reset / re-consent / persist the eBay REST
+  user token. Needed after any scope change: scopes are fixed at consent time,
+  and `ebay_rest` neither re-consents while a refresh token is present nor
+  writes new tokens back to `ebay_rest.json`. Includes `--check`, `--reset`,
+  `--diagnose` (per-scope endpoint probe), and `--verify`.
+- The `sell.stores` OAuth scope in `configs/ebay_rest.example.json` and the
+  scope/re-mint documentation in `docs/setup.md`.
+
 ### Changed
 
+- **`sync-active-listing-details` runs its `GetItem` calls concurrently** —
+  ~1,650 listings in about two minutes instead of twenty-plus. New
+  `eBayLegacyClient.get_item_details_bulk` spreads the calls over a
+  `ThreadPoolExecutor` (default 12 workers, `--workers` to change), feeding the
+  pool in a sliding window so an early stop can cancel the rest. There is no
+  batch alternative: `GetSellerList` returns no item specifics at any detail
+  level (verified: 0 of 200 on a full page) and Browse `getItems` needs
+  partner-level access this account lacks.
+- Every Trading API call now goes through a pooled `requests.Session` instead
+  of a bare `requests.post`, so connections are reused across calls. Worth ~4%
+  on its own; it also keeps 12 concurrent workers from churning connections.
+  No automatic retries — this session carries mutating calls, and a silent
+  replay of `ReviseFixedPriceItem` is worse than a visible error.
+- `utils/shorten_team.py` is now `utils/title_crosswalk.py`, reading its team
+  map from `configs/title_crosswalk.yaml` instead of a hardcoded dict.
+  `shorten_team_name` keeps its signature (unmapped teams still return `None`);
+  the map gained NFL, NBA, minor-league, and college coverage, so
+  non-baseball listings now get a team in their titles.
 - **Store category management moved from the Trading API to the REST Sell
   Stores API.** New `StoresClient` (`clients/ebay_rest/stores.py`), reachable as
   `EbayClient.stores`. It uses the same OAuth token as the other REST clients,

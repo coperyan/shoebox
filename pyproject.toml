@@ -10,7 +10,7 @@ dependencies = [
   "beautifulsoup4",
   "chrome_version",
   "db-dtypes",
-  "ebay_rest",
+  "ebay_rest>=1.1.4",
   "google-api-python-client",
   "google-auth",
   "google-cloud-bigquery",

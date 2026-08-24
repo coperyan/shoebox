@@ -23,6 +23,7 @@ named in `paths`.
 |---|---|
 | `SHOEBOX_CONFIG_PATH` | Path to the app YAML (default `configs/app.yaml`) |
 | `EBAY_REST_CONFIG_PATH` | Full path to `ebay_rest.json`, overriding `ebay.path` |
+| `SHOEBOX_TITLE_CROSSWALK` | Path to the team/title crosswalk (default `configs/title_crosswalk.yaml`) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC override, used when `gcp.service_account_json` doesn't exist |
 
 ## Settings schema
@@ -265,6 +266,22 @@ which key rejected each listing — use
   directory, so run from the repo root).
 - **`configs/gcp.json`** — standard service-account key referenced by
   `gcp.service_account_json`.
+- **`configs/title_crosswalk.yaml`** — committed (not secret). `teams:` maps the
+  eBay `Team` item specific to the short name used in listing titles
+  ("Arizona Diamondbacks" → "Dbacks"), grouped by league for readability;
+  lookups flatten every group and match case-insensitively. A team with no entry
+  is left out of the title rather than guessed at, so add new franchises — and
+  any misspellings eBay hands back — here. `token_expansions:` maps title
+  shorthand to the word buyers search (`RC` → `Rookie`, `AU` → `Auto`); a `null`
+  value means "recognized as a suffix token, but left as written".
+  `token_removals:` lists tokens dropped outright (`MEM`). `token_synonyms:`
+  lists the words that already say what an expansion says, so `(RC)` is dropped
+  rather than expanded on a title that already reads "Rookie".
+  `title_removals:` lists phrases stripped from every title
+  (`Topps Baseball`). Read by
+  `utils/title_crosswalk.py`, which both `transforms/listing_builder.title` (new
+  listings) and `enhance-listing-titles` (live ones) use. Override the path with
+  `SHOEBOX_TITLE_CROSSWALK`.
 - **`configs/bigquery/schemas/*.json`** — column definitions used for BigQuery
   load jobs (see [data-storage.md](data-storage.md)).
 - **`configs/bigquery/queries/*.sql`** — SQL files executed by

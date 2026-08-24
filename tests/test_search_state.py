@@ -212,27 +212,55 @@ class TestIsDue:
 
 class TestCacheWasLost:
     def test_unseeded_search_is_not_a_loss(self, tmp_path):
-        assert not store(tmp_path).cache_was_lost("s1")
+        assert not store(tmp_path).cache_was_lost("s1", "chan")
 
     def test_seeded_with_intact_cache_is_fine(self, tmp_path):
         s = store(tmp_path)
-        s.append_seen("s1", [entry("a")])
+        s.append_seen("chan", [entry("a")])
         s.mark("s1", last_run_at=NOW, status="ok", seeded_at=NOW, seed_count=1)
-        assert not s.cache_was_lost("s1")
+        assert not s.cache_was_lost("s1", "chan")
 
     def test_seeded_then_wiped_is_detected(self, tmp_path):
         s = store(tmp_path)
-        s.append_seen("s1", [entry("a")])
+        s.append_seen("chan", [entry("a")])
         s.mark("s1", last_run_at=NOW, status="ok", seeded_at=NOW, seed_count=1)
-        s.clear_seen("s1")
-        assert s.cache_was_lost("s1")
+        s.clear_seen("chan")
+        assert s.cache_was_lost("s1", "chan")
+
+    def test_sibling_entries_count_as_an_intact_cache(self, tmp_path):
+        # A shared scope is owned by whoever wrote an item last, so s1 having no
+        # entries of its own is normal -- it still dedups against s2's. Calling
+        # that a loss would reseed s1 silently and swallow a real alert.
+        s = store(tmp_path)
+        s.append_seen("chan", [entry("a", name="s2")])
+        s.mark("s1", last_run_at=NOW, status="ok", seeded_at=NOW, seed_count=1)
+        assert not s.cache_was_lost("s1", "chan")
 
     def test_search_that_seeded_zero_is_not_a_loss(self, tmp_path):
         # Otherwise a narrow search's first genuine hit would be silently seeded
         # instead of alerted -- the exact case the feature exists for.
         s = store(tmp_path)
         s.mark("s1", last_run_at=NOW, status="ok", seeded_at=NOW, seed_count=0)
-        assert not s.cache_was_lost("s1")
+        assert not s.cache_was_lost("s1", "chan")
+
+
+class TestClearSeenFor:
+    def test_removes_only_the_named_search(self, tmp_path):
+        s = store(tmp_path)
+        s.append_seen("chan", [entry("a", name="s1"), entry("b", name="s2")])
+        s.clear_seen_for("chan", "s1")
+        assert set(s.load_seen("chan")) == {"b"}
+
+    def test_leaves_siblings_addressable(self, tmp_path):
+        # A reseed must not re-alert everything the other searches on this
+        # channel have already reported.
+        s = store(tmp_path)
+        s.append_seen("chan", [entry("a", name="s2")])
+        s.clear_seen_for("chan", "s1")
+        assert s.load_seen("chan")["a"].search_name == "s2"
+
+    def test_missing_file_is_a_noop(self, tmp_path):
+        assert store(tmp_path).clear_seen_for("chan", "s1") == 0
 
     def test_seed_count_survives_later_marks(self, tmp_path):
         s = store(tmp_path)

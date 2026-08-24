@@ -91,6 +91,51 @@ reply skips that listing. Cheaper/no-view listings are auto-repriced by rule.
 Ends every active "out of stock" listing (quantity − sold = 0) via the Trading
 API and notifies the Slack notify channel with the count.
 
+### `enhance-listing-titles`
+Improves the titles of listings already live, per
+[`configs/title_crosswalk.yaml`](../configs/title_crosswalk.yaml):
+
+- **Repairs the characters.** Accented and mis-encoded text ("Vidal BrujÃ¡n")
+  is un-garbled and folded to plain ASCII. The report's `had_illegal_chars`
+  column doubles as the scan.
+- **Strips dead phrases** — "Topps Baseball" — wherever they appear.
+- **Expands shorthand**: `(RC)`/`RC` → `Rookie`, `AU` → `Auto`; `MEM` is
+  dropped outright. Card numbers such as `#RC-6` are never touched.
+- **Adds the team** short name, ahead of the trailing suffix tokens.
+- **Never repeats itself**: the team, `Rookie`, and `Auto` are only added when
+  the title doesn't already say them ("Rookie Revolution … (RC)" just loses
+  the token; a title already reading "Autographs" doesn't gain "Auto").
+
+Held to eBay's 80-character limit, giving up pieces in this order: the `" - "`
+separator, then the card number, then the team, then the expansions. Character
+repair, phrase stripping, and `MEM` removal are never given up — they only ever
+shorten the title.
+
+Works from a dataframe rather than calling eBay to discover listings. With no
+`--input`, that dataframe is the BigQuery view
+`<ebay_dataset>.v_active_listing_details`
+([`active_listing_details.sql`](../configs/bigquery/queries/active_listing_details.sql)),
+so a run always sees current titles — including any a previous sweep already
+fixed. Pass `--input` to work from a local `.jsonl`/`.csv` export instead.
+Writes `exports/csv/title_enhancements_<timestamp>.csv` and prints a preview.
+**Nothing is sent to eBay without `--apply`.**
+
+Updates take one of two routes, because a store accumulates listings from both
+eBay APIs. Listings **with a SKU** (created through the Sell Inventory API) go
+through `createOrReplaceInventoryItem`; listings **without one** — listed via
+the Trading API or eBay's own form — are invisible to the inventory API and go
+through Trading `ReviseFixedPriceItem` by item ID. If the inventory route
+fails, Trading is tried as a fallback. Either way the listing keeps its item ID,
+watchers, and search standing — no withdraw/republish. The report's
+`update_method` column shows the intended route, `applied_method` the one that
+did the work. Variation ("Complete Your Set") listings are skipped.
+
+| Flag | Effect |
+|---|---|
+| `--input PATH` | Read a local `.jsonl`/`.csv` export instead of the BigQuery view |
+| `--apply` | Push the new titles to eBay (default: preview only) |
+| `--limit N` | Cap how many listings are updated in one run |
+
 ### `send-offers`
 Finds listings with interested buyers (Negotiation API) and posts each one to
 Slack (title, current price, photo) — `slack.offers_channel`, falling back to
@@ -115,8 +160,21 @@ start/complete notifications to Slack.
 
 ### `sync-active-listing-details`
 Fetches full `GetItem` detail (item specifics, pictures, condition) for every
-active non-variation listing into `ebay.active_listing_details`. Slower —
-one Trading API call per listing.
+active non-variation listing into `ebay.active_listing_details`. One Trading
+API call per listing — there is no batch alternative that carries item
+specifics (see [pipelines.md](pipelines.md#pipelinessync_active_listing_detailspy))
+— but the calls run concurrently, so ~1,650 listings take roughly two minutes
+rather than the twenty-plus they took serially.
+
+Concurrency buys wall-clock, not extra calls: `GetItem` is metered by a **daily
+allowance**, and a full sweep spends one call per listing. Exhausting it stops
+the run immediately (error 518) rather than grinding through doomed calls. A
+run whose failures exceed 10% of the store refuses to write, rather than
+publishing a snapshot that silently omits listings.
+
+| Flag | Effect |
+|---|---|
+| `--workers N` | Concurrent `GetItem` calls (default 12, capped at the 32-connection pool) |
 
 ### `sync-orders`
 Pulls up to ~2 years of FULFILLED orders (Fulfillment API, windowed into

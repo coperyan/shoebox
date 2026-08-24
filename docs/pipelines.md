@@ -145,6 +145,65 @@ which is what lets relist flows find existing inventory items and offers.
 Trading API: find active listings with zero remaining quantity, end them all
 (`NotAvailable`), notify Slack with the count.
 
+### `pipelines/enhance_listing_titles.py` (CLI: `enhance-listing-titles`)
+
+Retitles live listings from a dataframe. The default source is the BigQuery
+view `<ebay_dataset>.v_active_listing_details` via
+`configs/bigquery/queries/active_listing_details.sql`; `--input` swaps in a
+local `.jsonl`/`.csv` export. Either way the frame needs `item_id`, `sku`,
+`title`, and a team — a flat `team` column (string, pipe-joined, or a repeated
+BigQuery column) or `item_specifics` to read it from.
+
+Querying the view by default means each run sees current titles, so a sweep
+following a partial one only picks up what is actually left.
+
+- Title rules live in `transforms/title_enhancer.py`, the crosswalk in
+  `configs/title_crosswalk.yaml` (loaded by `utils/title_crosswalk.py`, also
+  used by `transforms/listing_builder.title` when building new listings).
+- Applied in order: repair characters (mojibake round-trip, then `unidecode`
+  to plain ASCII) → strip `title_removals` phrases → expand/remove shorthand
+  tokens → insert the short team name ahead of the trailing suffix tokens, the
+  same slot the listing builder uses.
+- Character repair covers text that was UTF-8 encoded and read back as latin-1
+  — live on eBay as "Vidal BrujÃ¡n" — by re-encoding latin-1 and decoding
+  UTF-8. The round-trip is self-validating: correctly encoded text either
+  isn't latin-1 encodable ("Jokić") or isn't valid UTF-8 ("Montréal"), and is
+  returned untouched.
+- Nothing is added twice. The team is skipped when the title names it in any
+  spelling; an expansion is skipped when a `token_synonyms` entry already
+  appears elsewhere in the title, so "Rookie Revolution … (RC)" loses the
+  token rather than gaining a second "Rookie".
+- The team goes in *before* expansion runs, so trailing tokens are still
+  recognizable as shorthand. Otherwise a parallel named "Red Rookie" would
+  read as a suffix and get split by the team name.
+- Also skipped, and reported as such: cards credited to two different
+  franchises, teams missing from the crosswalk, variation listings, and rows
+  identified by neither a SKU nor an item ID.
+- 80-character budget, in fallback order: full result → drop the ` - `
+  separator → drop the card number → drop the team → drop the expansions →
+  leave the title exactly as it was. Character repair, phrase stripping, and
+  token removal survive every fallback; they only ever shorten the title.
+- Every input row lands in `exports/csv/title_enhancements_<timestamp>.csv`
+  with its `changes`, `notes`, and `skip_reason`, so a preview run is a full
+  audit of what would happen. `--apply` additionally writes
+  `..._applied.csv` with the per-SKU result and notifies Slack.
+- Updates use `EbayClient.update_listing_title`, which routes by identifier:
+  a SKU means the listing came from the Sell Inventory API and the title lives
+  on the inventory item (`createOrReplaceInventoryItem`); no SKU means the
+  inventory API cannot see the listing at all, and the title is revised through
+  Trading `ReviseFixedPriceItem` by item ID. An inventory failure on a listing
+  that also has an item ID retries through Trading. The listing keeps its ID,
+  watchers, and search standing either way, and a failure on one listing is
+  recorded while the sweep continues.
+- The inventory route is idempotent: it reads the item first and skips the
+  write when the title is already current, so re-running after a partial sweep
+  costs a GET per listing and changes nothing.
+- `inventory_item_body_with_title` keeps the item's own description, images,
+  condition, and packaging — a title edit must not rewrite the rest of a live
+  listing. The one exception is packaging with no usable weight, which eBay
+  rejects outright (errorId 25020); those fall back to the standard
+  single-card package.
+
 ### `pipelines/send_offers.py`
 
 Negotiation API: `find_eligible_items()` → post every eligible listing to
@@ -173,8 +232,46 @@ All three follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
 | Pipeline | Source | Table | Notes |
 |---|---|---|---|
 | `sync_active_listings.py` | Trading `GetMyeBaySelling` + Analytics traffic report (90 days) | `active_listings` | Sends start/complete Slack notifications |
-| `sync_active_listing_details.py` | Trading `GetItem` per listing | `active_listing_details` | Skips "complete your set" variation listings; 1 API call per listing |
+| `sync_active_listing_details.py` | Trading `GetItem` per listing | `active_listing_details` | Skips "complete your set" variation listings; 1 API call per listing, run 12-wide (see below) |
 | `sync_orders.py` | Fulfillment API, FULFILLED, ~2 years windowed | `orders` | One row per line item via `Order.flattened_line_items`; constructs clients at import time |
+
+### `pipelines/sync_active_listing_details.py` — why one call per listing
+
+**Item specifics only come from `GetItem`, one listing at a time.** Both batch
+routes were measured against the live API and rejected:
+
+- `GetSellerList` pages 200 listings per call and returns title, SKU, price,
+  condition, category, times, and pictures — but **no `ItemSpecifics`**, under
+  `GranularityLevel=Fine`, `DetailLevel=ReturnAll`, or with
+  `IncludeItemSpecifics=true`. Verified on a full 200-item page: 0 of 200 items
+  carried specifics, while `GetItem` on one of those same active items returned
+  14.
+- Browse `getItems` (20 IDs per call, returns `localizedAspects`) answers **403
+  `errorId 1100`** — the bulk endpoint needs partner-level Buy API access this
+  account doesn't have.
+
+So the sweep is 1 call per listing, and the only lever is overlapping them —
+they are almost entirely network wait. `get_item_details_bulk` runs them
+through a `ThreadPoolExecutor` over a pooled `requests.Session`.
+
+Measured on ~1,650 listings: **~22 min serial → ~2.2 min at 8 workers, ~1.4 min
+at 16**. The default is 12. Work is fed to the pool in a sliding window of
+`workers * 2` rather than submitted up front, so an early stop actually stops:
+only queued-but-unstarted futures can be cancelled.
+
+Two failure behaviours worth knowing:
+
+- **Daily allowance (error 518).** Trading meters `GetItem` by calls per day,
+  so concurrency buys wall-clock but never additional calls, and a full sweep
+  costs one call per listing. Hitting the ceiling raises `TradingQuotaExceeded`
+  and abandons the remaining work immediately — every later call would fail the
+  same way. It resets at midnight Pacific. `GetApiAccessRules`, which used to
+  report the limit and current usage, is decommissioned (HTTP 410), so the
+  allowance can only be observed by hitting it.
+- **Partial snapshots.** Individual failures are collected rather than raised,
+  so one bad listing can't discard a whole sweep. But if more than 10% of the
+  store fails, the pipeline refuses to write — a snapshot table quietly missing
+  a third of its listings is worse than no new snapshot.
 
 ---
 

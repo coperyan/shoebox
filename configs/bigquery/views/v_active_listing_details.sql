@@ -5,6 +5,8 @@ WITH active_listings AS (
     l.sku,
     DATE(l.start_time,"America/Los_Angeles") AS start_date,
     DATE_DIFF(CURRENT_DATE("America/Los_Angeles"),DATE(l.start_time,"America/Los_Angeles"), DAY) AS listing_age,
+    ld.category_id,
+    ld.category_name,
     l.quantity,
     l.price,
     l.watchers,
