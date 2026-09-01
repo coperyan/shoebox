@@ -116,7 +116,11 @@ class EbayClient:
         try:
             existing = self._search_existing_offers(sku)
         except self.session.Error as e:
-            logger.info("No existing offer found for sku=%s (%s)", sku, e)
+            # getOffers returns 404 errorId 25713 ("This Offer is not available")
+            # when the SKU has no offer yet -- the normal case for a new listing.
+            if self.session.parse_error(e).get("errorId") != 25713:
+                raise
+            logger.info("No existing offer found for sku=%s", sku)
             existing = None
 
         if not existing:
