@@ -1,62 +1,113 @@
-import json
+"""Shared plumbing for the eBay REST sub-clients.
+
+``build_session`` reads the app settings, constructs the ``ebay_rest`` SDK
+object, and hands back the :class:`EbaySession` every sub-client shares. The
+SDK object is wrapped in :class:`RestApi` so that every failure surfaces as
+:class:`~.errors.EbayApiError` instead of ``ebay_rest.Error``.
+
+The Trading API client is deliberately *not* part of the session: it needs a
+separate Auth'n'Auth token and most pipelines never touch it, so
+``EbayClient`` builds it lazily on first use.
+"""
+
+from __future__ import annotations
+
+import functools
+import inspect
 import os
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from shoebox.clients.ebay.trading import TradingClient
+from ebay_rest import API
+from ebay_rest import Error as EbayRestError
+
 from shoebox.settings import Settings, get_settings
 
+from .errors import EbayApiError
 
-class EbayClientError(RuntimeError):
-    pass
+
+def rest_config_file(settings: Settings | None = None) -> Path:
+    """Path to ``ebay_rest.json``: ``EBAY_REST_CONFIG_PATH`` if set, else ``ebay.path``."""
+    settings = settings or get_settings()
+    env_override = os.getenv("EBAY_REST_CONFIG_PATH")
+    if env_override:
+        return Path(env_override)
+    return Path(settings.ebay.path) / "ebay_rest.json"
+
+
+class RestApi:
+    """``ebay_rest.API`` with its errors translated to :class:`EbayApiError`.
+
+    Attribute access is forwarded to the SDK object. Callables are wrapped so an
+    ``ebay_rest.Error`` raised on the call, or while iterating one of the SDK's
+    paginating generators, comes back as ``EbayApiError``. Non-callables pass
+    straight through, so the private-attribute escape hatches used by
+    ``StoresClient._invoke`` and ``BrowseClient.aspect_refinements`` keep
+    working (their calls get translated too).
+    """
+
+    def __init__(self, api: Any):
+        self._api = api
+
+    def __getattr__(self, name: str) -> Any:
+        attr = getattr(self._api, name)
+        if not callable(attr):
+            return attr
+
+        @functools.wraps(attr)
+        def call(*args: Any, **kwargs: Any) -> Any:
+            try:
+                result = attr(*args, **kwargs)
+            except EbayRestError as e:
+                raise EbayApiError.from_rest_error(e) from e
+            if inspect.isgenerator(result):
+                return _translate_generator(result)
+            return result
+
+        return call
+
+
+def _translate_generator(gen: Iterator[Any]) -> Iterator[Any]:
+    try:
+        yield from gen
+    except EbayRestError as e:
+        raise EbayApiError.from_rest_error(e) from e
+
+
+def unwrap_records(response: Iterable[Any]) -> list[dict[str, Any]]:
+    """Collect the ``record`` entries from an ``ebay_rest`` paginating response.
+
+    The SDK yields data items as ``{"record": ...}`` interleaved with control
+    entries (``{"total": n}``, ``{"warnings": ...}``); only the records are data.
+    """
+    return [x["record"] for x in response if isinstance(x, dict) and "record" in x]
 
 
 @dataclass(frozen=True)
 class EbaySession:
-    api: Any
-    legacy_api: Any
-    Error: Any
+    api: RestApi
     settings: Settings
 
-    def parse_error(self, e: Any) -> dict:
-        try:
-            d = json.loads(e.as_dict().get("detail"))
-            return d.get("errors", [{}])[0]
-        except Exception:
-            return {"raw": str(e)}
 
-
-def build_session(settings: Settings | None = None) -> EbaySession:
+def build_rest_api(settings: Settings | None = None) -> RestApi:
     settings = settings or get_settings()
-
-    config_dir = Path(settings.ebay.path)
-    config_file = config_dir / "ebay_rest.json"
-
-    env_override = os.getenv("EBAY_REST_CONFIG_PATH")
-    if env_override:
-        config_file = Path(env_override)
-
+    config_file = rest_config_file(settings)
     if not config_file.exists():
         raise FileNotFoundError(
             f"Missing ebay_rest config file: {config_file}. "
             "Create one from configs/ebay_rest.example.json (or set EBAY_REST_CONFIG_PATH)."
         )
-
-    try:
-        from ebay_rest import API, Error  # type: ignore
-    except Exception as e:  # pragma: no cover
-        raise EbayClientError(
-            "The 'ebay_rest' package is not installed. "
-            "Install it from https://github.com/matecsaj/ebay_rest (e.g. pip install -e .). "
-            f"Original import error: {e}"
-        ) from e
-
     api = API(
         application=settings.ebay.application,
         user=settings.ebay.user,
         header=settings.ebay.header,
         path=str(config_file.parent),
     )
-    legacy_api = TradingClient()
-    return EbaySession(api=api, legacy_api=legacy_api, Error=Error, settings=settings)
+    return RestApi(api)
+
+
+def build_session(settings: Settings | None = None) -> EbaySession:
+    settings = settings or get_settings()
+    return EbaySession(api=build_rest_api(settings), settings=settings)

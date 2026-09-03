@@ -472,7 +472,7 @@ class TestUpdateRouting:
             sell_inventory_create_or_replace_inventory_item = staticmethod(fake_api_call)
 
         client.inventory = FakeInventory()
-        client.legacy_api = FakeLegacy()
+        client.trading = FakeLegacy()
         client.api = FakeApi()
         client._call_with_retry = lambda fn, *, label, max_tries=3: fn()
         return client, calls

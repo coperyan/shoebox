@@ -1,10 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
-from shoebox.clients.ebay.session import EbaySession
-
-# from .session import EbaySession
-# from ...models.ebay.order import Order
-from shoebox.models.ebay.order import Order
+from ...models.ebay.order import Order
+from .session import EbaySession
 
 
 def _min_date() -> datetime:

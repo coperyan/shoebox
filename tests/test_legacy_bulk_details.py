@@ -152,7 +152,7 @@ class TestPartialSnapshotGuard:
                 return details, failures
 
         class FakeEbay:
-            legacy_api = FakeLegacy()
+            trading = FakeLegacy()
 
         wrote = []
         monkeypatch.setattr(mod, "EbayClient", lambda: FakeEbay())
@@ -183,7 +183,7 @@ class TestPartialSnapshotGuard:
                 raise SystemExit  # stop before the GCS/BigQuery leg
 
         class FakeEbay:
-            legacy_api = FakeLegacy()
+            trading = FakeLegacy()
 
         monkeypatch.setattr(mod, "EbayClient", lambda: FakeEbay())
         monkeypatch.setattr(mod, "GCSClient", lambda: None)

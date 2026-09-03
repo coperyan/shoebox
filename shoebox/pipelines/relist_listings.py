@@ -30,7 +30,7 @@ _RELIST_PROMOTE_RATE = 7
 
 
 def get_active_listings(ebay_api: EbayClient) -> pd.DataFrame:
-    active_listings = ebay_api.legacy_api.get_active_listings()
+    active_listings = ebay_api.trading.get_active_listings()
 
     ## Drop variation & non-SKU listings
     active_listings = [
@@ -154,7 +154,7 @@ def relist_listing(
     logger.info("Starting %s", row["title"])
 
     sku = row["sku"]
-    details = ebay_api.legacy_api.get_item_details(item_id=row["item_id"])
+    details = ebay_api.trading.get_item_details(item_id=row["item_id"])
     specifics = details.get("item_specifics")
     schedule_datetime = row.get("schedule_datetime")
 

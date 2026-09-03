@@ -1,32 +1,22 @@
 import json
 import logging
+import os
 from collections.abc import Callable, Iterable
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from itertools import islice
+from pathlib import Path
 from typing import Any
 
 import requests
 import xmltodict
 from requests.adapters import HTTPAdapter
 
+from .errors import TRADING_QUOTA_ERROR_CODE, TradingQuotaExceeded
+
 logger = logging.getLogger(__name__)
 
 # Default namespace used by eBay Trading API responses/requests
 EBAY_NS = "urn:ebay:apis:eBLBaseComponents"
-
-# Trading error code for "application has exceeded usage limit on this call".
-# The limit is a daily call allowance, so once it trips, every later call in
-# the same sweep is doomed -- worth recognizing rather than retrying into.
-_QUOTA_ERROR_CODE = "518"
-
-
-class TradingQuotaExceeded(RuntimeError):
-    """eBay's daily call allowance for this Trading call is used up.
-
-    Distinct from an ordinary failure because waiting is the only remedy: no
-    amount of retrying, backing off, or reducing concurrency helps until the
-    allowance resets.
-    """
 
 
 def _xml_escape(value: str) -> str:
@@ -107,13 +97,19 @@ def _money_to_parts(m: Any) -> tuple[str | None, str | None]:
 
 class TradingClient:
     """
-    Lightweight eBay Trading API client for a few legacy workflows.
+    Lightweight eBay Trading API (XML) client.
 
-    Uses xmltodict for response parsing so downstream code works with dictionaries,
-    not ElementTree nodes.
+    Covers the seller workflows that have no Sell REST equivalent: listing
+    sweeps with item specifics (GetItem), active/scheduled lists
+    (GetMyeBaySelling), ending listings (EndItem), and revising listings that
+    were not created through the Inventory API (ReviseFixedPriceItem).
+
+    Authenticates with an Auth'n'Auth user token read from ``token_path``
+    (``{"token": "..."}``). Uses xmltodict for response parsing so downstream
+    code works with dictionaries, not ElementTree nodes.
     """
 
-    auth_path = "configs/ebay_legacy.json"
+    DEFAULT_TOKEN_PATH = "configs/ebay_legacy.json"
     trading_endpoint = "https://api.ebay.com/ws/api.dll"
 
     # Connections held open for reuse. Sized for the widest concurrent fan-out
@@ -121,7 +117,8 @@ class TradingClient:
     # count silently discards connections and gives the handshake back.
     pool_size = 32
 
-    def __init__(self) -> None:
+    def __init__(self, token_path: str | os.PathLike[str] | None = None) -> None:
+        self.token_path = Path(token_path or self.DEFAULT_TOKEN_PATH)
         self.token: str | None = None
         self._authenticate()
         self._session = self._build_session()
@@ -147,11 +144,16 @@ class TradingClient:
         return session
 
     def _authenticate(self) -> None:
-        with open(self.auth_path) as f:
-            d = json.load(f)
+        try:
+            d = json.loads(self.token_path.read_text())
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Missing Trading API token file: {self.token_path}. Create it from "
+                "configs/ebay_legacy.example.json, or point ebay.trading_token_path at it."
+            ) from None
         self.token = d.get("token")
         if not self.token:
-            raise RuntimeError(f"Missing 'token' in {self.auth_path}")
+            raise RuntimeError(f"Missing 'token' in {self.token_path}")
 
     def _trading_call(
         self,
@@ -208,7 +210,7 @@ class TradingClient:
                         or _dig(err, ["ShortMessage"], ""),
                     }
                 )
-            if any(str(e.get("code")) == _QUOTA_ERROR_CODE for e in errs_out):
+            if any(str(e.get("code")) == TRADING_QUOTA_ERROR_CODE for e in errs_out):
                 raise TradingQuotaExceeded(
                     f"eBay daily call allowance exhausted for {call_name}; "
                     "it resets at midnight Pacific."

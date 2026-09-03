@@ -32,7 +32,7 @@ def sync_active_listing_details(*, max_workers: int = _DEFAULT_WORKERS):
 
     notify_best_effort(settings.slack.notify_channel, "Starting sync_active_listing_details..")
 
-    active_listings = ebay_api.legacy_api.get_active_listings()
+    active_listings = ebay_api.trading.get_active_listings()
 
     now = datetime.now(UTC)
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -51,7 +51,7 @@ def sync_active_listing_details(*, max_workers: int = _DEFAULT_WORKERS):
 
     started = time.monotonic()
     try:
-        details, failures = ebay_api.legacy_api.get_item_details_bulk(
+        details, failures = ebay_api.trading.get_item_details_bulk(
             item_ids,
             max_workers=max_workers,
             on_progress=log_progress,

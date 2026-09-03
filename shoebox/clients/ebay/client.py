@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 import time
 from collections.abc import Callable
@@ -13,12 +14,19 @@ from shoebox.transforms.listing_builder import (
 
 from .analytics import AnalyticsClient
 from .browse import BrowseClient
+from .errors import (
+    INVENTORY_TRANSIENT_ERROR,
+    OFFER_NOT_FOUND_ERROR,
+    EbayApiError,
+    EbayClientError,
+)
 from .fulfillment import FulfillmentClient
 from .inventory import InventoryClient
 from .marketing import MarketingClient
 from .negotiation import NegotiationClient
-from .session import EbayClientError, EbaySession, build_session
+from .session import EbaySession, build_session
 from .stores import StoresClient
+from .trading import TradingClient
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +40,6 @@ class EbayClient:
     def __init__(self, settings: Settings | None = None):
         self.session: EbaySession = build_session(settings)
         self.api = self.session.api
-        self.legacy_api = self.session.legacy_api
 
         self.analytics = AnalyticsClient(self.session)
         self.browse = BrowseClient(self.session)
@@ -41,6 +48,15 @@ class EbayClient:
         self.marketing = MarketingClient(self.session)
         self.negotiation = NegotiationClient(self.session)
         self.stores = StoresClient(self.session)
+
+    @functools.cached_property
+    def trading(self) -> TradingClient:
+        """Trading API (XML) client, built on first use.
+
+        Lazy because it needs its own Auth'n'Auth token file and most
+        pipelines are REST-only; they should not fail for want of it.
+        """
+        return TradingClient(token_path=self.session.settings.ebay.trading_token_path)
 
     def _call_with_retry(
         self,
@@ -59,9 +75,8 @@ class EbayClient:
         for attempt in range(1, max_tries + 1):
             try:
                 return fn()
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if error_details.get("errorId") == 25001 and attempt < max_tries:
+            except EbayApiError as e:
+                if e.error_id == INVENTORY_TRANSIENT_ERROR and attempt < max_tries:
                     wait = attempt * 5
                     logger.warning(
                         "eBay transient 500 (25001) on %s (attempt %d/%d), retrying in %ds...",
@@ -115,10 +130,10 @@ class EbayClient:
 
         try:
             existing = self._search_existing_offers(sku)
-        except self.session.Error as e:
+        except EbayApiError as e:
             # getOffers returns 404 errorId 25713 ("This Offer is not available")
             # when the SKU has no offer yet -- the normal case for a new listing.
-            if self.session.parse_error(e).get("errorId") != 25713:
+            if e.error_id != OFFER_NOT_FOUND_ERROR:
                 raise
             logger.info("No existing offer found for sku=%s", sku)
             existing = None
@@ -278,7 +293,7 @@ class EbayClient:
             raise ValueError("update_listing_title needs a sku or an item_id")
 
         if not sku:
-            self.legacy_api.revise_listing_title(item_id, new_title)
+            self.trading.revise_listing_title(item_id, new_title)
             logger.info("Retitled item_id=%s via Trading: %r", item_id, new_title)
             return {"item_id": item_id, "title": new_title, "method": "trading", "skipped": False}
 
@@ -307,7 +322,7 @@ class EbayClient:
                 sku,
                 inventory_error,
             )
-            self.legacy_api.revise_listing_title(item_id, new_title)
+            self.trading.revise_listing_title(item_id, new_title)
             logger.info("Retitled item_id=%s via Trading fallback: %r", item_id, new_title)
             return {
                 "sku": sku,
@@ -356,7 +371,7 @@ class EbayClient:
         if not sku:
             if not category_ids:
                 raise ValueError(f"item_id={item_id} has no SKU, so Trading needs category_ids")
-            self.legacy_api.revise_store_category(
+            self.trading.revise_store_category(
                 item_id, category_ids[0], category_ids[1] if len(category_ids) > 1 else None
             )
             logger.info("Recategorized item_id=%s via Trading: %s", item_id, categories)
@@ -474,7 +489,7 @@ class EbayClient:
         for idx, (sku, offer_payload) in enumerate(sku_offer_map.items(), 1):
             try:
                 existing = self._search_existing_offers(sku)
-            except self.session.Error as e:
+            except EbayApiError as e:
                 logger.debug("No existing offer for sku=%s (%s)", sku, e)
                 existing = None
 

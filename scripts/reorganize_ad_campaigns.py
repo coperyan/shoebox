@@ -161,7 +161,7 @@ def fetch_active_listings(client: EbayClient) -> list[dict[str, Any]]:
     loads into BigQuery against a fixed schema, so the raw nodes are read here
     instead and the shared client is left alone.
     """
-    legacy = client.legacy_api
+    legacy = client.trading
     items: list[dict[str, Any]] = []
     page = 1
 

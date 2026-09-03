@@ -78,7 +78,6 @@ class FakeApi:
 class FakeSession:
     def __init__(self, api: FakeApi):
         self.api = api
-        self.Error = Exception
 
 
 def build_client(responses=None):

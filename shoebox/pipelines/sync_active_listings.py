@@ -22,7 +22,7 @@ def sync_active_listings():
     logger.info("Starting sync_active_listings..")
     notify(settings.slack.notify_channel, "Starting sync_active_listings..")
 
-    active_listings = ebay_api.legacy_api.get_active_listings()
+    active_listings = ebay_api.trading.get_active_listings()
 
     now = datetime.now(UTC)
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")

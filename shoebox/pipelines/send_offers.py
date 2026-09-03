@@ -129,9 +129,7 @@ def main(
     ebay = ebay or EbayClient()
 
     eligible = ebay.negotiation.find_eligible_items()
-    details = [
-        ebay.legacy_api.get_item_details(item_id=listing["listing_id"]) for listing in eligible
-    ]
+    details = [ebay.trading.get_item_details(item_id=listing["listing_id"]) for listing in eligible]
     logger.info("%d eligible listing(s)", len(details))
     if not details:
         return

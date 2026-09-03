@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sys
 from datetime import datetime
@@ -48,13 +47,9 @@ REQUIRED_SCOPE_HINT = "https://api.ebay.com/oauth/api_scope/sell.stores"
 
 def config_path() -> Path:
     """Resolve ebay_rest.json the same way the app does."""
-    override = os.getenv("EBAY_REST_CONFIG_PATH")
-    if override:
-        return Path(override)
+    from shoebox.clients.ebay.session import rest_config_file
 
-    from shoebox.settings import get_settings
-
-    return Path(get_settings().ebay.path) / "ebay_rest.json"
+    return rest_config_file()
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -150,7 +145,7 @@ def _stores_client(api: Any):
     """Wrap a raw ebay_rest API in StoresClient without a full EbaySession."""
     from shoebox.clients.ebay.stores import StoresClient
 
-    session_shim = type("SessionShim", (), {"api": api, "Error": Exception})()
+    session_shim = type("SessionShim", (), {"api": api})()
     return StoresClient(session_shim)
 
 
