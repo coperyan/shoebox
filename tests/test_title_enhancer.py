@@ -365,7 +365,7 @@ class TestApplyPath:
             def __init__(self):
                 self.calls = []
 
-            def update_listing_title(self, *, new_title, sku=None, item_id=None):
+            def update_title(self, *, new_title, sku=None, item_id=None):
                 self.calls.append((sku, item_id, new_title))
                 if sku == "BAD":
                     raise RuntimeError("eBay said no")
@@ -379,7 +379,7 @@ class TestApplyPath:
             ]
         )
         fake = FakeEbay()
-        applied = apply_title_changes(changes, ebay_api=fake)
+        applied = apply_title_changes(changes, listings=fake)
 
         assert [sku for sku, _, _ in fake.calls] == ["GOOD", "BAD"]
         assert applied.set_index("sku")["status"].to_dict() == {
@@ -394,7 +394,7 @@ class TestApplyPath:
             def __init__(self):
                 self.calls = []
 
-            def update_listing_title(self, *, new_title, sku=None, item_id=None):
+            def update_title(self, *, new_title, sku=None, item_id=None):
                 self.calls.append((sku, item_id))
                 return {"method": "trading"}
 
@@ -402,7 +402,7 @@ class TestApplyPath:
             [{"sku": "", "item_id": "318590003811", "new_title": "T", "changed": True}]
         )
         fake = FakeEbay()
-        applied = apply_title_changes(changes, ebay_api=fake)
+        applied = apply_title_changes(changes, listings=fake)
 
         assert fake.calls == [(None, "318590003811")]
         assert applied.loc[0, "applied_method"] == "trading"
@@ -411,14 +411,14 @@ class TestApplyPath:
         from shoebox.pipelines.enhance_listing_titles import apply_title_changes
 
         class FakeEbay:
-            def update_listing_title(self, *, new_title, sku=None, item_id=None):
+            def update_title(self, *, new_title, sku=None, item_id=None):
                 return {"method": "trading"}
 
         # Blank SKUs are not a join key -- merging on them multiplies the rows.
         changes = pd.DataFrame(
             [{"sku": "", "item_id": str(i), "new_title": "T", "changed": True} for i in range(20)]
         )
-        applied = apply_title_changes(changes, ebay_api=FakeEbay())
+        applied = apply_title_changes(changes, listings=FakeEbay())
         assert len(applied) == 20
 
     def test_limit_caps_the_number_of_updates(self):
@@ -428,7 +428,7 @@ class TestApplyPath:
             def __init__(self):
                 self.calls = []
 
-            def update_listing_title(self, *, new_title, sku=None, item_id=None):
+            def update_title(self, *, new_title, sku=None, item_id=None):
                 self.calls.append(sku)
 
         changes = pd.DataFrame(
@@ -438,18 +438,17 @@ class TestApplyPath:
             ]
         )
         fake = FakeEbay()
-        apply_title_changes(changes, ebay_api=fake, limit=2)
+        apply_title_changes(changes, listings=fake, limit=2)
         assert fake.calls == ["S0", "S1"]
 
 
 class TestUpdateRouting:
-    """EbayClient.update_listing_title picks its API by what identifies the listing."""
+    """ListingService.update_title picks its API by what identifies the listing."""
 
     def _client(self, *, inventory_raises=None):
-        from shoebox.clients.ebay.client import EbayClient
         from shoebox.models.ebay.inventory_item import InventoryItem
+        from shoebox.services.listings import ListingService
 
-        client = EbayClient.__new__(EbayClient)  # no network, no credentials
         calls = {"inventory": [], "trading": []}
 
         class FakeInventory:
@@ -468,27 +467,30 @@ class TestUpdateRouting:
                 calls["trading"].append((item_id, title))
                 return {"ack": "Success"}
 
-        client.inventory = FakeInventory()
-        client.trading = FakeLegacy()
+        class FakeEbay:
+            inventory = FakeInventory()
+            trading = FakeLegacy()
+
+        client = ListingService(FakeEbay())
         return client, calls
 
     def test_sku_goes_through_the_inventory_api(self):
         client, calls = self._client()
-        out = client.update_listing_title(sku="SKU1", item_id="1", new_title="New title")
+        out = client.update_title(sku="SKU1", item_id="1", new_title="New title")
         assert calls["inventory"] == [("SKU1", "New title")]
         assert calls["trading"] == []
         assert out["method"] == "inventory"
 
     def test_no_sku_goes_through_trading(self):
         client, calls = self._client()
-        out = client.update_listing_title(item_id="318590003811", new_title="New title")
+        out = client.update_title(item_id="318590003811", new_title="New title")
         assert calls["inventory"] == []
         assert calls["trading"] == [("318590003811", "New title")]
         assert out["method"] == "trading"
 
     def test_inventory_failure_falls_back_to_trading(self):
         client, calls = self._client(inventory_raises=RuntimeError("errorId 25020"))
-        out = client.update_listing_title(sku="SKU1", item_id="99", new_title="New title")
+        out = client.update_title(sku="SKU1", item_id="99", new_title="New title")
         assert calls["trading"] == [("99", "New title")]
         assert out["method"] == "trading_fallback"
 
@@ -497,14 +499,14 @@ class TestUpdateRouting:
 
         client, _ = self._client(inventory_raises=RuntimeError("boom"))
         with pytest.raises(RuntimeError):
-            client.update_listing_title(sku="SKU1", new_title="New title")
+            client.update_title(sku="SKU1", new_title="New title")
 
     def test_neither_identifier_is_an_error(self):
         import pytest
 
         client, _ = self._client()
         with pytest.raises(ValueError):
-            client.update_listing_title(new_title="New title")
+            client.update_title(new_title="New title")
 
 
 class TestBigQuerySource:

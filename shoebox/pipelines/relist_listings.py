@@ -9,6 +9,7 @@ from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.ebay.errors import EbayClientError
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
+from shoebox.services.listings import ListingService
 from shoebox.settings import get_settings
 from shoebox.transforms.listing_builder import rebuild_inventory_item_body, rebuild_offer_body
 from shoebox.utils.pricing import calculate_new_price, parse_price_reply, round_up_to_nine
@@ -241,7 +242,7 @@ def relist_listing(
         raise EbayClientError(f"No offer found for sku={sku}; nothing to relist")
     offer_body = rebuild_offer_body(offer.raw, new_price, schedule_datetime)
 
-    ebay_api.refresh_listing_flow(
+    ListingService(ebay_api).relist_listing(
         sku=sku,
         inventory_item_body=inventory_item_body,
         offer_body=offer_body,

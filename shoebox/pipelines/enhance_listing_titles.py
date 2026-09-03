@@ -27,6 +27,7 @@ import pandas as pd
 
 from shoebox.clients.bigquery import BigQueryClient
 from shoebox.clients.ebay.client import EbayClient
+from shoebox.services.listings import ListingService
 from shoebox.settings import get_settings
 from shoebox.transforms.title_enhancer import (
     MAX_TITLE_LENGTH,
@@ -222,7 +223,7 @@ def _log_summary(changes: pd.DataFrame) -> None:
 def apply_title_changes(
     changes: pd.DataFrame,
     *,
-    ebay_api: EbayClient | None = None,
+    listings: ListingService | None = None,
     limit: int | None = None,
 ) -> pd.DataFrame:
     """Push the changed titles to eBay, one listing at a time.
@@ -230,7 +231,7 @@ def apply_title_changes(
     A failure on one listing is recorded and the run continues -- a bad SKU
     partway through a 1,000-listing sweep shouldn't strand the rest.
     """
-    ebay_api = ebay_api or EbayClient()
+    listings = listings or ListingService(EbayClient())
     targets = changes[changes["changed"]].copy()
     if limit is not None:
         targets = targets.head(limit)
@@ -243,7 +244,7 @@ def apply_title_changes(
         sku = _clean_str(row.get("sku"))
         item_id = _clean_str(row.get("item_id"))
         try:
-            outcome = ebay_api.update_listing_title(
+            outcome = listings.update_title(
                 new_title=row["new_title"],
                 sku=sku or None,
                 item_id=item_id or None,

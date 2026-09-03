@@ -34,6 +34,7 @@ import pandas as pd
 from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.ebay.stores import flatten_store_categories
 from shoebox.pipelines.plan_store_categories import WORKING_REPORT
+from shoebox.services.listings import ListingService
 from shoebox.settings import get_settings
 from shoebox.transforms.store_category_builder import HITS_PARENT
 from shoebox.utils.logging_setup import setup_logging
@@ -144,6 +145,7 @@ def apply_assignments(
         targets = targets.head(limit)
 
     ids = category_ids(ebay_api)
+    listings = ListingService(ebay_api)
     statuses: list[str] = []
     errors: list[str] = []
     finals: list[str] = []
@@ -168,7 +170,7 @@ def apply_assignments(
                 missing = [c for c, r in zip(categories, resolved, strict=True) if r is None]
                 raise ValueError(f"store category not found: {', '.join(missing)}")
 
-            outcome = ebay_api.update_listing_store_categories(
+            outcome = listings.update_store_categories(
                 categories=categories,
                 category_ids=[r for r in resolved if r],
                 sku=sku or None,

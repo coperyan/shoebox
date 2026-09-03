@@ -9,6 +9,7 @@ import openpyxl
 from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.image_log import ImageLogClient
 from shoebox.models.ebay_listing import EbayListingResult
+from shoebox.services.listings import ListingService
 from shoebox.settings import ensure_runtime_dirs, get_settings
 from shoebox.transforms.listing_builder import sport as get_sport
 from shoebox.transforms.variation_listing_builder import (
@@ -166,7 +167,7 @@ def run_variation_listing(
     """
     settings = get_settings()
 
-    ebay = EbayClient(settings=settings)
+    listings = ListingService(EbayClient(settings=settings))
     img_client = ImageLogClient(settings=settings) if (images_dir or default_image_path) else None
     results_path = Path(settings.paths.exports_dir) / "jsonl" / "ebay_listings.jsonl"
 
@@ -290,7 +291,7 @@ def run_variation_listing(
                 publish,
                 len(rows),
             )
-            resp = ebay.create_variation_listing_flow(
+            resp = listings.create_variation_listing(
                 group_key=group_key,
                 sku_item_map=sku_item_map,
                 sku_offer_map=sku_offer_map,
