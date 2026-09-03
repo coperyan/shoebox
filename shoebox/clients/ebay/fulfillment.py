@@ -1,6 +1,6 @@
 from datetime import UTC, datetime, timedelta
 
-from shoebox.clients.ebay_rest.session import EbaySession
+from shoebox.clients.ebay.session import EbaySession
 
 # from .session import EbaySession
 # from ...models.ebay.order import Order

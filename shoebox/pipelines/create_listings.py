@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from shoebox.clients.bigquery import BigQueryClient
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.image_log import ImageLogClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper

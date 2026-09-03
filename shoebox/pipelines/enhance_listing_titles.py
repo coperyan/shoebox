@@ -26,7 +26,7 @@ from pathlib import Path
 import pandas as pd
 
 from shoebox.clients.bigquery import BigQueryClient
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.settings import get_settings
 from shoebox.transforms.title_enhancer import (
     MAX_TITLE_LENGTH,

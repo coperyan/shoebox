@@ -6,7 +6,7 @@ from pathlib import Path
 
 import openpyxl
 
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.image_log import ImageLogClient
 from shoebox.models.ebay_listing import EbayListingResult
 from shoebox.settings import ensure_runtime_dirs, get_settings

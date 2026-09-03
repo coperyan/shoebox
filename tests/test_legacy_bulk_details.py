@@ -6,13 +6,13 @@ import threading
 
 import pytest
 
-from shoebox.clients.ebay_legacy import eBayLegacyClient
+from shoebox.clients.ebay.trading import TradingClient
 
 
-def _client(monkeypatch) -> eBayLegacyClient:
+def _client(monkeypatch) -> TradingClient:
     """A client with no credentials read and no network wired up."""
-    monkeypatch.setattr(eBayLegacyClient, "_authenticate", lambda self: None)
-    client = eBayLegacyClient()
+    monkeypatch.setattr(TradingClient, "_authenticate", lambda self: None)
+    client = TradingClient()
     client.token = "test-token"
     return client
 
@@ -23,7 +23,7 @@ class TestSession:
         assert client._session is not None
 
         adapter = client._session.get_adapter("https://api.ebay.com/ws/api.dll")
-        assert adapter._pool_maxsize >= eBayLegacyClient.pool_size
+        assert adapter._pool_maxsize >= TradingClient.pool_size
 
     def test_trading_calls_go_through_the_session(self, monkeypatch):
         client = _client(monkeypatch)
@@ -54,7 +54,7 @@ class TestGetItemDetailsBulk:
     def test_results_keep_the_requested_order(self, monkeypatch):
         client = _client(monkeypatch)
         monkeypatch.setattr(
-            eBayLegacyClient,
+            TradingClient,
             "get_item_details",
             lambda self, item_id, **kw: {"item_id": item_id},
         )
@@ -73,7 +73,7 @@ class TestGetItemDetailsBulk:
                 raise RuntimeError("GetItem exploded")
             return {"item_id": item_id}
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", flaky)
+        monkeypatch.setattr(TradingClient, "get_item_details", flaky)
         details, failures = client.get_item_details_bulk(["1", "2", "3"], max_workers=4)
 
         assert [d["item_id"] for d in details] == ["1", "3"]
@@ -88,7 +88,7 @@ class TestGetItemDetailsBulk:
             barrier.wait()
             return {"item_id": item_id}
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", blocking)
+        monkeypatch.setattr(TradingClient, "get_item_details", blocking)
         details, failures = client.get_item_details_bulk(["1", "2", "3", "4"], max_workers=4)
         assert len(details) == 4
 
@@ -109,14 +109,14 @@ class TestGetItemDetailsBulk:
                 with lock:
                     live -= 1
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", counting)
+        monkeypatch.setattr(TradingClient, "get_item_details", counting)
         client.get_item_details_bulk([str(i) for i in range(80)], max_workers=1000)
-        assert peak <= eBayLegacyClient.pool_size
+        assert peak <= TradingClient.pool_size
 
     def test_progress_is_reported(self, monkeypatch):
         client = _client(monkeypatch)
         monkeypatch.setattr(
-            eBayLegacyClient, "get_item_details", lambda self, item_id, **kw: {"item_id": item_id}
+            TradingClient, "get_item_details", lambda self, item_id, **kw: {"item_id": item_id}
         )
         seen = []
         client.get_item_details_bulk(
@@ -131,7 +131,7 @@ class TestGetItemDetailsBulk:
         def explode(self, item_id, **kw):
             raise AssertionError("should not be called")
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", explode)
+        monkeypatch.setattr(TradingClient, "get_item_details", explode)
         assert client.get_item_details_bulk([]) == ([], {})
 
 
@@ -199,7 +199,7 @@ class TestQuotaExhaustion:
     """Error 518 is a daily allowance, so the only sane response is to stop."""
 
     def test_quota_error_is_raised_as_its_own_type(self, monkeypatch):
-        from shoebox.clients.ebay_legacy import TradingQuotaExceeded
+        from shoebox.clients.ebay.trading import TradingQuotaExceeded
 
         client = _client(monkeypatch)
 
@@ -219,7 +219,7 @@ class TestQuotaExhaustion:
             )
 
     def test_other_failures_stay_ordinary_errors(self, monkeypatch):
-        from shoebox.clients.ebay_legacy import TradingQuotaExceeded
+        from shoebox.clients.ebay.trading import TradingQuotaExceeded
 
         client = _client(monkeypatch)
 
@@ -239,7 +239,7 @@ class TestQuotaExhaustion:
         assert not isinstance(excinfo.value, TradingQuotaExceeded)
 
     def test_the_sweep_stops_instead_of_hammering_the_wall(self, monkeypatch):
-        from shoebox.clients.ebay_legacy import TradingQuotaExceeded
+        from shoebox.clients.ebay.trading import TradingQuotaExceeded
 
         client = _client(monkeypatch)
         attempted = []
@@ -250,7 +250,7 @@ class TestQuotaExhaustion:
                 raise TradingQuotaExceeded("allowance gone")
             return {"item_id": item_id}
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", quota_after_10)
+        monkeypatch.setattr(TradingClient, "get_item_details", quota_after_10)
 
         with pytest.raises(TradingQuotaExceeded, match="Fetched"):
             client.get_item_details_bulk([str(i) for i in range(500)], max_workers=4)

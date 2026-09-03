@@ -138,19 +138,19 @@ class TestOfferBody:
 
 class TestClientGuards:
     def test_categories_are_required(self):
-        from shoebox.clients.ebay_rest.client import EbayClient
+        from shoebox.clients.ebay.client import EbayClient
 
         with pytest.raises(ValueError, match="categories must not be empty"):
             EbayClient.update_listing_store_categories(object(), categories=[], sku="A")
 
     def test_a_sku_or_item_id_is_required(self):
-        from shoebox.clients.ebay_rest.client import EbayClient
+        from shoebox.clients.ebay.client import EbayClient
 
         with pytest.raises(ValueError, match="needs a sku or an item_id"):
             EbayClient.update_listing_store_categories(object(), categories=["/x"])
 
     def test_trading_route_needs_resolved_ids(self):
-        from shoebox.clients.ebay_rest.client import EbayClient
+        from shoebox.clients.ebay.client import EbayClient
 
         with pytest.raises(ValueError, match="Trading needs category_ids"):
             EbayClient.update_listing_store_categories(object(), categories=["/x"], item_id="1")

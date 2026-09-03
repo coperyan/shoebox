@@ -1,4 +1,4 @@
-from shoebox.clients.ebay_rest.session import EbaySession
+from shoebox.clients.ebay.session import EbaySession
 from shoebox.models.ebay.negotiation_offer import NegotiationOffer
 
 

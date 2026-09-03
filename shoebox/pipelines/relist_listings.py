@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import requests
 
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
 from shoebox.settings import get_settings

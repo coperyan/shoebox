@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.models.ebay.negotiation_offer import NegotiationOffer
 from shoebox.settings import get_settings
 from shoebox.utils.pricing import calculate_new_price, parse_price_reply

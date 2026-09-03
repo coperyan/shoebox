@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from rich.console import Console
 
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.settings import get_settings
 from shoebox.utils.render_table import render_table
 from shoebox.utils.slack import notify

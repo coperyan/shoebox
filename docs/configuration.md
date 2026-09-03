@@ -262,7 +262,7 @@ which key rejected each listing — use
   `ebay_rest` library (applications/users/headers/key_pairs). See the
   instructions embedded in the template.
 - **`configs/ebay_legacy.json`** — `{"token": "<Trading API auth token>"}`,
-  read by `clients/ebay_legacy.py` (path relative to the current working
+  read by `clients/ebay/trading.py` (path relative to the current working
   directory, so run from the repo root).
 - **`configs/gcp.json`** — standard service-account key referenced by
   `gcp.service_account_json`.

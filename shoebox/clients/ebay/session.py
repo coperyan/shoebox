@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from shoebox.clients.ebay_legacy import eBayLegacyClient
+from shoebox.clients.ebay.trading import TradingClient
 from shoebox.settings import Settings, get_settings
 
 
@@ -58,5 +58,5 @@ def build_session(settings: Settings | None = None) -> EbaySession:
         header=settings.ebay.header,
         path=str(config_file.parent),
     )
-    legacy_api = eBayLegacyClient()
+    legacy_api = TradingClient()
     return EbaySession(api=api, legacy_api=legacy_api, Error=Error, settings=settings)

@@ -446,7 +446,7 @@ class TestUpdateRouting:
     """EbayClient.update_listing_title picks its API by what identifies the listing."""
 
     def _client(self, *, inventory_raises=None):
-        from shoebox.clients.ebay_rest.client import EbayClient
+        from shoebox.clients.ebay.client import EbayClient
         from shoebox.models.ebay.inventory_item import InventoryItem
 
         client = EbayClient.__new__(EbayClient)  # no network, no credentials

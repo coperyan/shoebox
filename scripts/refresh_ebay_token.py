@@ -148,7 +148,7 @@ def diagnose(api: Any) -> None:
 
 def _stores_client(api: Any):
     """Wrap a raw ebay_rest API in StoresClient without a full EbaySession."""
-    from shoebox.clients.ebay_rest.stores import StoresClient
+    from shoebox.clients.ebay.stores import StoresClient
 
     session_shim = type("SessionShim", (), {"api": api, "Error": Exception})()
     return StoresClient(session_shim)

@@ -39,8 +39,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from shoebox.clients.ebay_legacy import EBAY_NS, _dig, _ensure_list
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
+from shoebox.clients.ebay.trading import EBAY_NS, _dig, _ensure_list
 from shoebox.settings import get_settings
 from shoebox.utils.logging_setup import setup_logging
 
@@ -154,7 +154,7 @@ def _age_days(item: dict[str, Any], *, now: datetime) -> tuple[float, str] | Non
 def fetch_active_listings(client: EbayClient) -> list[dict[str, Any]]:
     """Page the seller's active listings, keeping the raw Trading item nodes.
 
-    ``eBayLegacyClient.get_active_listings`` is not reusable here: it flattens
+    ``TradingClient.get_active_listings`` is not reusable here: it flattens
     each item down to a fixed set of fields and drops ListingType, Variations,
     and the natural-search URL -- exactly the three this script filters on.
     Widening that method would change the dict shape that ``sync_active_listings``

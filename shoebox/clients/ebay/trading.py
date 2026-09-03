@@ -105,7 +105,7 @@ def _money_to_parts(m: Any) -> tuple[str | None, str | None]:
     return None, None
 
 
-class eBayLegacyClient:
+class TradingClient:
     """
     Lightweight eBay Trading API client for a few legacy workflows.
 
@@ -905,44 +905,3 @@ class eBayLegacyClient:
             "sku": sku,
             "fees": fees,
         }
-
-
-# test = eBayLegacyClient()
-
-# body = f"""<?xml version="1.0" encoding="utf-8"?>
-#         <GetItemRequest xmlns="{EBAY_NS}">
-#         <RequesterCredentials>
-#             <eBayAuthToken>{test.token}</eBayAuthToken>
-#         </RequesterCredentials>
-#         <ItemID>317247766017</ItemID>
-#         <DetailLevel>ReturnAll</DetailLevel>
-#         <IncludeItemSpecifics>true</IncludeItemSpecifics>
-#         </GetItemRequest>"""
-
-# payload = test._trading_call(
-#     call_name="GetItem",
-#     body=body,
-#     site_id="0",
-#     compatibility_level="1259",
-# )
-
-# item = payload.get("Item")
-# if not isinstance(item, dict):
-#     raise RuntimeError("GetItem response missing Item node")
-
-# price_node = _dig(item, ["SellingStatus", "CurrentPrice"], None)
-# price, currency = _money_to_parts(price_node)
-
-# # Parse specifics: ItemSpecifics.NameValueList -> dict[str, list[str]]
-# specifics: Dict[str, List[str]] = {}
-# for nvl in _ensure_list(_dig(item, ["ItemSpecifics", "NameValueList"], None)):
-#     if not isinstance(nvl, dict):
-#         continue
-#     name = (nvl.get("Name") or "").strip()
-#     values = [
-#         v.strip()
-#         for v in _ensure_list(nvl.get("Value"))
-#         if isinstance(v, str) and v.strip()
-#     ]
-#     if name:
-#         specifics[name] = values

@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from shoebox.clients.ebay_rest.marketing import (
+from shoebox.clients.ebay.marketing import (
     AD_ALREADY_EXISTS_ERROR,
     LISTING_NOT_VISIBLE_ERROR,
     MarketingClient,
@@ -131,7 +131,7 @@ def test_promote_swallows_ad_already_exists():
 
 
 def test_promote_retries_then_gives_up_without_raising(monkeypatch):
-    monkeypatch.setattr("shoebox.clients.ebay_rest.marketing.time.sleep", lambda _: None)
+    monkeypatch.setattr("shoebox.clients.ebay.marketing.time.sleep", lambda _: None)
     client, api = build_client({"sell_marketing_create_ad_by_listing_id": FakeError(500)})
 
     client.promote_by_inventory_reference(sku="ABC", rate=10, max_tries=3)
@@ -174,7 +174,7 @@ def test_volume_discount_builds_sorted_rules_with_base_tier():
 
 
 def test_volume_discount_retries_when_listing_not_visible(monkeypatch):
-    monkeypatch.setattr("shoebox.clients.ebay_rest.marketing.time.sleep", lambda _: None)
+    monkeypatch.setattr("shoebox.clients.ebay.marketing.time.sleep", lambda _: None)
     client, api = build_client(
         {
             "sell_marketing_create_item_promotion": [
