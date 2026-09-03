@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 
 from shoebox.clients.ebay.client import EbayClient
+from shoebox.clients.ebay.errors import EbayClientError
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
 from shoebox.settings import get_settings
@@ -232,18 +233,19 @@ def relist_listing(
 
     image_urls = ebay_image_to_gcs(details["picture_urls"], sku, gcs_client, settings)
 
-    inventory_item = ebay_api.api.sell_inventory_get_inventory_item(sku=sku)
-    inventory_item_body = rebuild_inventory_item_body(inventory_item, image_urls)
+    inventory_item = ebay_api.inventory.get_inventory_item(sku)
+    inventory_item_body = rebuild_inventory_item_body(inventory_item.raw, image_urls)
 
-    offers = ebay_api.api.sell_inventory_get_offers(sku=sku)
-    offer = [x["record"] for x in offers if "record" in x][0]
-    offer_body = rebuild_offer_body(offer, new_price, schedule_datetime)
+    offer = ebay_api.inventory.find_offer(sku)
+    if offer is None:
+        raise EbayClientError(f"No offer found for sku={sku}; nothing to relist")
+    offer_body = rebuild_offer_body(offer.raw, new_price, schedule_datetime)
 
     ebay_api.refresh_listing_flow(
         sku=sku,
         inventory_item_body=inventory_item_body,
         offer_body=offer_body,
-        existing_offer_id=offer["offer_id"],
+        existing_offer_id=offer.offer_id,
         existing_ad_id=ad_id,
         campaign_id=campaign_id,
         promote_listing=bool(campaign_id),

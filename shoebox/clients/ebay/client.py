@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import functools
 import logging
-import time
-from collections.abc import Callable
 from typing import Any
 
 from shoebox.settings import Settings
@@ -14,14 +12,9 @@ from shoebox.transforms.listing_builder import (
 
 from .analytics import AnalyticsClient
 from .browse import BrowseClient
-from .errors import (
-    INVENTORY_TRANSIENT_ERROR,
-    OFFER_NOT_FOUND_ERROR,
-    EbayApiError,
-    EbayClientError,
-)
+from .errors import EbayClientError
 from .fulfillment import FulfillmentClient
-from .inventory import InventoryClient
+from .inventory import InventoryClient, listing_id_of, offer_id_of
 from .marketing import MarketingClient
 from .negotiation import NegotiationClient
 from .session import EbaySession, build_session
@@ -58,52 +51,6 @@ class EbayClient:
         """
         return TradingClient(token_path=self.session.settings.ebay.trading_token_path)
 
-    def _call_with_retry(
-        self,
-        fn: Callable[[], Any],
-        *,
-        label: str,
-        max_tries: int = 3,
-    ) -> Any:
-        """
-        Invoke ``fn()``, retrying on eBay's transient errorId 25001
-        ("Core Inventory Service internal error", HTTP 500) with linear backoff
-        (5s, 10s, ...). Any other error, or 25001 on the final attempt, is raised.
-
-        ``label`` identifies the call in log messages (e.g. "publish sku=ABC").
-        """
-        for attempt in range(1, max_tries + 1):
-            try:
-                return fn()
-            except EbayApiError as e:
-                if e.error_id == INVENTORY_TRANSIENT_ERROR and attempt < max_tries:
-                    wait = attempt * 5
-                    logger.warning(
-                        "eBay transient 500 (25001) on %s (attempt %d/%d), retrying in %ds...",
-                        label,
-                        attempt,
-                        max_tries,
-                        wait,
-                    )
-                    time.sleep(wait)
-                else:
-                    raise
-
-    def _search_existing_offers(self, sku: str) -> dict[str, Any] | None:
-        resp = self.api.sell_inventory_get_offers(sku=sku)
-        offers = [x for x in resp if "record" in x]
-        if len(offers) > 1:
-            raise EbayClientError("More than one offer found for SKU.")
-        if len(offers) == 0:
-            return None
-
-        record = offers[0].get("record") or {}
-        listing = record.get("listing") or {}
-        return {
-            "offer_id": record.get("offer_id"),
-            "listing_status": listing.get("listing_status") or "NOT_LISTED",
-        }
-
     def create_listing_from_inventory_flow(
         self,
         *,
@@ -118,84 +65,41 @@ class EbayClient:
     ) -> dict[str, Any]:
         out: dict[str, Any] = {}
 
-        out["inventory_item"] = self._call_with_retry(
-            lambda: self.api.sell_inventory_create_or_replace_inventory_item(
-                body=inventory_item,
-                content_language="en-US",
-                content_type="application/json",
-                sku=sku,
-            ),
-            label=f"inventory upsert sku={sku}",
-        )
+        out["inventory_item"] = self.inventory.upsert_inventory_item(sku, inventory_item)
 
-        try:
-            existing = self._search_existing_offers(sku)
-        except EbayApiError as e:
-            # getOffers returns 404 errorId 25713 ("This Offer is not available")
-            # when the SKU has no offer yet -- the normal case for a new listing.
-            if e.error_id != OFFER_NOT_FOUND_ERROR:
-                raise
+        existing = self.inventory.find_offer(sku)
+        if existing is None:
             logger.info("No existing offer found for sku=%s", sku)
-            existing = None
-
-        if not existing:
-            out["offer"] = self.api.sell_inventory_create_offer(
-                body=offer,
-                content_language="en-US",
-                content_type="application/json",
-            )
-            logger.info(
-                "Created offer for sku=%s offer_id=%s",
-                sku,
-                out["offer"].get("offer_id") or out["offer"].get("offerId"),
-            )
+            out["offer"] = self.inventory.create_offer(offer)
+            logger.info("Created offer for sku=%s offer_id=%s", sku, offer_id_of(out["offer"]))
+        elif existing_offer_action == "delete":
+            self.inventory.delete_offer(existing.offer_id)
+            logger.info("Deleted existing offer ID: %s", existing.offer_id)
+            out["offer"] = self.inventory.create_offer(offer)
+            logger.info("Created offer for sku=%s offer_id=%s", sku, offer_id_of(out["offer"]))
+        elif existing_offer_action == "update":
+            self.inventory.update_offer(existing.offer_id, offer)
+            out["offer"] = {"offer_id": existing.offer_id}
+            logger.info("Updated offer for sku=%s offer_id=%s", sku, existing.offer_id)
         else:
-            offer_id = existing.get("offer_id")
-
-            if existing_offer_action == "delete":
-                self.api.sell_inventory_delete_offer(offer_id=offer_id)
-                logger.info("Deleted existing offer ID: %s", offer_id)
-                out["offer"] = self.api.sell_inventory_create_offer(
-                    body=offer,
-                    content_language="en-US",
-                    content_type="application/json",
-                )
-                logger.info(
-                    "Created offer for sku=%s offer_id=%s",
-                    sku,
-                    out["offer"].get("offer_id") or out["offer"].get("offerId"),
-                )
-            elif existing_offer_action == "update":
-                self.api.sell_inventory_update_offer(
-                    offer_id=offer_id,
-                    content_language="en-US",
-                    content_type="application/json",
-                    body=offer,
-                )
-                out["offer"] = {"offer_id": offer_id}
-                logger.info("Updated offer for sku=%s offer_id=%s", sku, offer_id)
-            else:
-                raise EbayClientError(
-                    "Listing exists & existing_offer_action is not update or delete. "
-                    f"sku={sku} offer_id={offer_id}"
-                )
+            raise EbayClientError(
+                "Listing exists & existing_offer_action is not update or delete. "
+                f"sku={sku} offer_id={existing.offer_id}"
+            )
 
         if publish:
-            offer_id = out["offer"].get("offerId") or out["offer"].get("offer_id")
+            offer_id = offer_id_of(out["offer"])
             if not offer_id:
                 raise EbayClientError(
                     f"Offer create/update response did not contain offer_id: {out['offer']}"
                 )
 
-            out["publish"] = self._call_with_retry(
-                lambda: self.api.sell_inventory_publish_offer(offer_id=offer_id),
-                label=f"publish sku={sku}",
-            )
+            out["publish"] = self.inventory.publish_offer(offer_id)
             logger.info(
                 "Published offer sku=%s offer_id=%s listing_id=%s",
                 sku,
                 offer_id,
-                out["publish"].get("listing_id"),
+                listing_id_of(out["publish"]),
             )
 
             if promote_listing:
@@ -230,30 +134,18 @@ class EbayClient:
             except Exception as e:
                 logger.warning("Failed to delete ad ad_id=%s: %s", existing_ad_id, e)
 
-        out["inventory_item"] = self._call_with_retry(
-            lambda: self.api.sell_inventory_create_or_replace_inventory_item(
-                body=inventory_item_body,
-                content_language="en-US",
-                content_type="application/json",
-                sku=sku,
-            ),
-            label=f"inventory upsert sku={sku}",
-        )
+        out["inventory_item"] = self.inventory.upsert_inventory_item(sku, inventory_item_body)
 
-        self.api.sell_inventory_withdraw_offer(offer_id=existing_offer_id)
-        self.api.sell_inventory_delete_offer(offer_id=existing_offer_id)
+        self.inventory.withdraw_offer(existing_offer_id)
+        self.inventory.delete_offer(existing_offer_id)
         logger.info("Withdrew and deleted offer offer_id=%s for sku=%s", existing_offer_id, sku)
 
-        out["offer"] = self.api.sell_inventory_create_offer(
-            body=offer_body,
-            content_language="en-US",
-            content_type="application/json",
-        )
-        new_offer_id = out["offer"].get("offer_id") or out["offer"].get("offerId")
+        out["offer"] = self.inventory.create_offer(offer_body)
+        new_offer_id = offer_id_of(out["offer"])
         logger.info("Created offer offer_id=%s for sku=%s", new_offer_id, sku)
 
-        out["publish"] = self.api.sell_inventory_publish_offer(offer_id=new_offer_id)
-        logger.info("Published sku=%s listing_id=%s", sku, out["publish"].get("listing_id"))
+        out["publish"] = self.inventory.publish_offer(new_offer_id)
+        logger.info("Published sku=%s listing_id=%s", sku, listing_id_of(out["publish"]))
 
         if promote_listing and campaign_id:
             try:
@@ -305,15 +197,7 @@ class EbayClient:
                 return {"sku": sku, "title": new_title, "method": "inventory", "skipped": True}
 
             body = inventory_item_body_with_title(item, new_title)
-            self._call_with_retry(
-                lambda: self.api.sell_inventory_create_or_replace_inventory_item(
-                    body=body,
-                    content_language="en-US",
-                    content_type="application/json",
-                    sku=sku,
-                ),
-                label=f"retitle sku={sku}",
-            )
+            self.inventory.upsert_inventory_item(sku, body)
         except Exception as inventory_error:
             if not item_id:
                 raise
@@ -382,13 +266,11 @@ class EbayClient:
                 "skipped": False,
             }
 
-        offers = self.api.sell_inventory_get_offers(sku=sku)
-        records = [x["record"] for x in offers if "record" in x]
-        if not records:
+        offer = self.inventory.find_offer(sku)
+        if offer is None:
             raise EbayClientError(f"No offer found for SKU {sku}")
-        offer = records[0]
 
-        current = list(offer.get("store_category_names") or [])
+        current = list(offer.store_category_names)
         if current == list(categories):
             logger.info("Store categories already current for sku=%s; skipping", sku)
             return {
@@ -398,16 +280,8 @@ class EbayClient:
                 "skipped": True,
             }
 
-        body = offer_body_with_store_categories(offer, categories)
-        self._call_with_retry(
-            lambda: self.api.sell_inventory_update_offer(
-                offer_id=offer["offer_id"],
-                content_language="en-US",
-                content_type="application/json",
-                body=body,
-            ),
-            label=f"recategorize sku={sku}",
-        )
+        body = offer_body_with_store_categories(offer.raw, categories)
+        self.inventory.update_offer(offer.offer_id, body)
         logger.info("Recategorized sku=%s: %s -> %s", sku, current, categories)
         return {
             "sku": sku,
@@ -453,17 +327,7 @@ class EbayClient:
         logger.info("[%s] Step 1/4: Upserting %d inventory items...", group_key, total_items)
         out["inventory_items"] = {}
         for idx, (sku, payload) in enumerate(sku_item_map.items(), 1):
-            out["inventory_items"][sku] = self._call_with_retry(
-                lambda payload=payload, sku=sku: (
-                    self.api.sell_inventory_create_or_replace_inventory_item(
-                        body=payload,
-                        content_language="en-US",
-                        content_type="application/json",
-                        sku=sku,
-                    )
-                ),
-                label=f"inventory upsert sku={sku}",
-            )
+            out["inventory_items"][sku] = self.inventory.upsert_inventory_item(sku, payload)
             logger.info(
                 "[%s] Step 1/4: [%d/%d] Upserted inventory item sku=%s",
                 group_key,
@@ -475,30 +339,17 @@ class EbayClient:
 
         # Step 2 — inventory item group
         logger.info("[%s] Step 2/4: Upserting item group...", group_key)
-        out["item_group"] = self.api.sell_inventory_create_or_replace_inventory_item_group(
-            inventory_item_group_key=group_key,
-            body=item_group,
-            content_language="en-US",
-            content_type="application/json",
-        )
+        out["item_group"] = self.inventory.upsert_inventory_item_group(group_key, item_group)
         logger.info("[%s] Step 2/4 done — item group upserted", group_key)
 
         # Step 3 — one offer per SKU (using sku field, not inventoryItemGroupKey)
         logger.info("[%s] Step 3/4: Creating %d offers...", group_key, total_offers)
         out["offers"] = {}
         for idx, (sku, offer_payload) in enumerate(sku_offer_map.items(), 1):
-            try:
-                existing = self._search_existing_offers(sku)
-            except EbayApiError as e:
-                logger.debug("No existing offer for sku=%s (%s)", sku, e)
-                existing = None
+            existing = self.inventory.find_offer(sku)
 
-            if not existing:
-                resp = self.api.sell_inventory_create_offer(
-                    body=offer_payload,
-                    content_language="en-US",
-                    content_type="application/json",
-                )
+            if existing is None:
+                resp = self.inventory.create_offer(offer_payload)
                 out["offers"][sku] = resp
                 logger.info(
                     "[%s] Step 3/4: [%d/%d] Created offer sku=%s offer_id=%s",
@@ -506,15 +357,11 @@ class EbayClient:
                     idx,
                     total_offers,
                     sku,
-                    resp.get("offerId") or resp.get("offer_id"),
+                    offer_id_of(resp),
                 )
             elif existing_offer_action == "delete":
-                self.api.sell_inventory_delete_offer(offer_id=existing["offer_id"])
-                resp = self.api.sell_inventory_create_offer(
-                    body=offer_payload,
-                    content_language="en-US",
-                    content_type="application/json",
-                )
+                self.inventory.delete_offer(existing.offer_id)
+                resp = self.inventory.create_offer(offer_payload)
                 out["offers"][sku] = resp
                 logger.info(
                     "[%s] Step 3/4: [%d/%d] Replaced offer sku=%s offer_id=%s",
@@ -522,23 +369,18 @@ class EbayClient:
                     idx,
                     total_offers,
                     sku,
-                    resp.get("offerId") or resp.get("offer_id"),
+                    offer_id_of(resp),
                 )
             elif existing_offer_action == "update":
-                self.api.sell_inventory_update_offer(
-                    offer_id=existing["offer_id"],
-                    content_language="en-US",
-                    content_type="application/json",
-                    body=offer_payload,
-                )
-                out["offers"][sku] = {"offer_id": existing["offer_id"]}
+                self.inventory.update_offer(existing.offer_id, offer_payload)
+                out["offers"][sku] = {"offer_id": existing.offer_id}
                 logger.info(
                     "[%s] Step 3/4: [%d/%d] Updated offer sku=%s offer_id=%s",
                     group_key,
                     idx,
                     total_offers,
                     sku,
-                    existing["offer_id"],
+                    existing.offer_id,
                 )
             else:
                 raise EbayClientError(
@@ -549,18 +391,9 @@ class EbayClient:
         # Step 4 — publish the entire group as one variation listing
         if publish:
             logger.info("[%s] Step 4/4: Publishing variation listing...", group_key)
-            out["publish"] = self._call_with_retry(
-                lambda: self.api.sell_inventory_publish_offer_by_inventory_item_group(
-                    body={
-                        "inventoryItemGroupKey": group_key,
-                        "marketplaceId": "EBAY_US",
-                    },
-                    content_type="application/json",
-                ),
-                label=f"publish group={group_key}",
-            )
+            out["publish"] = self.inventory.publish_offer_by_group(group_key)
 
-            listing_id = out["publish"].get("listingId") or out["publish"].get("listing_id")
+            listing_id = listing_id_of(out["publish"])
             logger.info("[%s] Step 4/4 done — listing_id=%s", group_key, listing_id)
 
             if promote_listing and listing_id:

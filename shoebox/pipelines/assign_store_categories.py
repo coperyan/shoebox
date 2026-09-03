@@ -122,11 +122,10 @@ def _current_secondary(ebay_api: EbayClient, sku: str) -> str:
     Read straight off the offer so hand-curated categories survive a run that
     is only meant to set the team.
     """
-    offers = ebay_api.api.sell_inventory_get_offers(sku=sku)
-    records = [x["record"] for x in offers if "record" in x]
-    if not records:
+    offer = ebay_api.inventory.find_offer(sku)
+    if offer is None:
         return ""
-    for name in records[0].get("store_category_names") or []:
+    for name in offer.store_category_names:
         if str(name).startswith(_HITS_PREFIX):
             return str(name)
     return ""

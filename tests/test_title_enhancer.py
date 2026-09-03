@@ -458,23 +458,18 @@ class TestUpdateRouting:
                     {"sku": sku, "product": {"title": "Old title", "aspects": {}}}
                 )
 
+            def upsert_inventory_item(self, sku, body):
+                calls["inventory"].append((sku, body["product"]["title"]))
+                if inventory_raises:
+                    raise inventory_raises
+
         class FakeLegacy:
             def revise_listing_title(self, item_id, title):
                 calls["trading"].append((item_id, title))
                 return {"ack": "Success"}
 
-        def fake_api_call(body, content_language, content_type, sku):
-            calls["inventory"].append((sku, body["product"]["title"]))
-            if inventory_raises:
-                raise inventory_raises
-
-        class FakeApi:
-            sell_inventory_create_or_replace_inventory_item = staticmethod(fake_api_call)
-
         client.inventory = FakeInventory()
         client.trading = FakeLegacy()
-        client.api = FakeApi()
-        client._call_with_retry = lambda fn, *, label, max_tries=3: fn()
         return client, calls
 
     def test_sku_goes_through_the_inventory_api(self):
