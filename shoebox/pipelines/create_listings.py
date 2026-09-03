@@ -226,9 +226,9 @@ def _create_one_listing(
 def run_listings(
     *,
     queue_items: list[ListingQueueRow] | None = None,
-    publish: bool = False,
+    publish: bool = True,
     dry_run: bool = False,
-    schedule: bool = False,
+    schedule: bool = True,
     scrape_prices: bool = False,
 ) -> None:
     settings = get_settings()
@@ -338,7 +338,7 @@ if __name__ == "__main__":
 
     setup_logging()
     try:
-        main(dry_run=True)
+        main()
     except Exception:
         logger.exception("Failed to upload listings")
         raise

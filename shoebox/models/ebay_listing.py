@@ -16,7 +16,11 @@ class EbayListingDraft(Model):
 
     sku: str
     title: str
+    # Full buyer-facing text (specifics + store footer) -> offer.listingDescription.
     description: str
+    # Short specifics-only variant -> inventory item product.description, which
+    # eBay caps at 4000 characters. Falls back to `description` when unset.
+    item_description: str | None = None
 
     quantity: int = 1
     price: float = 0.0

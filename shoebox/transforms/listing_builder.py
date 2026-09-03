@@ -1,4 +1,5 @@
 import ast
+import re
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -7,6 +8,12 @@ from shoebox.models.ebay_listing import EbayListingDraft
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.settings import get_settings
 from shoebox.utils.title_crosswalk import shorten_team_name
+
+# eBay caps Inventory API description fields (inventory item product.description
+# and inventory item group description) at 4000 characters. The offer's
+# listingDescription -- what buyers actually see on a single-variation listing --
+# has a far larger budget, so the long store footer lives there.
+MAX_INVENTORY_DESCRIPTION_LEN = 4000
 
 ## Condition mapping
 _CONDITION_DESCRIPTORS = {
@@ -71,14 +78,41 @@ _STORE_FOOTER_TEMPLATE = """
 """
 
 
+def minify_html(html: str) -> str:
+    """Collapse newline + indentation runs between tags.
+
+    The footer is authored readably but every character counts against eBay's
+    4000-char description limits, and inter-tag whitespace does not affect how
+    the block renders.
+    """
+    return re.sub(r"\s*\n\s*", "", html).strip()
+
+
 def store_footer_html(store_name: str | None = None) -> str:
     """Render the shared listing footer with the configured store name."""
     if store_name is None:
         store_name = get_settings().store.name
-    return _STORE_FOOTER_TEMPLATE.format(store_name=store_name)
+    return minify_html(_STORE_FOOTER_TEMPLATE.format(store_name=store_name))
 
 
-def build_description(
+def fit_inventory_description(html: str) -> str:
+    """Guard an Inventory API description against eBay's 4000-char cap.
+
+    Raises rather than silently truncating: a half-written HTML block on a live
+    listing is worse than a failed build we can see and fix.
+    """
+    if len(html) <= MAX_INVENTORY_DESCRIPTION_LEN:
+        return html
+    minified = minify_html(html)
+    if len(minified) <= MAX_INVENTORY_DESCRIPTION_LEN:
+        return minified
+    raise ValueError(
+        f"Inventory description is {len(minified)} characters; eBay allows at most "
+        f"{MAX_INVENTORY_DESCRIPTION_LEN}. Shorten the store footer or the item specifics."
+    )
+
+
+def build_item_specifics(
     set_name: str,
     card_number: str,
     features: list,
@@ -87,6 +121,7 @@ def build_description(
     player: str = None,
     team: str = None,
 ) -> str:
+    """The card-specific detail block, without the store footer."""
     specifics = f"<div>Set: {set_name}</div>"
     if insert:
         specifics += f"<div>Insert: {insert}</div>"
@@ -98,8 +133,35 @@ def build_description(
         specifics += f"<div>Team: {team}</div>"
     if features:
         specifics += f"<div>Features: {', '.join(features)}"
-    specifics += store_footer_html()
     return specifics
+
+
+def build_description(
+    set_name: str,
+    card_number: str,
+    features: list,
+    insert: str = None,
+    parallel: str = None,
+    player: str = None,
+    team: str = None,
+) -> str:
+    """Full buyer-facing description: item specifics plus the store footer.
+
+    This is the offer's ``listingDescription``. It is too long for the inventory
+    item's ``product.description`` -- use :func:`build_item_specifics` there.
+    """
+    return (
+        build_item_specifics(
+            set_name,
+            card_number,
+            features,
+            insert=insert,
+            parallel=parallel,
+            player=player,
+            team=team,
+        )
+        + store_footer_html()
+    )
 
 
 def multi_str_split(s: str):
@@ -320,6 +382,8 @@ def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> di
             f"store.condition_descriptor {descriptor!r} in app.yaml is not one of "
             f"{sorted(_CONDITION_DESCRIPTORS)}"
         )
+    if product.get("description"):
+        product = {**product, "description": fit_inventory_description(product["description"])}
     return {
         "condition": get_settings().store.condition,
         "conditionDescriptors": [
@@ -340,11 +404,14 @@ def base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> di
 
 
 def build_inventory_item_payload(*, draft: EbayListingDraft) -> dict[str, Any]:
+    # product.description must stay under 4000 chars, so the item carries only
+    # the specifics; the offer's listingDescription supplies the full text
+    # (footer included) that buyers see on the listing page.
     return base_inventory_item_payload(
         quantity=int(draft.quantity),
         product={
             "title": draft.title,
-            "description": draft.description,
+            "description": draft.item_description or draft.description,
             "aspects": draft.aspects,
             "imageUrls": draft.image_urls,
         },
@@ -539,7 +606,7 @@ def build_draft(
     *, row: ListingQueueRow, image_urls: list[str], sku: str, schedule: bool = False
 ) -> EbayListingDraft:
     draft_title = title(row)
-    draft_desc = build_description(
+    draft_specifics = build_item_specifics(
         row.set_name,
         row.card_number,
         features(row),
@@ -548,6 +615,7 @@ def build_draft(
         player=row.player,
         team=row.team,
     )
+    draft_desc = draft_specifics + store_footer_html()
     aspects = build_aspects(row)
 
     if schedule:
@@ -559,6 +627,7 @@ def build_draft(
         sku=sku,
         title=draft_title,
         description=draft_desc,
+        item_description=draft_specifics,
         quantity=row.quantity,
         price=float(row.price),
         category_id=get_settings().store.category_id,

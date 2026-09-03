@@ -6,6 +6,7 @@ from shoebox.settings import get_settings
 from shoebox.transforms.listing_builder import (
     autographed,
     base_inventory_item_payload,
+    fit_inventory_description,
     insert_set,
     league,
     relic,
@@ -129,7 +130,9 @@ def build_variation_description(rows: list[ChecklistVariationRow]) -> str:
         html += f"<div>Insert Set: {insert}</div>"
     html += "<div>Select a card from the dropdown above.</div>"
     html += store_footer_html()
-    return html
+    # The group description becomes the listing description for a
+    # multi-variation listing, and eBay caps it at 4000 characters.
+    return fit_inventory_description(html)
 
 
 def build_individual_inventory_item(
