@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from shoebox.clients.ebay.client import EbayClient
-from shoebox.clients.ebay.trading import EBAY_NS, _dig, _ensure_list
+from shoebox.clients.ebay.trading import dig
 from shoebox.settings import get_settings
 from shoebox.utils.logging_setup import setup_logging
 
@@ -126,7 +126,7 @@ class Plan:
 
 
 def _price_of(item: dict[str, Any]) -> float | None:
-    node = _dig(item, ["SellingStatus", "CurrentPrice"], None)
+    node = dig(item, ["SellingStatus", "CurrentPrice"], None)
     text = node.get("#text") if isinstance(node, dict) else node
     try:
         return float(text)
@@ -135,13 +135,13 @@ def _price_of(item: dict[str, Any]) -> float | None:
 
 
 def _category_of(item: dict[str, Any]) -> str | None:
-    url = _dig(item, ["ListingDetails", "ViewItemURLForNaturalSearch"], "") or ""
+    url = dig(item, ["ListingDetails", "ViewItemURLForNaturalSearch"], "") or ""
     match = _CATEGORY_IN_URL.search(url)
     return match.group(1) if match else None
 
 
 def _age_days(item: dict[str, Any], *, now: datetime) -> tuple[float, str] | None:
-    start = _dig(item, ["ListingDetails", "StartTime"], None)
+    start = dig(item, ["ListingDetails", "StartTime"], None)
     if not start:
         return None
     try:
@@ -152,67 +152,15 @@ def _age_days(item: dict[str, Any], *, now: datetime) -> tuple[float, str] | Non
 
 
 def fetch_active_listings(client: EbayClient) -> list[dict[str, Any]]:
-    """Page the seller's active listings, keeping the raw Trading item nodes.
+    """The seller's active listings as raw Trading item nodes.
 
-    ``TradingClient.get_active_listings`` is not reusable here: it flattens
-    each item down to a fixed set of fields and drops ListingType, Variations,
-    and the natural-search URL -- exactly the three this script filters on.
-    Widening that method would change the dict shape that ``sync_active_listings``
-    loads into BigQuery against a fixed schema, so the raw nodes are read here
-    instead and the shared client is left alone.
+    ``TradingClient.get_active_listings`` flattens each item down to the fixed
+    set of fields ``sync_active_listings`` loads into BigQuery, and that drops
+    ListingType, Variations, and the natural-search URL -- exactly the three
+    this script filters on. So the raw nodes are read instead.
     """
-    legacy = client.trading
-    items: list[dict[str, Any]] = []
-    page = 1
-
-    while True:
-        body = f"""<?xml version="1.0" encoding="utf-8"?>
-                <GetMyeBaySellingRequest xmlns="{EBAY_NS}">
-                <RequesterCredentials>
-                    <eBayAuthToken>{legacy.token}</eBayAuthToken>
-                </RequesterCredentials>
-                <ErrorLanguage>en_US</ErrorLanguage>
-                <WarningLevel>High</WarningLevel>
-                <ActiveList>
-                    <Include>true</Include>
-                    <Pagination>
-                    <EntriesPerPage>200</EntriesPerPage>
-                    <PageNumber>{page}</PageNumber>
-                    </Pagination>
-                    <Sort>TimeLeft</Sort>
-                </ActiveList>
-                </GetMyeBaySellingRequest>"""
-
-        payload = legacy._trading_call(
-            call_name="GetMyeBaySelling",
-            body=body,
-            site_id="0",
-            compatibility_level="1259",
-        )
-
-        page_items = [
-            item
-            for item in _ensure_list(_dig(payload, ["ActiveList", "ItemArray", "Item"], None))
-            if isinstance(item, dict)
-        ]
-        items.extend(page_items)
-
-        total_pages_text = _dig(
-            payload, ["ActiveList", "PaginationResult", "TotalNumberOfPages"], None
-        )
-        try:
-            total_pages = int(total_pages_text) if total_pages_text else 1
-        except (TypeError, ValueError):
-            total_pages = 1
-
-        logger.info(
-            "Fetched active listings page %d/%d (%d items)", page, total_pages, len(page_items)
-        )
-
-        if not page_items or page >= total_pages:
-            break
-        page += 1
-
+    items = client.trading.get_my_ebay_selling_items("ActiveList", sort="TimeLeft")
+    logger.info("Fetched %d active listing(s)", len(items))
     return items
 
 

@@ -18,6 +18,10 @@ logger = logging.getLogger(__name__)
 # Default namespace used by eBay Trading API responses/requests
 EBAY_NS = "urn:ebay:apis:eBLBaseComponents"
 
+# GetMyeBaySelling containers this client knows how to page. The name is
+# interpolated into the request XML, so it is checked against this list.
+MY_EBAY_SELLING_LISTS = ("ActiveList", "ScheduledList", "SoldList", "UnsoldList")
+
 
 def _xml_escape(value: str) -> str:
     """
@@ -49,7 +53,7 @@ def _xml_to_dict(xml_text: str) -> dict[str, Any]:
     )
 
 
-def _ensure_list(x: Any) -> list[Any]:
+def ensure_list(x: Any) -> list[Any]:
     """Normalize a value that may be list/dict/str/None into a list."""
     if x is None:
         return []
@@ -59,7 +63,7 @@ def _ensure_list(x: Any) -> list[Any]:
 PathElem = str | tuple[str, Any]
 
 
-def _dig(d: Any, path: Iterable[PathElem], default: Any = None) -> Any:
+def dig(d: Any, path: Iterable[PathElem], default: Any = None) -> Any:
     """
     Safe dict traversal helper.
 
@@ -199,15 +203,15 @@ class TradingClient:
         ack = payload.get("Ack", "")
         if ack not in ("Success", "Warning"):
             errs_out: list[dict[str, Any]] = []
-            for err in _ensure_list(payload.get("Errors")):
+            for err in ensure_list(payload.get("Errors")):
                 if not isinstance(err, dict):
                     continue
                 errs_out.append(
                     {
-                        "code": _dig(err, ["ErrorCode"], ""),
-                        "severity": _dig(err, ["SeverityCode"], ""),
-                        "message": _dig(err, ["LongMessage"], None)
-                        or _dig(err, ["ShortMessage"], ""),
+                        "code": dig(err, ["ErrorCode"], ""),
+                        "severity": dig(err, ["SeverityCode"], ""),
+                        "message": dig(err, ["LongMessage"], None)
+                        or dig(err, ["ShortMessage"], ""),
                     }
                 )
             if any(str(e.get("code")) == TRADING_QUOTA_ERROR_CODE for e in errs_out):
@@ -252,19 +256,17 @@ class TradingClient:
         if not isinstance(item, dict):
             raise RuntimeError("GetItem response missing Item node")
 
-        price_node = _dig(item, ["SellingStatus", "CurrentPrice"], None)
+        price_node = dig(item, ["SellingStatus", "CurrentPrice"], None)
         price, currency = _money_to_parts(price_node)
 
         # Parse specifics: ItemSpecifics.NameValueList -> dict[str, list[str]]
         specifics: dict[str, list[str]] = {}
-        for nvl in _ensure_list(_dig(item, ["ItemSpecifics", "NameValueList"], None)):
+        for nvl in ensure_list(dig(item, ["ItemSpecifics", "NameValueList"], None)):
             if not isinstance(nvl, dict):
                 continue
             name = (nvl.get("Name") or "").strip()
             values = [
-                v.strip()
-                for v in _ensure_list(nvl.get("Value"))
-                if isinstance(v, str) and v.strip()
+                v.strip() for v in ensure_list(nvl.get("Value")) if isinstance(v, str) and v.strip()
             ]
             if name:
                 specifics[name] = values
@@ -273,25 +275,25 @@ class TradingClient:
             "item_id": item_id,
             "title": item.get("Title"),
             "sku": item.get("SKU"),
-            "listing_status": _dig(item, ["SellingStatus", "ListingStatus"]),
+            "listing_status": dig(item, ["SellingStatus", "ListingStatus"]),
             "quantity": item.get("Quantity"),
-            "quantity_sold": _dig(item, ["SellingStatus", "QuantitySold"]),
+            "quantity_sold": dig(item, ["SellingStatus", "QuantitySold"]),
             "price": price,
             "currency": currency,
-            "category_id": _dig(item, ["PrimaryCategory", "CategoryID"]),
-            "category_name": _dig(item, ["PrimaryCategory", "CategoryName"]),
+            "category_id": dig(item, ["PrimaryCategory", "CategoryID"]),
+            "category_name": dig(item, ["PrimaryCategory", "CategoryName"]),
             "condition_id": item.get("ConditionID"),
             "condition_display_name": item.get("ConditionDisplayName"),
-            "start_time": _dig(item, ["ListingDetails", "StartTime"]),
-            "end_time": _dig(item, ["ListingDetails", "EndTime"]),
-            "view_item_url": _dig(item, ["ListingDetails", "ViewItemURL"]),
+            "start_time": dig(item, ["ListingDetails", "StartTime"]),
+            "end_time": dig(item, ["ListingDetails", "EndTime"]),
+            "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),
             "item_specifics": specifics,
         }
 
         # Optional: picture URLs
         pics = [
             p
-            for p in _ensure_list(_dig(item, ["PictureDetails", "PictureURL"], None))
+            for p in ensure_list(dig(item, ["PictureDetails", "PictureURL"], None))
             if isinstance(p, str) and p
         ]
         if pics:
@@ -388,9 +390,15 @@ class TradingClient:
         ordered = [details[item_id] for item_id in item_ids if item_id in details]
         return ordered, failures
 
-    def get_active_listings(
+    # ------------------------------------------------------------------
+    # GetMyeBaySelling
+    # ------------------------------------------------------------------
+
+    def get_my_ebay_selling_items(
         self,
+        list_name: str,
         *,
+        sort: str,
         entries_per_page: int = 200,
         page_number: int = 1,
         max_pages: int | None = None,
@@ -398,15 +406,26 @@ class TradingClient:
         compatibility_level: str = "1259",
     ) -> list[dict[str, Any]]:
         """
-        Retrieve *all* active listings for the authenticated seller using the Trading API.
+        Page through one list of GetMyeBaySelling and return its raw ``Item`` nodes.
 
-        Uses Trading API GetMyeBaySelling with ActiveList pagination.
-        Returns a list of lightweight listing dicts (ItemID, Title, SKU, Quantity, Price, etc.).
+        ``list_name`` is the container to include (see ``MY_EBAY_SELLING_LISTS``)
+        and ``sort`` its sort key. The nodes are xmltodict dicts exactly as eBay
+        sent them. The ``get_*_listings`` methods flatten them to a fixed shape;
+        callers that need fields outside that shape (ListingType, Variations,
+        the natural-search URL) read the nodes directly.
+
+        Stops at an empty page, at eBay's reported page count, or after
+        ``max_pages`` pages from ``page_number``.
         """
+        if list_name not in MY_EBAY_SELLING_LISTS:
+            raise ValueError(
+                f"Unknown GetMyeBaySelling list {list_name!r}; expected one of "
+                f"{', '.join(MY_EBAY_SELLING_LISTS)}"
+            )
         if entries_per_page < 1:
             raise ValueError("entries_per_page must be >= 1")
 
-        results: list[dict[str, Any]] = []
+        items: list[dict[str, Any]] = []
         current_page = page_number
 
         while True:
@@ -417,14 +436,14 @@ class TradingClient:
                     </RequesterCredentials>
                     <ErrorLanguage>en_US</ErrorLanguage>
                     <WarningLevel>High</WarningLevel>
-                    <ActiveList>
+                    <{list_name}>
                         <Include>true</Include>
                         <Pagination>
                         <EntriesPerPage>{entries_per_page}</EntriesPerPage>
                         <PageNumber>{current_page}</PageNumber>
                         </Pagination>
-                        <Sort>TimeLeft</Sort>
-                    </ActiveList>
+                        <Sort>{_xml_escape(sort)}</Sort>
+                    </{list_name}>
                     </GetMyeBaySellingRequest>"""
 
             payload = self._trading_call(
@@ -434,45 +453,22 @@ class TradingClient:
                 compatibility_level=compatibility_level,
             )
 
-            items = _ensure_list(_dig(payload, ["ActiveList", "ItemArray", "Item"], None))
+            page_items = [
+                item
+                for item in ensure_list(dig(payload, [list_name, "ItemArray", "Item"], None))
+                if isinstance(item, dict)
+            ]
+            items.extend(page_items)
 
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                price_node = _dig(item, ["SellingStatus", "CurrentPrice"], None)
-                price, currency = _money_to_parts(price_node)
-
-                results.append(
-                    {
-                        "item_id": item.get("ItemID"),
-                        "title": item.get("Title"),
-                        "sku": item.get("SKU"),
-                        "listing_status": _dig(item, ["SellingStatus", "ListingStatus"]),
-                        "quantity": item.get("Quantity"),
-                        "quantity_sold": _dig(item, ["SellingStatus", "QuantitySold"]),
-                        "price": price,
-                        "currency": currency,
-                        "start_time": _dig(item, ["ListingDetails", "StartTime"]),
-                        "end_time": _dig(item, ["ListingDetails", "EndTime"]),
-                        "watchers": item.get("WatchCount"),
-                        "view_item_url": _dig(item, ["ListingDetails", "ViewItemURL"]),
-                    }
-                )
-
-            total_pages_text = _dig(
-                payload, ["ActiveList", "PaginationResult", "TotalNumberOfPages"], None
+            total_pages_text = dig(
+                payload, [list_name, "PaginationResult", "TotalNumberOfPages"], None
             )
             try:
                 total_pages = int(total_pages_text) if total_pages_text else None
             except (TypeError, ValueError):
                 total_pages = None
 
-            # Stop conditions:
-            # 1) no items returned (empty page)
-            # 2) we reached total pages (if provided)
-            # 3) max_pages reached (caller limit)
-            if not items:
+            if not page_items:
                 break
             if total_pages is not None and current_page >= total_pages:
                 break
@@ -481,7 +477,52 @@ class TradingClient:
 
             current_page += 1
 
-        return results
+        return items
+
+    @staticmethod
+    def _flatten_selling_item(item: dict[str, Any]) -> dict[str, Any]:
+        """The fixed listing shape that ``sync_active_listings`` loads into BigQuery."""
+        price, currency = _money_to_parts(dig(item, ["SellingStatus", "CurrentPrice"], None))
+        return {
+            "item_id": item.get("ItemID"),
+            "title": item.get("Title"),
+            "sku": item.get("SKU"),
+            "listing_status": dig(item, ["SellingStatus", "ListingStatus"]),
+            "quantity": item.get("Quantity"),
+            "quantity_sold": dig(item, ["SellingStatus", "QuantitySold"]),
+            "price": price,
+            "currency": currency,
+            "start_time": dig(item, ["ListingDetails", "StartTime"]),
+            "end_time": dig(item, ["ListingDetails", "EndTime"]),
+            "watchers": item.get("WatchCount"),
+            "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),
+        }
+
+    def get_active_listings(
+        self,
+        *,
+        entries_per_page: int = 200,
+        page_number: int = 1,
+        max_pages: int | None = None,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> list[dict[str, Any]]:
+        """
+        All active listings for the authenticated seller, flattened.
+
+        GetMyeBaySelling ``ActiveList`` sorted by time left; one dict per
+        listing with item_id, title, sku, quantity, price, and so on.
+        """
+        items = self.get_my_ebay_selling_items(
+            "ActiveList",
+            sort="TimeLeft",
+            entries_per_page=entries_per_page,
+            page_number=page_number,
+            max_pages=max_pages,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+        return [self._flatten_selling_item(item) for item in items]
 
     def get_scheduled_listings(
         self,
@@ -493,92 +534,20 @@ class TradingClient:
         compatibility_level: str = "1259",
     ) -> list[dict[str, Any]]:
         """
-        Retrieve *all* active listings for the authenticated seller using the Trading API.
+        All listings scheduled to start later, flattened like ``get_active_listings``.
 
-        Uses Trading API GetMyeBaySelling with ActiveList pagination.
-        Returns a list of lightweight listing dicts (ItemID, Title, SKU, Quantity, Price, etc.).
+        GetMyeBaySelling ``ScheduledList`` sorted by start time.
         """
-        if entries_per_page < 1:
-            raise ValueError("entries_per_page must be >= 1")
-
-        results: list[dict[str, Any]] = []
-        current_page = page_number
-
-        while True:
-            body = f"""<?xml version="1.0" encoding="utf-8"?>
-                    <GetMyeBaySellingRequest xmlns="{EBAY_NS}">
-                    <RequesterCredentials>
-                        <eBayAuthToken>{self.token}</eBayAuthToken>
-                    </RequesterCredentials>
-                    <ErrorLanguage>en_US</ErrorLanguage>
-                    <WarningLevel>High</WarningLevel>
-                    <ScheduledList>
-                        <Include>true</Include>
-                        <Pagination>
-                        <EntriesPerPage>{entries_per_page}</EntriesPerPage>
-                        <PageNumber>{current_page}</PageNumber>
-                        </Pagination>
-                        <Sort>StartTime</Sort>
-                    </ScheduledList>
-                    </GetMyeBaySellingRequest>"""
-
-            payload = self._trading_call(
-                call_name="GetMyeBaySelling",
-                body=body,
-                site_id=site_id,
-                compatibility_level=compatibility_level,
-            )
-
-            items = _ensure_list(_dig(payload, ["ScheduledList", "ItemArray", "Item"], None))
-
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                price_node = _dig(item, ["SellingStatus", "CurrentPrice"], None)
-                price, currency = _money_to_parts(price_node)
-
-                results.append(
-                    {
-                        "item_id": item.get("ItemID"),
-                        "title": item.get("Title"),
-                        "sku": item.get("SKU"),
-                        "listing_status": _dig(item, ["SellingStatus", "ListingStatus"]),
-                        "quantity": item.get("Quantity"),
-                        "quantity_sold": _dig(item, ["SellingStatus", "QuantitySold"]),
-                        "price": price,
-                        "currency": currency,
-                        "start_time": _dig(item, ["ListingDetails", "StartTime"]),
-                        "end_time": _dig(item, ["ListingDetails", "EndTime"]),
-                        "watchers": item.get("WatchCount"),
-                        "view_item_url": _dig(item, ["ListingDetails", "ViewItemURL"]),
-                    }
-                )
-
-            total_pages_text = _dig(
-                payload,
-                ["ScheduledList", "PaginationResult", "TotalNumberOfPages"],
-                None,
-            )
-            try:
-                total_pages = int(total_pages_text) if total_pages_text else None
-            except (TypeError, ValueError):
-                total_pages = None
-
-            # Stop conditions:
-            # 1) no items returned (empty page)
-            # 2) we reached total pages (if provided)
-            # 3) max_pages reached (caller limit)
-            if not items:
-                break
-            if total_pages is not None and current_page >= total_pages:
-                break
-            if max_pages is not None and (current_page - page_number + 1) >= max_pages:
-                break
-
-            current_page += 1
-
-        return results
+        items = self.get_my_ebay_selling_items(
+            "ScheduledList",
+            sort="StartTime",
+            entries_per_page=entries_per_page,
+            page_number=page_number,
+            max_pages=max_pages,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+        return [self._flatten_selling_item(item) for item in items]
 
     def get_out_of_stock_listings(
         self,
@@ -590,97 +559,37 @@ class TradingClient:
         compatibility_level: str = "1259",
     ) -> list[dict[str, Any]]:
         """
-        Retrieve active listings where all quantity has sold (remaining = 0).
+        Active listings where all quantity has sold (remaining = 0).
 
-        Queries GetMyeBaySelling ActiveList and filters to items where
-        Quantity - QuantitySold == 0. These are Out-of-Stock Control listings
-        that remain active but are hidden from eBay search.
-        Returns the same shape dicts as get_active_listings, plus `quantity_remaining`.
+        These are Out-of-Stock Control listings that stay active but are hidden
+        from eBay search. Same shape as ``get_active_listings`` with
+        ``quantity`` / ``quantity_sold`` as ints plus ``quantity_remaining``.
         """
-        if entries_per_page < 1:
-            raise ValueError("entries_per_page must be >= 1")
+        items = self.get_my_ebay_selling_items(
+            "ActiveList",
+            sort="TimeLeft",
+            entries_per_page=entries_per_page,
+            page_number=page_number,
+            max_pages=max_pages,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
 
         results: list[dict[str, Any]] = []
-        current_page = page_number
-
-        while True:
-            body = f"""<?xml version="1.0" encoding="utf-8"?>
-                    <GetMyeBaySellingRequest xmlns="{EBAY_NS}">
-                    <RequesterCredentials>
-                        <eBayAuthToken>{self.token}</eBayAuthToken>
-                    </RequesterCredentials>
-                    <ErrorLanguage>en_US</ErrorLanguage>
-                    <WarningLevel>High</WarningLevel>
-                    <ActiveList>
-                        <Include>true</Include>
-                        <Pagination>
-                        <EntriesPerPage>{entries_per_page}</EntriesPerPage>
-                        <PageNumber>{current_page}</PageNumber>
-                        </Pagination>
-                        <Sort>TimeLeft</Sort>
-                    </ActiveList>
-                    </GetMyeBaySellingRequest>"""
-
-            payload = self._trading_call(
-                call_name="GetMyeBaySelling",
-                body=body,
-                site_id=site_id,
-                compatibility_level=compatibility_level,
-            )
-
-            items = _ensure_list(_dig(payload, ["ActiveList", "ItemArray", "Item"], None))
-
-            for item in items:
-                if not isinstance(item, dict):
-                    continue
-
-                try:
-                    quantity = int(item.get("Quantity") or 0)
-                    quantity_sold = int(_dig(item, ["SellingStatus", "QuantitySold"], 0) or 0)
-                except (TypeError, ValueError):
-                    continue
-
-                if quantity - quantity_sold != 0:
-                    continue
-
-                price_node = _dig(item, ["SellingStatus", "CurrentPrice"], None)
-                price, currency = _money_to_parts(price_node)
-
-                results.append(
-                    {
-                        "item_id": item.get("ItemID"),
-                        "title": item.get("Title"),
-                        "sku": item.get("SKU"),
-                        "listing_status": _dig(item, ["SellingStatus", "ListingStatus"]),
-                        "quantity": quantity,
-                        "quantity_sold": quantity_sold,
-                        "quantity_remaining": quantity - quantity_sold,
-                        "price": price,
-                        "currency": currency,
-                        "start_time": _dig(item, ["ListingDetails", "StartTime"]),
-                        "end_time": _dig(item, ["ListingDetails", "EndTime"]),
-                        "watchers": item.get("WatchCount"),
-                        "view_item_url": _dig(item, ["ListingDetails", "ViewItemURL"]),
-                    }
-                )
-
-            total_pages_text = _dig(
-                payload, ["ActiveList", "PaginationResult", "TotalNumberOfPages"], None
-            )
+        for item in items:
             try:
-                total_pages = int(total_pages_text) if total_pages_text else None
+                quantity = int(item.get("Quantity") or 0)
+                quantity_sold = int(dig(item, ["SellingStatus", "QuantitySold"], 0) or 0)
             except (TypeError, ValueError):
-                total_pages = None
+                continue
+            if quantity - quantity_sold != 0:
+                continue
 
-            if not items:
-                break
-            if total_pages is not None and current_page >= total_pages:
-                break
-            if max_pages is not None and (current_page - page_number + 1) >= max_pages:
-                break
-
-            current_page += 1
-
+            flat = self._flatten_selling_item(item)
+            flat["quantity"] = quantity
+            flat["quantity_sold"] = quantity_sold
+            flat["quantity_remaining"] = 0
+            results.append(flat)
         return results
 
     def end_listing(
@@ -895,7 +804,7 @@ class TradingClient:
 
         # Fees are optional; collect a simple list if present
         fees: list[dict[str, Any]] = []
-        for fee in _ensure_list(_dig(payload, ["Fees", "Fee"], None)):
+        for fee in ensure_list(dig(payload, ["Fees", "Fee"], None)):
             if not isinstance(fee, dict):
                 continue
             amount, currency = _money_to_parts(fee.get("Fee"))

@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `enhance-listing-titles` handles listings that have no SKU. They were created
   outside the Sell Inventory API, which cannot see them, so they now go through
   Trading `ReviseFixedPriceItem` by item ID (new
-  `eBayLegacyClient.revise_listing_title`); a failure on the inventory route
+  `TradingClient.revise_listing_title`); a failure on the inventory route
   falls back to the same path. Previously a missing SKU arrived as pandas' NaN,
   passed a `str(value or "")` guard as the truthy string `"nan"`, and reached
   eBay as a float.
@@ -69,9 +69,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **eBay client package reorganized.** `shoebox/clients/ebay_rest/` is now
+  `shoebox/clients/ebay/` (the old name collided with the `ebay_rest` PyPI
+  package), and the Trading API client moved in beside the REST sub-clients as
+  `clients/ebay/trading.py` / `TradingClient` (was `clients/ebay_legacy.py` /
+  `TradingClient`). Import paths change; behavior does not.
+- **`EbayClient` is a composition root.** The five listing workflows
+  (`create_listing_from_inventory_flow`, `refresh_listing_flow`,
+  `create_variation_listing_flow`, `update_listing_title`,
+  `update_listing_store_categories`) moved to `ListingService` in
+  `shoebox/services/listings.py` as `create_listing`, `relist_listing`,
+  `create_variation_listing`, `update_title`, `update_store_categories`. Each
+  spans inventory + marketing or inventory + trading, so none belonged on a
+  single client. Pipelines construct `ListingService(EbayClient())`.
+- **`InventoryClient` is real.** It was a stub with broken methods while the
+  facade made raw `sell_inventory_*` calls; it now owns
+  `get_offers` / `find_offer` (typed `Offer`, empty on the 25713 "no offer
+  yet" 404), `create/update/delete/withdraw/publish_offer`,
+  `publish_offer_by_group`, `upsert_inventory_item(_group)`, and the 25001
+  transient retry, applied consistently to the idempotent calls. Pipelines no
+  longer reach through `ebay_api.api` for inventory calls.
+- **Typed errors.** REST failures raise `EbayApiError` (`.error_id` is eBay's
+  `errorId`) instead of `ebay_rest.Error`; the ids the clients react to are
+  named constants in `clients/ebay/errors.py`.
+- **The Trading client is built lazily** on first `ebay.trading` access, from
+  `ebay.trading_token_path` in `app.yaml` (default `configs/ebay_legacy.json`).
+  REST-only pipelines no longer need the Trading token file. `legacy_api` is
+  gone; use `trading`.
+- `TradingClient`'s three GetMyeBaySelling methods share one pager,
+  `get_my_ebay_selling_items(list_name, sort=...)`, which also returns the raw
+  item nodes for callers that need fields the flattened shape drops. `dig` and
+  `ensure_list` are public.
 - **`sync-active-listing-details` runs its `GetItem` calls concurrently** —
   ~1,650 listings in about two minutes instead of twenty-plus. New
-  `eBayLegacyClient.get_item_details_bulk` spreads the calls over a
+  `TradingClient.get_item_details_bulk` spreads the calls over a
   `ThreadPoolExecutor` (default 12 workers, `--workers` to change), feeding the
   pool in a sliding window so an early stop can cancel the rest. There is no
   batch alternative: `GetSellerList` returns no item specifics at any detail
@@ -92,7 +123,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EbayClient.stores`. It uses the same OAuth token as the other REST clients,
   so managing categories no longer requires the Auth'n'Auth token in
   `configs/ebay_legacy.json`.
-- The Trading-API store category methods added to `eBayLegacyClient` in 0.2.0
+- The Trading-API store category methods added to `TradingClient` in 0.2.0
   were removed: `get_store_categories`, `add_store_categories`,
   `delete_store_categories`, `move_store_categories`, `rename_store_category`,
   `rename_store_categories`, `get_store_category_update_status`,
