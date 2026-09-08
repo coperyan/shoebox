@@ -364,3 +364,119 @@ class TestGetMyeBaySelling:
         client = _client(monkeypatch)
         with pytest.raises(ValueError, match="Unknown GetMyeBaySelling list"):
             client.get_my_ebay_selling_items("<Evil>", sort="TimeLeft")
+
+
+class TestGetMyeBayBuying:
+    """The watch list: GetMyeBayBuying is the only API that returns it."""
+
+    @staticmethod
+    def _item(item_id, price="12.34"):
+        return {
+            "ItemID": item_id,
+            "Title": f"card {item_id}",
+            "ListingType": "Chinese",
+            "Quantity": "1",
+            "TimeLeft": "P1DT2H",
+            "ConditionDisplayName": "Ungraded",
+            "BuyItNowPrice": {"@currencyID": "USD", "#text": "40.00"},
+            "PrimaryCategory": {"CategoryID": "261328"},
+            "Seller": {"UserID": "cardshop"},
+            "WatchCount": "7",
+            "SellingStatus": {
+                "ListingStatus": "Active",
+                "QuantitySold": "0",
+                "BidCount": "2",
+                "CurrentPrice": {"@currencyID": "USD", "#text": price},
+            },
+            "ListingDetails": {
+                "StartTime": "2026-01-01T00:00:00.000Z",
+                "EndTime": "2026-02-01T00:00:00.000Z",
+                "ViewItemURL": f"https://www.ebay.com/itm/{item_id}",
+            },
+        }
+
+    def _client_with_pages(self, monkeypatch, pages):
+        client = _client(monkeypatch)
+        bodies: list[str] = []
+
+        def fake_call(self, *, call_name, body, site_id, compatibility_level, timeout=60):
+            assert call_name == "GetMyeBayBuying"
+            bodies.append(body)
+            page = pages[len(bodies) - 1]
+            return {
+                "WatchList": {
+                    "ItemArray": {"Item": page},
+                    "PaginationResult": {"TotalNumberOfPages": str(len(pages))},
+                }
+            }
+
+        monkeypatch.setattr(TradingClient, "_trading_call", fake_call)
+        return client, bodies
+
+    def test_pages_the_watch_list_and_keeps_order(self, monkeypatch):
+        # Page 2 is a single item: xmltodict gives a dict, not a one-element list.
+        pages = [[self._item("1"), self._item("2")], self._item("3")]
+        client, bodies = self._client_with_pages(monkeypatch, pages)
+
+        watched = client.get_watchlist_items()
+
+        assert [x["item_id"] for x in watched] == ["1", "2", "3"]
+        assert len(bodies) == 2
+        assert "<WatchList>" in bodies[0]
+        assert "<Sort>TimeLeft</Sort>" in bodies[0]
+        assert "<DetailLevel>ReturnAll</DetailLevel>" in bodies[0]
+        assert "<PageNumber>2</PageNumber>" in bodies[1]
+
+    def test_flattened_shape(self, monkeypatch):
+        client, _ = self._client_with_pages(monkeypatch, [[self._item("1")]])
+        (row,) = client.get_watchlist_items()
+        assert row == {
+            "item_id": "1",
+            "title": "card 1",
+            "listing_type": "Chinese",
+            "listing_status": "Active",
+            "price": "12.34",
+            "currency": "USD",
+            "buy_it_now_price": "40.00",
+            "buy_it_now_currency": "USD",
+            "bid_count": "2",
+            "quantity": "1",
+            "quantity_sold": "0",
+            "time_left": "P1DT2H",
+            "start_time": "2026-01-01T00:00:00.000Z",
+            "end_time": "2026-02-01T00:00:00.000Z",
+            "condition": "Ungraded",
+            "category_id": "261328",
+            "seller_user_id": "cardshop",
+            "watchers": "7",
+            "view_item_url": "https://www.ebay.com/itm/1",
+        }
+
+    def test_a_sparse_item_flattens_to_nulls_not_errors(self, monkeypatch):
+        client, _ = self._client_with_pages(monkeypatch, [[{"ItemID": "1"}]])
+        (row,) = client.get_watchlist_items()
+        assert row["item_id"] == "1"
+        assert row["price"] is None and row["seller_user_id"] is None
+
+    def test_raw_nodes_are_available_for_callers_needing_more_fields(self, monkeypatch):
+        item = {**self._item("1"), "ShippingDetails": {"ShippingType": "Free"}}
+        client, _ = self._client_with_pages(monkeypatch, [[item]])
+        (node,) = client.get_watchlist_items(flatten=False)
+        assert node["ShippingDetails"] == {"ShippingType": "Free"}
+
+    def test_sort_and_detail_level_are_omitted_when_unset(self, monkeypatch):
+        client, bodies = self._client_with_pages(monkeypatch, [[self._item("1")]])
+        client.get_watchlist_items(sort=None, detail_level=None)
+        assert "<Sort>" not in bodies[0]
+        assert "<DetailLevel>" not in bodies[0]
+
+    def test_max_pages_caps_the_sweep(self, monkeypatch):
+        pages = [[self._item("1")], [self._item("2")], [self._item("3")]]
+        client, bodies = self._client_with_pages(monkeypatch, pages)
+        assert len(client.get_watchlist_items(max_pages=2)) == 2
+        assert len(bodies) == 2
+
+    def test_a_nonsense_page_size_is_rejected_before_any_call(self, monkeypatch):
+        client = _client(monkeypatch)
+        with pytest.raises(ValueError, match="entries_per_page"):
+            client.get_watchlist_items(entries_per_page=0)

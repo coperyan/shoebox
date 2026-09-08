@@ -38,6 +38,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `TradingClient.get_watchlist_items()` — read the watch list of the account
+  behind the Trading token (GetMyeBayBuying `WatchList`). The Buy REST APIs
+  have no watch-list resource, so Trading is the only route; returns one
+  flattened dict per watched listing (price, bids, time left, seller,
+  watchers), or the raw nodes with `flatten=False`. GetMyeBaySelling and
+  GetMyeBayBuying now share one paging loop (`_page_my_ebay_list`) instead of
+  keeping two that can drift apart.
 - **`enhance-listing-titles`** — improve the titles of listings already live.
   Reads a listings dataframe — by default the BigQuery view
   `<ebay_dataset>.v_active_listing_details`, or any CSV / JSONL with `item_id`,

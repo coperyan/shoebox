@@ -391,8 +391,94 @@ class TradingClient:
         return ordered, failures
 
     # ------------------------------------------------------------------
-    # GetMyeBaySelling
+    # My eBay lists (GetMyeBaySelling / GetMyeBayBuying)
     # ------------------------------------------------------------------
+
+    def _page_my_ebay_list(
+        self,
+        *,
+        call_name: str,
+        container: str,
+        sort: str | None,
+        entries_per_page: int,
+        page_number: int,
+        max_pages: int | None,
+        site_id: str,
+        compatibility_level: str,
+        detail_level: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        Page one container of a My eBay call and return its raw ``Item`` nodes.
+
+        GetMyeBaySelling and GetMyeBayBuying share a request shape -- a named
+        container carrying ``Include``, ``Pagination`` and an optional ``Sort``
+        -- and answer with the same ``ItemArray`` / ``PaginationResult`` pair,
+        so both go through one loop instead of two that can drift apart.
+
+        Stops at an empty page, at eBay's reported page count, or after
+        ``max_pages`` pages from ``page_number``.
+        """
+        if entries_per_page < 1:
+            raise ValueError("entries_per_page must be >= 1")
+
+        items: list[dict[str, Any]] = []
+        current_page = page_number
+        sort_xml = f"<Sort>{_xml_escape(sort)}</Sort>" if sort else ""
+        detail_xml = (
+            f"<DetailLevel>{_xml_escape(detail_level)}</DetailLevel>" if detail_level else ""
+        )
+
+        while True:
+            body = f"""<?xml version="1.0" encoding="utf-8"?>
+                    <{call_name}Request xmlns="{EBAY_NS}">
+                    <RequesterCredentials>
+                        <eBayAuthToken>{self.token}</eBayAuthToken>
+                    </RequesterCredentials>
+                    <ErrorLanguage>en_US</ErrorLanguage>
+                    <WarningLevel>High</WarningLevel>
+                    {detail_xml}
+                    <{container}>
+                        <Include>true</Include>
+                        <Pagination>
+                        <EntriesPerPage>{entries_per_page}</EntriesPerPage>
+                        <PageNumber>{current_page}</PageNumber>
+                        </Pagination>
+                        {sort_xml}
+                    </{container}>
+                    </{call_name}Request>"""
+
+            payload = self._trading_call(
+                call_name=call_name,
+                body=body,
+                site_id=site_id,
+                compatibility_level=compatibility_level,
+            )
+
+            page_items = [
+                item
+                for item in ensure_list(dig(payload, [container, "ItemArray", "Item"], None))
+                if isinstance(item, dict)
+            ]
+            items.extend(page_items)
+
+            total_pages_text = dig(
+                payload, [container, "PaginationResult", "TotalNumberOfPages"], None
+            )
+            try:
+                total_pages = int(total_pages_text) if total_pages_text else None
+            except (TypeError, ValueError):
+                total_pages = None
+
+            if not page_items:
+                break
+            if total_pages is not None and current_page >= total_pages:
+                break
+            if max_pages is not None and (current_page - page_number + 1) >= max_pages:
+                break
+
+            current_page += 1
+
+        return items
 
     def get_my_ebay_selling_items(
         self,
@@ -413,71 +499,22 @@ class TradingClient:
         sent them. The ``get_*_listings`` methods flatten them to a fixed shape;
         callers that need fields outside that shape (ListingType, Variations,
         the natural-search URL) read the nodes directly.
-
-        Stops at an empty page, at eBay's reported page count, or after
-        ``max_pages`` pages from ``page_number``.
         """
         if list_name not in MY_EBAY_SELLING_LISTS:
             raise ValueError(
                 f"Unknown GetMyeBaySelling list {list_name!r}; expected one of "
                 f"{', '.join(MY_EBAY_SELLING_LISTS)}"
             )
-        if entries_per_page < 1:
-            raise ValueError("entries_per_page must be >= 1")
-
-        items: list[dict[str, Any]] = []
-        current_page = page_number
-
-        while True:
-            body = f"""<?xml version="1.0" encoding="utf-8"?>
-                    <GetMyeBaySellingRequest xmlns="{EBAY_NS}">
-                    <RequesterCredentials>
-                        <eBayAuthToken>{self.token}</eBayAuthToken>
-                    </RequesterCredentials>
-                    <ErrorLanguage>en_US</ErrorLanguage>
-                    <WarningLevel>High</WarningLevel>
-                    <{list_name}>
-                        <Include>true</Include>
-                        <Pagination>
-                        <EntriesPerPage>{entries_per_page}</EntriesPerPage>
-                        <PageNumber>{current_page}</PageNumber>
-                        </Pagination>
-                        <Sort>{_xml_escape(sort)}</Sort>
-                    </{list_name}>
-                    </GetMyeBaySellingRequest>"""
-
-            payload = self._trading_call(
-                call_name="GetMyeBaySelling",
-                body=body,
-                site_id=site_id,
-                compatibility_level=compatibility_level,
-            )
-
-            page_items = [
-                item
-                for item in ensure_list(dig(payload, [list_name, "ItemArray", "Item"], None))
-                if isinstance(item, dict)
-            ]
-            items.extend(page_items)
-
-            total_pages_text = dig(
-                payload, [list_name, "PaginationResult", "TotalNumberOfPages"], None
-            )
-            try:
-                total_pages = int(total_pages_text) if total_pages_text else None
-            except (TypeError, ValueError):
-                total_pages = None
-
-            if not page_items:
-                break
-            if total_pages is not None and current_page >= total_pages:
-                break
-            if max_pages is not None and (current_page - page_number + 1) >= max_pages:
-                break
-
-            current_page += 1
-
-        return items
+        return self._page_my_ebay_list(
+            call_name="GetMyeBaySelling",
+            container=list_name,
+            sort=sort,
+            entries_per_page=entries_per_page,
+            page_number=page_number,
+            max_pages=max_pages,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
 
     @staticmethod
     def _flatten_selling_item(item: dict[str, Any]) -> dict[str, Any]:
@@ -591,6 +628,81 @@ class TradingClient:
             flat["quantity_remaining"] = 0
             results.append(flat)
         return results
+
+    # ------------------------------------------------------------------
+    # GetMyeBayBuying
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _flatten_watchlist_item(item: dict[str, Any]) -> dict[str, Any]:
+        """One watched listing, flattened to the fields a buyer cares about."""
+        price, currency = _money_to_parts(dig(item, ["SellingStatus", "CurrentPrice"], None))
+        bin_price, bin_currency = _money_to_parts(item.get("BuyItNowPrice"))
+        return {
+            "item_id": item.get("ItemID"),
+            "title": item.get("Title"),
+            "listing_type": item.get("ListingType"),
+            "listing_status": dig(item, ["SellingStatus", "ListingStatus"]),
+            "price": price,
+            "currency": currency,
+            "buy_it_now_price": bin_price,
+            "buy_it_now_currency": bin_currency,
+            "bid_count": dig(item, ["SellingStatus", "BidCount"]),
+            "quantity": item.get("Quantity"),
+            "quantity_sold": dig(item, ["SellingStatus", "QuantitySold"]),
+            "time_left": item.get("TimeLeft"),
+            "start_time": dig(item, ["ListingDetails", "StartTime"]),
+            "end_time": dig(item, ["ListingDetails", "EndTime"]),
+            "condition": item.get("ConditionDisplayName"),
+            "category_id": dig(item, ["PrimaryCategory", "CategoryID"]),
+            "seller_user_id": dig(item, ["Seller", "UserID"]),
+            "watchers": item.get("WatchCount"),
+            "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),
+        }
+
+    def get_watchlist_items(
+        self,
+        *,
+        flatten: bool = True,
+        sort: str | None = "TimeLeft",
+        detail_level: str | None = "ReturnAll",
+        entries_per_page: int = 100,
+        page_number: int = 1,
+        max_pages: int | None = None,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> list[dict[str, Any]]:
+        """
+        Everything on the token holder's eBay watch list.
+
+        GetMyeBayBuying ``WatchList``. This is the only way to read a watch
+        list: the Buy REST APIs (Browse, Offer, Order, Marketing, Deal, Feed)
+        have no watch-list resource, so there is nothing in ``ebay_rest`` to
+        call. Writes are Trading too -- ``AddToWatchList`` /
+        ``RemoveFromWatchList``.
+
+        The list belongs to whichever eBay user granted the Auth'n'Auth token
+        in ``configs/ebay_legacy.json`` -- for this repo, the store account.
+        Reading a different account's watch list means a second token.
+
+        ``flatten`` gives one dict per item in the shape of
+        ``_flatten_watchlist_item``; ``False`` returns the raw xmltodict nodes
+        for callers that need fields outside it. ``detail_level`` is sent as
+        the request-level ``DetailLevel`` (``ReturnAll`` for full item detail);
+        pass ``None`` to omit it, and likewise for ``sort``.
+        """
+        items = self._page_my_ebay_list(
+            call_name="GetMyeBayBuying",
+            container="WatchList",
+            sort=sort,
+            detail_level=detail_level,
+            entries_per_page=entries_per_page,
+            page_number=page_number,
+            max_pages=max_pages,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+        return [self._flatten_watchlist_item(item) for item in items] if flatten else items
 
     def end_listing(
         self,
