@@ -86,6 +86,21 @@ google_calendar:
   # Target calendar for the Topps release sync.
   calendar_id: your-calendar-id@group.calendar.google.com
 
+# Trading Card Database (tcdb.com) browser automation -- `shoebox tcdb-search`.
+# Optional: every key has a default. See docs/tcdb.md.
+tcdb:
+  # Persistent Chrome profile so the Cloudflare clearance and your TCDB login
+  # survive between runs (log in by hand once, tick "Remember").
+  profile_dir: data/tcdb_chrome_profile
+  # How long to wait for you to finish logging in before giving up.
+  login_timeout_s: 300
+  # Advanced-search defaults applied to every search unless overridden with a
+  # CLI flag or `set field=value` in the session. Any of: category, year,
+  # set_name, set_type, card_number, name, team, note.
+  search_defaults:
+    category: Baseball
+    # name: Bonds
+
 # Store-specific identity + eBay account values used when building listings.
 # Every field has a safe placeholder default in settings.py, so this whole
 # section is optional for the app to *load* -- but you must set real values

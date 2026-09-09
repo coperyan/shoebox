@@ -159,6 +159,25 @@ class StoreSettings(BaseModel):
     ad_campaigns: StoreAdCampaignSettings = Field(default_factory=StoreAdCampaignSettings)
 
 
+class TcdbSettings(BaseModel):
+    """Trading Card Database (tcdb.com) browser automation.
+
+    All fields default, so an existing config without a ``tcdb`` section still
+    validates.
+    """
+
+    # Persistent Chrome profile: keeps the Cloudflare clearance and the TCDB
+    # login cookie between runs. Lives under data/ (gitignored) by default.
+    profile_dir: str = "data/tcdb_chrome_profile"
+    # Seconds to wait for you to log in by hand before giving up.
+    login_timeout_s: int = 300
+    # Field defaults applied to every advanced search unless overridden on the
+    # command line or with `set field=value` in the session. Keys are the
+    # AdvancedSearchQuery field names: category, year, set_name, set_type,
+    # card_number, name, team, note.
+    search_defaults: dict[str, str] = Field(default_factory=dict)
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -170,6 +189,7 @@ class Settings(BaseModel):
     slack: SlackSettings
     google_calendar: GoogleCalendarSettings
     store: StoreSettings = Field(default_factory=StoreSettings)
+    tcdb: TcdbSettings = Field(default_factory=TcdbSettings)
 
 
 def _resolve_config_path(config_path: str | os.PathLike[str] | None = None) -> Path:

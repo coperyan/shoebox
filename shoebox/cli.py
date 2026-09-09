@@ -219,6 +219,33 @@ def main() -> None:
     p_asp.add_argument("--csv", help="Write every aspect/value pair to this path")
     p_asp.add_argument("--config", help="Path to searches.yaml (overrides paths.searches_file)")
 
+    # Interactive TCDB advanced search (real browser, manual login once per session)
+    p_tcdb = sub.add_parser(
+        "tcdb-search",
+        help="Search tcdb.com by card number with saved defaults; results open in Chrome",
+    )
+    p_tcdb.add_argument(
+        "card_numbers",
+        nargs="*",
+        help="Card numbers to search right away; the interactive prompt follows",
+    )
+    p_tcdb.add_argument("--category", help="Sport/category (default Baseball or config)")
+    p_tcdb.add_argument("--year")
+    p_tcdb.add_argument("--set-name", dest="set_name")
+    p_tcdb.add_argument(
+        "--set-type", dest="set_type", help="Code or label, e.g. M or 'Minor League'"
+    )
+    p_tcdb.add_argument("--name", help="Player name, e.g. Bonds")
+    p_tcdb.add_argument("--team")
+    p_tcdb.add_argument("--note")
+    p_tcdb.add_argument(
+        "--no-login", action="store_true", help="Skip the login check (search anonymously)"
+    )
+    p_tcdb.add_argument(
+        "--rows", type=int, default=0, help="Max result rows to print per search (0 = all)"
+    )
+    p_tcdb.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
+
     args = parser.parse_args()
 
     # Argument parsing (incl. --help) never touches config; do config-dependent
@@ -409,6 +436,24 @@ def main() -> None:
 
         sync_topps_calendar(dry_run=False, headless=False)
         return
+
+    if args.cmd == "tcdb-search":
+        from shoebox.pipelines.tcdb_search import run_tcdb_search
+
+        overrides = {
+            k: getattr(args, k)
+            for k in ("category", "year", "set_name", "set_type", "name", "team", "note")
+            if getattr(args, k)
+        }
+        raise SystemExit(
+            run_tcdb_search(
+                overrides=overrides,
+                card_numbers=args.card_numbers,
+                login=not args.no_login,
+                max_rows=args.rows,
+                profile_dir=args.profile_dir,
+            )
+        )
 
 
 if __name__ == "__main__":
