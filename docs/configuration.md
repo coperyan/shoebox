@@ -89,6 +89,7 @@ An entry that is already an existing file path is used as-is.
 | `header` | str | Entry name in `ebay_rest.json` → `headers` (e.g. `US`) |
 | `path` | str | **Directory** containing `ebay_rest.json` (default `configs`) |
 | `campaign_id` | str | Default promoted-listings campaign used when a flow doesn't choose one via `utils/ad_campaign.py` |
+| `trading_token_path` | str | Trading API (Auth'n'Auth) token file, `{"token": "..."}` (default `configs/ebay_legacy.json`). Read lazily, only by pipelines that call the Trading API |
 
 ### `slack`
 
@@ -262,8 +263,8 @@ which key rejected each listing — use
   `ebay_rest` library (applications/users/headers/key_pairs). See the
   instructions embedded in the template.
 - **`configs/ebay_legacy.json`** — `{"token": "<Trading API auth token>"}`,
-  read by `clients/ebay_legacy.py` (path relative to the current working
-  directory, so run from the repo root).
+  read by `clients/ebay/trading.py` on first Trading call. Location set by
+  `ebay.trading_token_path`.
 - **`configs/gcp.json`** — standard service-account key referenced by
   `gcp.service_account_json`.
 - **`configs/title_crosswalk.yaml`** — committed (not secret). `teams:` maps the

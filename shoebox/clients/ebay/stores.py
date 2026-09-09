@@ -1,7 +1,7 @@
 """Sell Stores API: the eBay Store category tree.
 
-Replaces the Trading-API (XML) implementation that previously lived in
-``clients/ebay_legacy.py``. This uses the same OAuth token as the rest of the
+Replaces the Trading-API (XML) implementation that previously lived in the
+Trading client. This uses the same OAuth token as the rest of the
 REST pipelines, so no Auth'n'Auth token is involved.
 
 Requires the ``sell.stores`` OAuth scope on a token from the authorization

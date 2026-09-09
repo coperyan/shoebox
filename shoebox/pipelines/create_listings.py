@@ -6,13 +6,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from shoebox.clients.bigquery import BigQueryClient
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.image_log import ImageLogClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
 from shoebox.models.ebay_listing import EbayListingResult
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.pipelines.load_listing_queue_from_excel import create_queue_file
+from shoebox.services.listings import ListingService
 from shoebox.settings import ensure_runtime_dirs, get_settings
 from shoebox.transforms.listing_builder import build_draft
 from shoebox.utils.ad_campaign import get_ad_campaign
@@ -78,7 +79,7 @@ def _create_one_listing(
     *,
     sku: str,
     quick_title: str,
-    ebay: EbayClient,
+    listings: ListingService,
     img_client: ImageLogClient,
     price_scrape_client: PriceScraper,
     publish: bool,
@@ -186,7 +187,7 @@ def _create_one_listing(
 
     logger.debug("Inventory item: %s", draft.inventory_item)
     logger.debug("Offer: %s", draft.offer)
-    resp = ebay.create_listing_from_inventory_flow(
+    resp = listings.create_listing(
         sku=sku,
         inventory_item=draft.inventory_item,
         offer=draft.offer,
@@ -240,7 +241,7 @@ def run_listings(
 
     img_client = ImageLogClient(settings=settings)
     price_scrape_client = PriceScraper()
-    ebay = EbayClient(settings=settings)
+    listings = ListingService(EbayClient(settings=settings))
 
     results_path = Path(settings.paths.exports_dir) / "jsonl" / "ebay_listings.jsonl"
 
@@ -265,7 +266,7 @@ def run_listings(
                 q,
                 sku=sku,
                 quick_title=quick_title,
-                ebay=ebay,
+                listings=listings,
                 img_client=img_client,
                 price_scrape_client=price_scrape_client,
                 publish=publish,

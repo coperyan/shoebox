@@ -65,9 +65,10 @@ copy is a working starting point. The config path can be overridden with the
    (default `configs`); the full file path can be overridden with the
    `EBAY_REST_CONFIG_PATH` environment variable.
 4. Obtain a Trading API auth token for the seller account and place it in
-   `configs/ebay_legacy.json`. The Trading client reads
-   `configs/ebay_legacy.json` relative to the working directory, so run
-   commands from the repo root.
+   `configs/ebay_legacy.json` (or wherever `ebay.trading_token_path` in
+   `app.yaml` points; relative paths resolve from the working directory, like
+   `ebay.path`). Only the pipelines that use the Trading API read it, so a
+   REST-only setup can leave it out.
 5. Scopes needed by the REST user token (pre-filled in the template):
    `sell.inventory`, `sell.marketing`, `sell.account`, `sell.fulfillment`,
    `sell.analytics.readonly`, `sell.negotiation`, `sell.stores`, plus the base

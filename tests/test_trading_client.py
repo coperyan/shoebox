@@ -1,4 +1,4 @@
-"""Concurrency and connection reuse in the Trading client."""
+"""Trading client: connection reuse, concurrency, quota handling, GetMyeBaySelling paging."""
 
 from __future__ import annotations
 
@@ -6,13 +6,13 @@ import threading
 
 import pytest
 
-from shoebox.clients.ebay_legacy import eBayLegacyClient
+from shoebox.clients.ebay.trading import TradingClient
 
 
-def _client(monkeypatch) -> eBayLegacyClient:
+def _client(monkeypatch) -> TradingClient:
     """A client with no credentials read and no network wired up."""
-    monkeypatch.setattr(eBayLegacyClient, "_authenticate", lambda self: None)
-    client = eBayLegacyClient()
+    monkeypatch.setattr(TradingClient, "_authenticate", lambda self: None)
+    client = TradingClient()
     client.token = "test-token"
     return client
 
@@ -23,7 +23,7 @@ class TestSession:
         assert client._session is not None
 
         adapter = client._session.get_adapter("https://api.ebay.com/ws/api.dll")
-        assert adapter._pool_maxsize >= eBayLegacyClient.pool_size
+        assert adapter._pool_maxsize >= TradingClient.pool_size
 
     def test_trading_calls_go_through_the_session(self, monkeypatch):
         client = _client(monkeypatch)
@@ -54,7 +54,7 @@ class TestGetItemDetailsBulk:
     def test_results_keep_the_requested_order(self, monkeypatch):
         client = _client(monkeypatch)
         monkeypatch.setattr(
-            eBayLegacyClient,
+            TradingClient,
             "get_item_details",
             lambda self, item_id, **kw: {"item_id": item_id},
         )
@@ -73,7 +73,7 @@ class TestGetItemDetailsBulk:
                 raise RuntimeError("GetItem exploded")
             return {"item_id": item_id}
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", flaky)
+        monkeypatch.setattr(TradingClient, "get_item_details", flaky)
         details, failures = client.get_item_details_bulk(["1", "2", "3"], max_workers=4)
 
         assert [d["item_id"] for d in details] == ["1", "3"]
@@ -88,7 +88,7 @@ class TestGetItemDetailsBulk:
             barrier.wait()
             return {"item_id": item_id}
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", blocking)
+        monkeypatch.setattr(TradingClient, "get_item_details", blocking)
         details, failures = client.get_item_details_bulk(["1", "2", "3", "4"], max_workers=4)
         assert len(details) == 4
 
@@ -109,14 +109,14 @@ class TestGetItemDetailsBulk:
                 with lock:
                     live -= 1
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", counting)
+        monkeypatch.setattr(TradingClient, "get_item_details", counting)
         client.get_item_details_bulk([str(i) for i in range(80)], max_workers=1000)
-        assert peak <= eBayLegacyClient.pool_size
+        assert peak <= TradingClient.pool_size
 
     def test_progress_is_reported(self, monkeypatch):
         client = _client(monkeypatch)
         monkeypatch.setattr(
-            eBayLegacyClient, "get_item_details", lambda self, item_id, **kw: {"item_id": item_id}
+            TradingClient, "get_item_details", lambda self, item_id, **kw: {"item_id": item_id}
         )
         seen = []
         client.get_item_details_bulk(
@@ -131,7 +131,7 @@ class TestGetItemDetailsBulk:
         def explode(self, item_id, **kw):
             raise AssertionError("should not be called")
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", explode)
+        monkeypatch.setattr(TradingClient, "get_item_details", explode)
         assert client.get_item_details_bulk([]) == ([], {})
 
 
@@ -152,7 +152,7 @@ class TestPartialSnapshotGuard:
                 return details, failures
 
         class FakeEbay:
-            legacy_api = FakeLegacy()
+            trading = FakeLegacy()
 
         wrote = []
         monkeypatch.setattr(mod, "EbayClient", lambda: FakeEbay())
@@ -183,7 +183,7 @@ class TestPartialSnapshotGuard:
                 raise SystemExit  # stop before the GCS/BigQuery leg
 
         class FakeEbay:
-            legacy_api = FakeLegacy()
+            trading = FakeLegacy()
 
         monkeypatch.setattr(mod, "EbayClient", lambda: FakeEbay())
         monkeypatch.setattr(mod, "GCSClient", lambda: None)
@@ -199,7 +199,7 @@ class TestQuotaExhaustion:
     """Error 518 is a daily allowance, so the only sane response is to stop."""
 
     def test_quota_error_is_raised_as_its_own_type(self, monkeypatch):
-        from shoebox.clients.ebay_legacy import TradingQuotaExceeded
+        from shoebox.clients.ebay.trading import TradingQuotaExceeded
 
         client = _client(monkeypatch)
 
@@ -219,7 +219,7 @@ class TestQuotaExhaustion:
             )
 
     def test_other_failures_stay_ordinary_errors(self, monkeypatch):
-        from shoebox.clients.ebay_legacy import TradingQuotaExceeded
+        from shoebox.clients.ebay.trading import TradingQuotaExceeded
 
         client = _client(monkeypatch)
 
@@ -239,7 +239,7 @@ class TestQuotaExhaustion:
         assert not isinstance(excinfo.value, TradingQuotaExceeded)
 
     def test_the_sweep_stops_instead_of_hammering_the_wall(self, monkeypatch):
-        from shoebox.clients.ebay_legacy import TradingQuotaExceeded
+        from shoebox.clients.ebay.trading import TradingQuotaExceeded
 
         client = _client(monkeypatch)
         attempted = []
@@ -250,10 +250,117 @@ class TestQuotaExhaustion:
                 raise TradingQuotaExceeded("allowance gone")
             return {"item_id": item_id}
 
-        monkeypatch.setattr(eBayLegacyClient, "get_item_details", quota_after_10)
+        monkeypatch.setattr(TradingClient, "get_item_details", quota_after_10)
 
         with pytest.raises(TradingQuotaExceeded, match="Fetched"):
             client.get_item_details_bulk([str(i) for i in range(500)], max_workers=4)
 
         # Nowhere near all 500 -- the remaining work was cancelled.
         assert len(attempted) < 100
+
+
+class TestGetMyeBaySelling:
+    """One pager behind active / scheduled / out-of-stock, so they cannot drift apart."""
+
+    @staticmethod
+    def _item(item_id, quantity="1", sold="0", price="12.34"):
+        return {
+            "ItemID": item_id,
+            "Title": f"card {item_id}",
+            "SKU": f"S{item_id}",
+            "Quantity": quantity,
+            "WatchCount": "3",
+            "SellingStatus": {
+                "ListingStatus": "Active",
+                "QuantitySold": sold,
+                "CurrentPrice": {"@currencyID": "USD", "#text": price},
+            },
+            "ListingDetails": {
+                "StartTime": "2026-01-01T00:00:00.000Z",
+                "EndTime": "2026-02-01T00:00:00.000Z",
+                "ViewItemURL": f"https://www.ebay.com/itm/{item_id}",
+            },
+        }
+
+    def _client_with_pages(self, monkeypatch, list_name, pages):
+        client = _client(monkeypatch)
+        bodies: list[str] = []
+
+        def fake_call(self, *, call_name, body, site_id, compatibility_level, timeout=60):
+            assert call_name == "GetMyeBaySelling"
+            bodies.append(body)
+            page = pages[len(bodies) - 1]
+            return {
+                list_name: {
+                    "ItemArray": {"Item": page},
+                    "PaginationResult": {"TotalNumberOfPages": str(len(pages))},
+                }
+            }
+
+        monkeypatch.setattr(TradingClient, "_trading_call", fake_call)
+        return client, bodies
+
+    def test_pages_until_ebays_reported_last_page_and_keeps_order(self, monkeypatch):
+        # Page 2 is a single item: xmltodict gives a dict, not a one-element list.
+        pages = [[self._item("1"), self._item("2")], self._item("3")]
+        client, bodies = self._client_with_pages(monkeypatch, "ActiveList", pages)
+
+        listings = client.get_active_listings()
+
+        assert [x["item_id"] for x in listings] == ["1", "2", "3"]
+        assert len(bodies) == 2
+        assert "<ActiveList>" in bodies[0] and "<Sort>TimeLeft</Sort>" in bodies[0]
+        assert "<PageNumber>2</PageNumber>" in bodies[1]
+
+    def test_flattened_shape(self, monkeypatch):
+        client, _ = self._client_with_pages(monkeypatch, "ActiveList", [[self._item("1")]])
+        (row,) = client.get_active_listings()
+        assert row == {
+            "item_id": "1",
+            "title": "card 1",
+            "sku": "S1",
+            "listing_status": "Active",
+            "quantity": "1",
+            "quantity_sold": "0",
+            "price": "12.34",
+            "currency": "USD",
+            "start_time": "2026-01-01T00:00:00.000Z",
+            "end_time": "2026-02-01T00:00:00.000Z",
+            "watchers": "3",
+            "view_item_url": "https://www.ebay.com/itm/1",
+        }
+
+    def test_scheduled_uses_its_own_container_and_sort(self, monkeypatch):
+        client, bodies = self._client_with_pages(monkeypatch, "ScheduledList", [[self._item("9")]])
+        assert [x["item_id"] for x in client.get_scheduled_listings()] == ["9"]
+        assert "<ScheduledList>" in bodies[0] and "<Sort>StartTime</Sort>" in bodies[0]
+
+    def test_out_of_stock_keeps_only_fully_sold_listings_as_ints(self, monkeypatch):
+        pages = [
+            [
+                self._item("sold-out", quantity="2", sold="2"),
+                self._item("in-stock", quantity="2", sold="1"),
+                self._item("garbage", quantity="n/a", sold="0"),
+            ]
+        ]
+        client, _ = self._client_with_pages(monkeypatch, "ActiveList", pages)
+        (row,) = client.get_out_of_stock_listings()
+        assert row["item_id"] == "sold-out"
+        assert (row["quantity"], row["quantity_sold"], row["quantity_remaining"]) == (2, 2, 0)
+
+    def test_max_pages_caps_the_sweep(self, monkeypatch):
+        pages = [[self._item("1")], [self._item("2")], [self._item("3")]]
+        client, bodies = self._client_with_pages(monkeypatch, "ActiveList", pages)
+        assert len(client.get_active_listings(max_pages=2)) == 2
+        assert len(bodies) == 2
+
+    def test_raw_nodes_are_available_for_callers_needing_more_fields(self, monkeypatch):
+        item = {**self._item("1"), "ListingType": "FixedPriceItem"}
+        client, _ = self._client_with_pages(monkeypatch, "ActiveList", [[item]])
+        (node,) = client.get_my_ebay_selling_items("ActiveList", sort="TimeLeft")
+        assert node["ListingType"] == "FixedPriceItem"
+
+    def test_unknown_list_names_are_rejected_before_any_call(self, monkeypatch):
+        client = _client(monkeypatch)
+        with pytest.raises(ValueError, match="Unknown GetMyeBaySelling list"):
+            client.get_my_ebay_selling_items("<Evil>", sort="TimeLeft")

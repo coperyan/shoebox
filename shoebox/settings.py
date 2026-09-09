@@ -37,6 +37,9 @@ class eBaySettings(BaseModel):
     header: str
     path: str
     campaign_id: str
+    # Trading API (Auth'n'Auth) token file, {"token": "..."}. Only read when a
+    # pipeline actually uses the Trading client.
+    trading_token_path: str = "configs/ebay_legacy.json"
 
 
 class GCSSettings(BaseModel):

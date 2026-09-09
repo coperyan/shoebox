@@ -1,4 +1,4 @@
 {
-  "_instructions": "Copy to configs/ebay_legacy.json and set 'token' to an eBay Trading API auth token (used by clients/ebay_legacy.py for legacy Trading API calls).",
+  "_instructions": "Copy to configs/ebay_legacy.json and set 'token' to an eBay Trading API auth token (used by clients/ebay/trading.py for legacy Trading API calls).",
   "token": ""
 }

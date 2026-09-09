@@ -618,7 +618,7 @@ ORDER BY alerts DESC;
 |---|---|
 | [shoebox/models/saved_search.py](../shoebox/models/saved_search.py) | YAML schema, defaults inheritance, validation, channel aliases |
 | [shoebox/transforms/search_filters.py](../shoebox/transforms/search_filters.py) | Browse `filter`/`aspect_filter` builders, post-filters, rejection reasons |
-| [shoebox/clients/ebay_rest/browse.py](../shoebox/clients/ebay_rest/browse.py) | Browse search + aspect refinements |
+| [shoebox/clients/ebay/browse.py](../shoebox/clients/ebay/browse.py) | Browse search + aspect refinements |
 | [shoebox/pipelines/watch_searches.py](../shoebox/pipelines/watch_searches.py) | The run loop: fetch → filter → diff → alert → commit |
 | [shoebox/clients/search_state.py](../shoebox/clients/search_state.py) | Seen-cache, run state, lock, hits append log → GCS → BigQuery |
 | [shoebox/models/search_hit.py](../shoebox/models/search_hit.py) | `SeenEntry` (local dedup) and `SearchHit` (BigQuery row) |

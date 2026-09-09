@@ -76,7 +76,7 @@ individual cards; per-card scans and a hero image are optional.
 ### `relist-listings`
 Finds aged listings (≥ 90 days, price > $2, ≥ 100 impressions, no watchers by
 default), re-hosts their images in GCS, reprices, and relists via
-`refresh_listing_flow` (old offer withdrawn, new offer published, promotion
+`ListingService.relist_listing` (old offer withdrawn, new offer published, promotion
 re-created). For listings over $1.99 the new price requires **Slack approval**
 (Approve button, or threaded reply to override); timeout or an unrecognized
 reply skips that listing. Cheaper/no-view listings are auto-repriced by rule.

@@ -32,9 +32,9 @@ The package follows a layered layout under `shoebox/`:
 |---|---|---|
 | Models | `models/` | Pydantic v2 types: queue rows, image-log entries, listing drafts/results, typed views of eBay API payloads (`models/ebay/`) |
 | Transforms | `transforms/` | Pure(ish) builders: queue row → eBay inventory-item/offer payloads, CSV normalizers, queue enrichment against BigQuery |
-| Clients | `clients/` | External systems: GCS, BigQuery, eBay REST (`clients/ebay_rest/`), eBay Trading API (`ebay_legacy.py`), 130point price scraper, Topps release scraper, Google Calendar, image log, saved-search state (`search_state.py`) |
+| Clients | `clients/` | External systems: GCS, BigQuery, eBay REST + Trading (`clients/ebay/`), 130point price scraper, Topps release scraper, Google Calendar, image log, saved-search state (`search_state.py`) |
 | Pipelines | `pipelines/` | End-to-end runnable workflows (one per CLI command, roughly) |
-| Services | `services/` | Long-running or interactive components: the Slack command bot, the orders-awaiting-shipment display/messenger |
+| Services | `services/` | Workflows and long-running components: `ListingService` (create / relist / retitle / recategorize listings across the eBay APIs), the Slack command bot, the orders-awaiting-shipment display/messenger |
 | UI | `ui/` | Streamlit app for building the listing queue |
 | Utils | `utils/` | Slack messaging (`slack.py`, `slack_formatting.py`), pricing math and reply parsing (`pricing.py`), SKU hashing, JSONL helpers, ad-campaign routing, team-name shortening, rich-table rendering |
 | Storage | `storage/` | `TableAsset` — the CSV → JSONL → GCS → BigQuery loading abstraction used by metadata sync |
@@ -93,7 +93,7 @@ views via `transforms/queue_enrichment.build_enriched_json` and write
 that file row by row: optionally scrapes comparable prices (130point.com) and
 asks for confirmation in Slack, uploads front/back scans through the image log,
 builds the inventory-item and offer payloads (`transforms/listing_builder`),
-and drives `EbayClient.create_listing_from_inventory_flow` (upsert inventory
+and drives `ListingService.create_listing` (upsert inventory
 item → create offer → publish → promote). Every result is appended to
 `exports/jsonl/ebay_listings.jsonl`, which is uploaded to GCS and loaded into
 BigQuery at the end of the run, then deleted locally.
@@ -108,9 +108,9 @@ The `v_active_listing_details` view stitches the latest snapshots together.
 
 | Service | Used for | Client |
 |---|---|---|
-| eBay Sell APIs (REST, via [`ebay_rest`](https://github.com/matecsaj/ebay_rest)) | Inventory items, offers, publishing, promoted listings, analytics, orders, negotiation | `clients/ebay_rest/` |
-| eBay Buy Browse API | Saved-search polling for new listings | `clients/ebay_rest/browse.py`, `pipelines/watch_searches.py` |
-| eBay Trading API (legacy XML) | GetItem details, active/scheduled listing lists, ending listings, adding SKUs | `clients/ebay_legacy.py` |
+| eBay Sell APIs (REST, via [`ebay_rest`](https://github.com/matecsaj/ebay_rest)) | Inventory items, offers, publishing, promoted listings, analytics, orders, negotiation | `clients/ebay/` |
+| eBay Buy Browse API | Saved-search polling for new listings | `clients/ebay/browse.py`, `pipelines/watch_searches.py` |
+| eBay Trading API (legacy XML) | GetItem details, active/scheduled listing lists, ending listings, adding SKUs | `clients/ebay/trading.py` |
 | Google Cloud Storage | Card images, metadata staging, log staging | `clients/gcs.py`, `clients/image_log.py` |
 | BigQuery | Metadata source of truth, all monitoring/log tables | `clients/bigquery.py` |
 | Slack (Bolt + Socket Mode) | Notifications, price approvals, command bot | `utils/slack.py`, `services/slack_bot_service.py` |
@@ -152,7 +152,7 @@ These are intentional-or-historical behaviors worth knowing before changing code
   `store.policies.fulfillment_policy_id_variation`.
 - `run_query` does naive `{param}` string substitution — only ever call it
   with trusted parameter values.
-- eBay error retries are baked into `clients/ebay_rest/client.py`: transient
+- eBay error retries are baked into `clients/ebay/inventory.py`: transient
   error 25001 on inventory upserts, "ad already exists" 35036 on promotion,
   and 38227 (listing not yet visible to the marketing API) on volume-discount
   promotions, which retries up to 10× with escalating waits.

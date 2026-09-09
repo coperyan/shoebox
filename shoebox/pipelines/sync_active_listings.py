@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 
 from shoebox.clients.bigquery import BigQueryClient
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.settings import get_settings
 from shoebox.utils.slack import notify
@@ -22,7 +22,7 @@ def sync_active_listings():
     logger.info("Starting sync_active_listings..")
     notify(settings.slack.notify_channel, "Starting sync_active_listings..")
 
-    active_listings = ebay_api.legacy_api.get_active_listings()
+    active_listings = ebay_api.trading.get_active_listings()
 
     now = datetime.now(UTC)
     now_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")

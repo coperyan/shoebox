@@ -62,7 +62,7 @@ class FakeLegacy:
 class FakeEbay:
     def __init__(self, items: list[dict], fail_ids: set[str] | None = None):
         self.negotiation = FakeNegotiation([d["item_id"] for d in items], fail_ids)
-        self.legacy_api = FakeLegacy({d["item_id"]: d for d in items})
+        self.trading = FakeLegacy({d["item_id"]: d for d in items})
 
 
 class Recorder:
