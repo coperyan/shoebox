@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `TradingClient.get_watch_list` / `get_watch_list_items` — the account's
+  buyer-side watch list via Trading `GetMyeBayBuying` (`WatchList`
+  container). Pages like the selling lists; the flattened rows carry item_id,
+  title, seller, current price, Buy It Now price, bid count, time left, end
+  time, and the listing URL.
 - **`enhance-listing-titles`** — improve the titles of listings already live.
   Reads a listings dataframe — by default the BigQuery view
   `<ebay_dataset>.v_active_listing_details`, or any CSV / JSONL with `item_id`,

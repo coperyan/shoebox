@@ -364,3 +364,102 @@ class TestGetMyeBaySelling:
         client = _client(monkeypatch)
         with pytest.raises(ValueError, match="Unknown GetMyeBaySelling list"):
             client.get_my_ebay_selling_items("<Evil>", sort="TimeLeft")
+
+
+class TestGetWatchList:
+    """GetMyeBayBuying WatchList: the account's buyer-side watch list."""
+
+    @staticmethod
+    def _item(item_id, price="12.34"):
+        return {
+            "ItemID": item_id,
+            "Title": f"card {item_id}",
+            "ListingType": "Chinese",
+            "Quantity": "1",
+            "TimeLeft": "P1DT2H3M4S",
+            "BuyItNowPrice": {"@currencyID": "USD", "#text": "50.00"},
+            "Seller": {"UserID": f"seller-{item_id}", "FeedbackScore": "100"},
+            "SellingStatus": {
+                "ListingStatus": "Active",
+                "BidCount": "2",
+                "CurrentPrice": {"@currencyID": "USD", "#text": price},
+            },
+            "ListingDetails": {
+                "StartTime": "2026-01-01T00:00:00.000Z",
+                "EndTime": "2026-02-01T00:00:00.000Z",
+                "ViewItemURL": f"https://www.ebay.com/itm/{item_id}",
+            },
+            "PictureDetails": {"GalleryURL": f"https://i.ebayimg.com/{item_id}.jpg"},
+        }
+
+    def _client_with_pages(self, monkeypatch, pages):
+        client = _client(monkeypatch)
+        bodies: list[str] = []
+
+        def fake_call(self, *, call_name, body, site_id, compatibility_level, timeout=60):
+            assert call_name == "GetMyeBayBuying"
+            bodies.append(body)
+            page = pages[len(bodies) - 1]
+            return {
+                "WatchList": {
+                    "ItemArray": {"Item": page},
+                    "PaginationResult": {"TotalNumberOfPages": str(len(pages))},
+                }
+            }
+
+        monkeypatch.setattr(TradingClient, "_trading_call", fake_call)
+        return client, bodies
+
+    def test_pages_until_last_page_and_keeps_order(self, monkeypatch):
+        # Page 2 is a single item: xmltodict gives a dict, not a one-element list.
+        pages = [[self._item("1"), self._item("2")], self._item("3")]
+        client, bodies = self._client_with_pages(monkeypatch, pages)
+
+        watched = client.get_watch_list()
+
+        assert [x["item_id"] for x in watched] == ["1", "2", "3"]
+        assert len(bodies) == 2
+        assert "<WatchList>" in bodies[0] and "<Sort>EndTime</Sort>" in bodies[0]
+        assert "<PageNumber>2</PageNumber>" in bodies[1]
+
+    def test_flattened_shape(self, monkeypatch):
+        client, _ = self._client_with_pages(monkeypatch, [[self._item("1")]])
+        (row,) = client.get_watch_list()
+        assert row == {
+            "item_id": "1",
+            "title": "card 1",
+            "seller": "seller-1",
+            "listing_type": "Chinese",
+            "listing_status": "Active",
+            "price": "12.34",
+            "currency": "USD",
+            "buy_it_now_price": "50.00",
+            "bid_count": "2",
+            "quantity": "1",
+            "time_left": "P1DT2H3M4S",
+            "start_time": "2026-01-01T00:00:00.000Z",
+            "end_time": "2026-02-01T00:00:00.000Z",
+            "view_item_url": "https://www.ebay.com/itm/1",
+            "gallery_url": "https://i.ebayimg.com/1.jpg",
+        }
+
+    def test_empty_watch_list_returns_no_rows(self, monkeypatch):
+        client = _client(monkeypatch)
+        monkeypatch.setattr(
+            TradingClient,
+            "_trading_call",
+            lambda self, **kw: {"WatchList": {"PaginationResult": {"TotalNumberOfPages": "0"}}},
+        )
+        assert client.get_watch_list() == []
+
+    def test_sort_is_escaped_and_max_pages_caps_the_sweep(self, monkeypatch):
+        pages = [[self._item("1")], [self._item("2")], [self._item("3")]]
+        client, bodies = self._client_with_pages(monkeypatch, pages)
+        assert len(client.get_watch_list(sort="Current<Price", max_pages=2)) == 2
+        assert len(bodies) == 2
+        assert "<Sort>Current&lt;Price</Sort>" in bodies[0]
+
+    def test_raw_nodes_are_available(self, monkeypatch):
+        client, _ = self._client_with_pages(monkeypatch, [[self._item("1")]])
+        (node,) = client.get_watch_list_items()
+        assert node["Seller"]["FeedbackScore"] == "100"

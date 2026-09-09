@@ -105,8 +105,9 @@ class TradingClient:
 
     Covers the seller workflows that have no Sell REST equivalent: listing
     sweeps with item specifics (GetItem), active/scheduled lists
-    (GetMyeBaySelling), ending listings (EndItem), and revising listings that
-    were not created through the Inventory API (ReviseFixedPriceItem).
+    (GetMyeBaySelling), the account's buyer-side watch list (GetMyeBayBuying),
+    ending listings (EndItem), and revising listings that were not created
+    through the Inventory API (ReviseFixedPriceItem).
 
     Authenticates with an Auth'n'Auth user token read from ``token_path``
     (``{"token": "..."}``). Uses xmltodict for response parsing so downstream
@@ -591,6 +592,140 @@ class TradingClient:
             flat["quantity_remaining"] = 0
             results.append(flat)
         return results
+
+    # ------------------------------------------------------------------
+    # GetMyeBayBuying
+    # ------------------------------------------------------------------
+
+    def get_watch_list_items(
+        self,
+        *,
+        sort: str = "EndTime",
+        entries_per_page: int = 200,
+        page_number: int = 1,
+        max_pages: int | None = None,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> list[dict[str, Any]]:
+        """
+        Page through the authenticated user's watch list and return its raw ``Item`` nodes.
+
+        GetMyeBayBuying ``WatchList``: the listings this account is watching as
+        a *buyer*, whoever the seller is. The nodes are xmltodict dicts exactly
+        as eBay sent them; ``get_watch_list`` flattens them to a fixed shape.
+
+        ``sort`` is an eBay ItemSortTypeCodeType value (``EndTime``,
+        ``EndTimeDescending``, ``CurrentPrice``, ``BidCount``, ``Title``, ...).
+        Paging stops at an empty page, at eBay's reported page count, or after
+        ``max_pages`` pages from ``page_number``.
+        """
+        if entries_per_page < 1:
+            raise ValueError("entries_per_page must be >= 1")
+
+        items: list[dict[str, Any]] = []
+        current_page = page_number
+
+        while True:
+            body = f"""<?xml version="1.0" encoding="utf-8"?>
+                    <GetMyeBayBuyingRequest xmlns="{EBAY_NS}">
+                    <RequesterCredentials>
+                        <eBayAuthToken>{self.token}</eBayAuthToken>
+                    </RequesterCredentials>
+                    <ErrorLanguage>en_US</ErrorLanguage>
+                    <WarningLevel>High</WarningLevel>
+                    <DetailLevel>ReturnAll</DetailLevel>
+                    <WatchList>
+                        <Include>true</Include>
+                        <Pagination>
+                        <EntriesPerPage>{entries_per_page}</EntriesPerPage>
+                        <PageNumber>{current_page}</PageNumber>
+                        </Pagination>
+                        <Sort>{_xml_escape(sort)}</Sort>
+                    </WatchList>
+                    </GetMyeBayBuyingRequest>"""
+
+            payload = self._trading_call(
+                call_name="GetMyeBayBuying",
+                body=body,
+                site_id=site_id,
+                compatibility_level=compatibility_level,
+            )
+
+            page_items = [
+                item
+                for item in ensure_list(dig(payload, ["WatchList", "ItemArray", "Item"], None))
+                if isinstance(item, dict)
+            ]
+            items.extend(page_items)
+
+            total_pages_text = dig(
+                payload, ["WatchList", "PaginationResult", "TotalNumberOfPages"], None
+            )
+            try:
+                total_pages = int(total_pages_text) if total_pages_text else None
+            except (TypeError, ValueError):
+                total_pages = None
+
+            if not page_items:
+                break
+            if total_pages is not None and current_page >= total_pages:
+                break
+            if max_pages is not None and (current_page - page_number + 1) >= max_pages:
+                break
+
+            current_page += 1
+
+        return items
+
+    @staticmethod
+    def _flatten_watched_item(item: dict[str, Any]) -> dict[str, Any]:
+        """The fixed shape for a watched listing (someone else's, so no SKU/quantity_sold)."""
+        price, currency = _money_to_parts(dig(item, ["SellingStatus", "CurrentPrice"], None))
+        bin_price, _ = _money_to_parts(item.get("BuyItNowPrice"))
+        return {
+            "item_id": item.get("ItemID"),
+            "title": item.get("Title"),
+            "seller": dig(item, ["Seller", "UserID"]),
+            "listing_type": item.get("ListingType"),
+            "listing_status": dig(item, ["SellingStatus", "ListingStatus"]),
+            "price": price,
+            "currency": currency,
+            "buy_it_now_price": bin_price,
+            "bid_count": dig(item, ["SellingStatus", "BidCount"]),
+            "quantity": item.get("Quantity"),
+            "time_left": item.get("TimeLeft"),
+            "start_time": dig(item, ["ListingDetails", "StartTime"]),
+            "end_time": dig(item, ["ListingDetails", "EndTime"]),
+            "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),
+            "gallery_url": dig(item, ["PictureDetails", "GalleryURL"]),
+        }
+
+    def get_watch_list(
+        self,
+        *,
+        sort: str = "EndTime",
+        entries_per_page: int = 200,
+        page_number: int = 1,
+        max_pages: int | None = None,
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> list[dict[str, Any]]:
+        """
+        Every listing on the authenticated account's watch list, flattened.
+
+        One dict per listing with item_id, title, seller, price, bid_count,
+        time_left, end_time, view_item_url, and so on. Sorted by end time
+        (soonest first) unless ``sort`` says otherwise.
+        """
+        items = self.get_watch_list_items(
+            sort=sort,
+            entries_per_page=entries_per_page,
+            page_number=page_number,
+            max_pages=max_pages,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+        return [self._flatten_watched_item(item) for item in items]
 
     def end_listing(
         self,
