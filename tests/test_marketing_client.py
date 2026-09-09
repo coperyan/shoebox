@@ -2,19 +2,17 @@ from typing import Any
 
 import pytest
 
-from shoebox.clients.ebay_rest.marketing import (
+from shoebox.clients.ebay.errors import (
     AD_ALREADY_EXISTS_ERROR,
     LISTING_NOT_VISIBLE_ERROR,
-    MarketingClient,
+    EbayApiError,
 )
+from shoebox.clients.ebay.marketing import MarketingClient
 
 
-class FakeError(Exception):
-    """Stand-in for ebay_rest.Error."""
-
-    def __init__(self, error_id: int | None = None):
-        super().__init__(f"error {error_id}")
-        self.error_id = error_id
+def api_error(error_id: int | None = None) -> EbayApiError:
+    """An EbayApiError carrying just the eBay errorId the client branches on."""
+    return EbayApiError(f"error {error_id}", error_id=error_id)
 
 
 class FakeApi:
@@ -41,11 +39,7 @@ class FakeApi:
 class FakeSession:
     def __init__(self, api: FakeApi, campaign_id: str = "DEFAULT_CAMPAIGN"):
         self.api = api
-        self.Error = FakeError
         self.settings = type("S", (), {"ebay": type("E", (), {"campaign_id": campaign_id})()})()
-
-    def parse_error(self, e: Any) -> dict:
-        return {"errorId": getattr(e, "error_id", None)}
 
 
 def build_client(responses=None, campaign_id="DEFAULT_CAMPAIGN"):
@@ -121,7 +115,7 @@ def test_promote_by_listing_id_sends_listing_body():
 
 def test_promote_swallows_ad_already_exists():
     client, api = build_client(
-        {"sell_marketing_create_ad_by_listing_id": FakeError(AD_ALREADY_EXISTS_ERROR)}
+        {"sell_marketing_create_ad_by_listing_id": api_error(AD_ALREADY_EXISTS_ERROR)}
     )
 
     client.promote_by_inventory_reference(sku="ABC", rate=10)
@@ -131,8 +125,8 @@ def test_promote_swallows_ad_already_exists():
 
 
 def test_promote_retries_then_gives_up_without_raising(monkeypatch):
-    monkeypatch.setattr("shoebox.clients.ebay_rest.marketing.time.sleep", lambda _: None)
-    client, api = build_client({"sell_marketing_create_ad_by_listing_id": FakeError(500)})
+    monkeypatch.setattr("shoebox.clients.ebay.marketing.time.sleep", lambda _: None)
+    client, api = build_client({"sell_marketing_create_ad_by_listing_id": api_error(500)})
 
     client.promote_by_inventory_reference(sku="ABC", rate=10, max_tries=3)
 
@@ -149,8 +143,8 @@ def test_create_ads_by_inventory_reference_stringifies_rate():
 
 
 def test_delete_ad_raises_on_error():
-    client, _ = build_client({"sell_marketing_delete_ad": FakeError(123)})
-    with pytest.raises(FakeError):
+    client, _ = build_client({"sell_marketing_delete_ad": api_error(123)})
+    with pytest.raises(EbayApiError):
         client.delete_ad(campaign_id="C1", ad_id="A1")
 
 
@@ -174,12 +168,12 @@ def test_volume_discount_builds_sorted_rules_with_base_tier():
 
 
 def test_volume_discount_retries_when_listing_not_visible(monkeypatch):
-    monkeypatch.setattr("shoebox.clients.ebay_rest.marketing.time.sleep", lambda _: None)
+    monkeypatch.setattr("shoebox.clients.ebay.marketing.time.sleep", lambda _: None)
     client, api = build_client(
         {
             "sell_marketing_create_item_promotion": [
-                FakeError(LISTING_NOT_VISIBLE_ERROR),
-                FakeError(LISTING_NOT_VISIBLE_ERROR),
+                api_error(LISTING_NOT_VISIBLE_ERROR),
+                api_error(LISTING_NOT_VISIBLE_ERROR),
             ]
         }
     )
@@ -192,9 +186,9 @@ def test_volume_discount_retries_when_listing_not_visible(monkeypatch):
 
 
 def test_volume_discount_raises_on_other_errors():
-    client, _ = build_client({"sell_marketing_create_item_promotion": FakeError(999)})
+    client, _ = build_client({"sell_marketing_create_item_promotion": api_error(999)})
 
-    with pytest.raises(FakeError):
+    with pytest.raises(EbayApiError):
         client.create_volume_discount_promotion(
             listing_id="555", name="Bundle", discount_tiers=[{2: 15}]
         )

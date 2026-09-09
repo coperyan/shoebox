@@ -116,7 +116,7 @@ def _row(item: ItemSummary, search: ResolvedSearch) -> dict:
 
 
 def _fetch(search: ResolvedSearch, max_results: int) -> list[ItemSummary]:
-    from ..clients.ebay_rest.client import get_client
+    from ..clients.ebay.client import get_client
 
     return get_client().browse.search(
         q=search.query,
@@ -195,7 +195,7 @@ def aspect_options(
     if fetch is None:
 
         def fetch(s: ResolvedSearch):
-            from ..clients.ebay_rest.client import get_client
+            from ..clients.ebay.client import get_client
 
             return get_client().browse.aspect_refinements(
                 q=s.query,

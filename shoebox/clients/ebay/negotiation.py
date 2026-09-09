@@ -1,11 +1,10 @@
-from shoebox.clients.ebay_rest.session import EbaySession
-from shoebox.models.ebay.negotiation_offer import NegotiationOffer
+from ...models.ebay.negotiation_offer import NegotiationOffer
+from .session import EbaySession
 
 
 class NegotiationClient:
     def __init__(self, session: EbaySession):
         self.api = session.api
-        self.legacy_api = session.legacy_api
 
     def find_eligible_items(self) -> list[dict]:
         resp = self.api.sell_negotiation_find_eligible_items(x_ebay_c_marketplace_id="EBAY_US")

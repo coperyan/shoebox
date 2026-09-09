@@ -59,6 +59,8 @@ ebay:
   path: configs
   # Default promoted-listings campaign for new listings.
   campaign_id: "123456789"
+  # Trading API (Auth'n'Auth) token file; only read by pipelines that use it.
+  trading_token_path: configs/ebay_legacy.json
 
 slack:
   # Bot User OAuth Token (OAuth & Permissions page). Scopes: chat:write,

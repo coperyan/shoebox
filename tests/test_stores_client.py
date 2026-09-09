@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from shoebox.clients.ebay_rest.stores import (
+from shoebox.clients.ebay.stores import (
     StoresClient,
     flatten_store_categories,
     parse_store_categories,
@@ -78,7 +78,6 @@ class FakeApi:
 class FakeSession:
     def __init__(self, api: FakeApi):
         self.api = api
-        self.Error = Exception
 
 
 def build_client(responses=None):

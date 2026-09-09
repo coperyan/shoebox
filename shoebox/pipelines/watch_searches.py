@@ -71,7 +71,7 @@ class SearchRunResult:
 
 
 def _default_fetch(search: ResolvedSearch, max_results: int) -> list[ItemSummary]:
-    from ..clients.ebay_rest.client import get_client
+    from ..clients.ebay.client import get_client
 
     browse_filter = build_browse_filter(search)
     aspect_filter = build_aspect_filter(search)

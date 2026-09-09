@@ -5,9 +5,11 @@ import numpy as np
 import pandas as pd
 import requests
 
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
+from shoebox.clients.ebay.errors import EbayClientError
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
+from shoebox.services.listings import ListingService
 from shoebox.settings import get_settings
 from shoebox.transforms.listing_builder import rebuild_inventory_item_body, rebuild_offer_body
 from shoebox.utils.pricing import calculate_new_price, parse_price_reply, round_up_to_nine
@@ -30,7 +32,7 @@ _RELIST_PROMOTE_RATE = 7
 
 
 def get_active_listings(ebay_api: EbayClient) -> pd.DataFrame:
-    active_listings = ebay_api.legacy_api.get_active_listings()
+    active_listings = ebay_api.trading.get_active_listings()
 
     ## Drop variation & non-SKU listings
     active_listings = [
@@ -154,7 +156,7 @@ def relist_listing(
     logger.info("Starting %s", row["title"])
 
     sku = row["sku"]
-    details = ebay_api.legacy_api.get_item_details(item_id=row["item_id"])
+    details = ebay_api.trading.get_item_details(item_id=row["item_id"])
     specifics = details.get("item_specifics")
     schedule_datetime = row.get("schedule_datetime")
 
@@ -232,18 +234,19 @@ def relist_listing(
 
     image_urls = ebay_image_to_gcs(details["picture_urls"], sku, gcs_client, settings)
 
-    inventory_item = ebay_api.api.sell_inventory_get_inventory_item(sku=sku)
-    inventory_item_body = rebuild_inventory_item_body(inventory_item, image_urls)
+    inventory_item = ebay_api.inventory.get_inventory_item(sku)
+    inventory_item_body = rebuild_inventory_item_body(inventory_item.raw, image_urls)
 
-    offers = ebay_api.api.sell_inventory_get_offers(sku=sku)
-    offer = [x["record"] for x in offers if "record" in x][0]
-    offer_body = rebuild_offer_body(offer, new_price, schedule_datetime)
+    offer = ebay_api.inventory.find_offer(sku)
+    if offer is None:
+        raise EbayClientError(f"No offer found for sku={sku}; nothing to relist")
+    offer_body = rebuild_offer_body(offer.raw, new_price, schedule_datetime)
 
-    ebay_api.refresh_listing_flow(
+    ListingService(ebay_api).relist_listing(
         sku=sku,
         inventory_item_body=inventory_item_body,
         offer_body=offer_body,
-        existing_offer_id=offer["offer_id"],
+        existing_offer_id=offer.offer_id,
         existing_ad_id=ad_id,
         campaign_id=campaign_id,
         promote_listing=bool(campaign_id),

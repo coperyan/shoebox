@@ -17,7 +17,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 
-from shoebox.clients.ebay_rest.client import EbayClient
+from shoebox.clients.ebay.client import EbayClient
 from shoebox.models.ebay.negotiation_offer import NegotiationOffer
 from shoebox.settings import get_settings
 from shoebox.utils.pricing import calculate_new_price, parse_price_reply
@@ -129,9 +129,7 @@ def main(
     ebay = ebay or EbayClient()
 
     eligible = ebay.negotiation.find_eligible_items()
-    details = [
-        ebay.legacy_api.get_item_details(item_id=listing["listing_id"]) for listing in eligible
-    ]
+    details = [ebay.trading.get_item_details(item_id=listing["listing_id"]) for listing in eligible]
     logger.info("%d eligible listing(s)", len(details))
     if not details:
         return

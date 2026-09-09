@@ -12,13 +12,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from .errors import AD_ALREADY_EXISTS_ERROR, LISTING_NOT_VISIBLE_ERROR, EbayApiError
 from .session import EbaySession
 
 logger = logging.getLogger(__name__)
-
-# eBay error IDs these calls treat specially.
-AD_ALREADY_EXISTS_ERROR = 35036
-LISTING_NOT_VISIBLE_ERROR = 38227
 
 DEFAULT_MARKETPLACE_ID = "EBAY_US"
 RUNNING_CAMPAIGN_STATUS = "RUNNING"
@@ -117,9 +114,8 @@ class MarketingClient:
             try:
                 fn()
                 return
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if error_details.get("errorId") == AD_ALREADY_EXISTS_ERROR:
+            except EbayApiError as e:
+                if e.error_id == AD_ALREADY_EXISTS_ERROR:
                     logger.info("Ad already exists for %s", label)
                     return
 
@@ -282,12 +278,8 @@ class MarketingClient:
                     name,
                 )
                 return result
-            except self.session.Error as e:
-                error_details = self.session.parse_error(e)
-                if (
-                    error_details.get("errorId") == LISTING_NOT_VISIBLE_ERROR
-                    and attempt < max_tries
-                ):
+            except EbayApiError as e:
+                if e.error_id == LISTING_NOT_VISIBLE_ERROR and attempt < max_tries:
                     wait = attempt * 30
                     logger.warning(
                         "Listing not yet visible to marketing API (attempt %d/%d), retrying in %ds...",

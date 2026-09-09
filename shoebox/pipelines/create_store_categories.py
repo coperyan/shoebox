@@ -22,8 +22,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from shoebox.clients.ebay_rest.client import EbayClient
-from shoebox.clients.ebay_rest.stores import MAX_CATEGORY_DEPTH, flatten_store_categories
+from shoebox.clients.ebay.client import EbayClient
+from shoebox.clients.ebay.stores import MAX_CATEGORY_DEPTH, flatten_store_categories
 from shoebox.pipelines.plan_store_categories import WORKING_REPORT
 from shoebox.settings import get_settings
 from shoebox.utils.logging_setup import setup_logging

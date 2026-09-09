@@ -86,7 +86,7 @@ Per queue row:
    full item-specifics dict, store category, condition, package, and policy
    IDs into an `EbayListingDraft` with ready-to-send `inventory_item` and
    `offer` dicts. `--schedule` sets a listing start date ~19 days out.
-4. **eBay** — `EbayClient.create_listing_from_inventory_flow`: upsert
+4. **eBay** — `ListingService.create_listing`: upsert
    inventory item (retries transient error 25001), delete-or-update any
    existing offer for the SKU, create offer, publish (if `--publish`), promote
    into the campaign chosen by `utils/ad_campaign.get_ad_campaign`.
@@ -105,7 +105,7 @@ Multi-variation "You Pick / Complete Your Set" listings:
   by filename match in an images dir; builds one inventory item per card
   (variation dimension `Card` = display name), an inventory-item group, and
   one offer per SKU (per-variation pricing; distinct free-shipping fulfillment
-  policy); then `create_variation_listing_flow` publishes by group and
+  policy); then `ListingService.create_variation_listing` publishes by group and
   promotes (default 20% rate).
 - Optional **volume-discount promotion** (e.g. buy 2 → 15% off) — creation
   retries error 38227 up to 10× while eBay's marketing API catches up to the
@@ -136,7 +136,7 @@ which is what lets relist flows find existing inventory items and offers.
   unparseable reply **skips the listing** — it stays live untouched. Cheap
   no-view listings step down a fixed ladder ($1.99 → … → $0.99); everything
   else gets the standard markdown matrix.
-- Relist: `refresh_listing_flow` — delete old ad, replace inventory item,
+- Relist: `ListingService.relist_listing` — delete old ad, replace inventory item,
   withdraw + delete old offer, create + publish new offer, re-promote (7%).
 - Failures are collected per row and printed; the loop continues.
 
@@ -187,7 +187,7 @@ following a partial one only picks up what is actually left.
   with its `changes`, `notes`, and `skip_reason`, so a preview run is a full
   audit of what would happen. `--apply` additionally writes
   `..._applied.csv` with the per-SKU result and notifies Slack.
-- Updates use `EbayClient.update_listing_title`, which routes by identifier:
+- Updates use `ListingService.update_title`, which routes by identifier:
   a SKU means the listing came from the Sell Inventory API and the title lives
   on the inventory item (`createOrReplaceInventoryItem`); no SKU means the
   inventory API cannot see the listing at all, and the title is revised through

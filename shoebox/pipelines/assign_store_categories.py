@@ -31,9 +31,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from shoebox.clients.ebay_rest.client import EbayClient
-from shoebox.clients.ebay_rest.stores import flatten_store_categories
+from shoebox.clients.ebay.client import EbayClient
+from shoebox.clients.ebay.stores import flatten_store_categories
 from shoebox.pipelines.plan_store_categories import WORKING_REPORT
+from shoebox.services.listings import ListingService
 from shoebox.settings import get_settings
 from shoebox.transforms.store_category_builder import HITS_PARENT
 from shoebox.utils.logging_setup import setup_logging
@@ -122,11 +123,10 @@ def _current_secondary(ebay_api: EbayClient, sku: str) -> str:
     Read straight off the offer so hand-curated categories survive a run that
     is only meant to set the team.
     """
-    offers = ebay_api.api.sell_inventory_get_offers(sku=sku)
-    records = [x["record"] for x in offers if "record" in x]
-    if not records:
+    offer = ebay_api.inventory.find_offer(sku)
+    if offer is None:
         return ""
-    for name in records[0].get("store_category_names") or []:
+    for name in offer.store_category_names:
         if str(name).startswith(_HITS_PREFIX):
             return str(name)
     return ""
@@ -145,6 +145,7 @@ def apply_assignments(
         targets = targets.head(limit)
 
     ids = category_ids(ebay_api)
+    listings = ListingService(ebay_api)
     statuses: list[str] = []
     errors: list[str] = []
     finals: list[str] = []
@@ -169,7 +170,7 @@ def apply_assignments(
                 missing = [c for c, r in zip(categories, resolved, strict=True) if r is None]
                 raise ValueError(f"store category not found: {', '.join(missing)}")
 
-            outcome = ebay_api.update_listing_store_categories(
+            outcome = listings.update_store_categories(
                 categories=categories,
                 category_ids=[r for r in resolved if r],
                 sku=sku or None,
