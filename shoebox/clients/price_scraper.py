@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 import re
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 # import chrome_version
@@ -12,8 +13,8 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
+
+logger = logging.getLogger(__name__)
 
 parallel_terms = [
     "Blue Refractor",
@@ -243,8 +244,38 @@ class PriceScraper:
                 pass
         return None
 
+    @staticmethod
+    def _is_struck_through(node, root) -> bool:
+        """True if ``node`` sits inside a struck-through element within ``root``."""
+        current = node
+        while current is not None and current is not root:
+            if "line-through" in (current.get("class") or []):
+                return True
+            current = current.parent
+        return False
+
+    @classmethod
+    def _scan_price_text(cls, card) -> float | None:
+        """First plausible ``$`` amount in the card, ignoring struck-through asks.
+
+        Best Offer rows render the original asking price struck through, followed
+        by the price the offer was accepted at; only the latter is the sale price.
+        Auction and fixed-price rows carry a single, unstruck price.
+        """
+        for node in card.find_all(string=True):
+            text = node.strip()
+            if "$" not in text:  # ← key guard: skip any text without $
+                continue
+            if cls._is_struck_through(node.parent, card):
+                continue
+            candidate = cls._parse_price(text)
+            if candidate and 0.01 < candidate < 100_000:
+                return candidate
+        return None
+
     _DATE_FMTS = [
         "%a %d %b %Y %H:%M:%S",  # old format: 'Sun 28 Dec 2025 19:08:30' (timezone stripped)
+        "%d %b %y %H:%M:%S",  # current display text: '14 Sept 26 19:04:45'
         "%b %d, %Y %I:%M %p",  # 'Apr 23, 2025 3:45 PM'
         "%b %d, %Y",  # 'Apr 23, 2025'
         "%B %d, %Y",  # 'April 23, 2025'
@@ -253,54 +284,143 @@ class PriceScraper:
     ]
 
     @classmethod
+    def _to_datetime(cls, s: str) -> datetime | None:
+        """Parse a 130point timestamp into an aware UTC datetime, or None.
+
+        Handles both the ISO-8601 value carried by the row's timestamp attributes
+        ('2026-09-15T02:04:45.000Z') and the localized display text rendered
+        beside it ('14 Sept 26 19:04:45'). Display text has no offset, so it is
+        read as local time -- correct here, since the browser rendering it and
+        this process share a clock.
+        """
+        raw = s.strip()
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError:
+            dt = None
+        if dt is None:
+            cleaned = re.sub(r"\s+[A-Z]{2,4}$", "", raw)
+            # 130point renders en-GB short months, where September alone is 4 letters.
+            cleaned = re.sub(r"\bSept\b", "Sep", cleaned)
+            for fmt in cls._DATE_FMTS:
+                try:
+                    dt = datetime.strptime(cleaned, fmt)
+                    break
+                except ValueError:
+                    continue
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.astimezone()
+        return dt.astimezone(UTC)
+
+    @classmethod
     def _parse_date(cls, s: str) -> dict[str, Any]:
         out: dict[str, Any] = {"sold_date": None, "days_ago": None, "sold_date_str": s}
         if not s:
             return out
-        cleaned = re.sub(r"\s+[A-Z]{2,4}$", "", s.strip())
-        for fmt in cls._DATE_FMTS:
-            try:
-                dt = datetime.strptime(cleaned, fmt)
-                out["sold_date"] = dt
-                out["days_ago"] = (datetime.now() - dt).days
-                return out
-            except ValueError:
-                continue
+        dt = cls._to_datetime(s)
+        if dt is not None:
+            out["sold_date"] = dt
+            out["days_ago"] = (datetime.now(UTC) - dt).days
         return out
 
-    def _do_search(self, query: str) -> None:
-        wait = WebDriverWait(self.driver, 20)
-        selectors = [
-            'nav[data-nav="desktop"] input[type="text"]',
-            'input[placeholder*="Search"]',
-            'input[type="text"]',
-        ]
-        search_el = None
-        for sel in selectors:
+    _SEARCH_SELECTORS = (
+        'nav[data-nav="desktop"] input[type="text"]',
+        'input[placeholder*="Search"]',
+        'input[type="text"]',
+    )
+
+    # Selenium's element_to_be_clickable checks only that the element is displayed and
+    # enabled. It returns as soon as the markup is in the DOM -- before React has
+    # hydrated and attached its handlers, and regardless of an ad or consent overlay
+    # sitting on top -- so keystrokes sent at that moment can go nowhere.
+    _INTERACTABLE_JS = """
+    const el = arguments[0];
+    if (el.disabled || el.readOnly) return false;
+    const style = getComputedStyle(el);
+    if (style.visibility === 'hidden' || style.display === 'none') return false;
+    const box = el.getBoundingClientRect();
+    if (box.width === 0 || box.height === 0) return false;
+    const topmost = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+    return topmost === el || el.contains(topmost);
+    """
+
+    # React owns this input's value, so assigning to `.value` is reverted on the next
+    # render. Going through the prototype's native setter and firing the event React
+    # listens for updates the field and React's own state together, in one step --
+    # unlike send_keys, which types character by character and can drop a keystroke if
+    # a re-render lands mid-word.
+    _SET_QUERY_JS = """
+    const el = arguments[0], value = arguments[1];
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set;
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', {bubbles: true}));
+    """
+
+    # Rendered onto the results container once a search resolves, including when it
+    # matched nothing -- which makes it the one signal that separates "no sales" from
+    # "still loading". The panel itself appears immediately, empty.
+    _TOTAL_JS = (
+        "const e = document.querySelector('[data-total-results]');"
+        "return e ? e.getAttribute('data-total-results') : null;"
+    )
+
+    def _find_search_box(self, timeout: float = 30.0):
+        """Return the search input once it is genuinely ready to receive input."""
+        deadline = time.monotonic() + timeout
+        while True:
+            for selector in self._SEARCH_SELECTORS:
+                try:
+                    element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    if self.driver.execute_script(self._INTERACTABLE_JS, element):
+                        return element
+                except Exception:
+                    continue
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"130point search input never became interactable within {timeout:.0f}s"
+                )
+            time.sleep(0.25)
+
+    def _do_search(self, query: str, attempts: int = 3) -> None:
+        """Put `query` in the search box and submit it, verifying each step."""
+        for attempt in range(1, attempts + 1):
+            box = self._find_search_box()
+            self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", box)
             try:
-                search_el = wait.until(EC.element_to_be_clickable((By.CSS_SELECTOR, sel)))
-                break
+                box.click()
             except Exception:
-                continue
-        if search_el is None:
-            raise RuntimeError("Could not locate search input on 130point.")
+                self.driver.execute_script("arguments[0].click();", box)
 
-        self.driver.execute_script("arguments[0].scrollIntoView({block:'center'});", search_el)
-        time.sleep(0.2)
-        try:
-            search_el.click()
-        except Exception:
-            self.driver.execute_script("arguments[0].click();", search_el)
+            self.driver.execute_script(self._SET_QUERY_JS, box, query)
+            settled = box.get_attribute("value")
+            if settled == query:
+                box.send_keys(Keys.RETURN)
+                return
+            logger.warning(
+                "130point search box held %r instead of %r (attempt %d/%d); retrying",
+                settled,
+                query,
+                attempt,
+                attempts,
+            )
+            time.sleep(1.0)
+        raise RuntimeError(f"Could not enter {query!r} into the 130point search box")
 
-        try:
-            search_el.send_keys(Keys.CONTROL + "a")
-            search_el.send_keys(Keys.DELETE)
-            search_el.clear()
-        except Exception:
-            pass
-
-        search_el.send_keys(query)
-        search_el.send_keys(Keys.RETURN)
+    def _wait_for_results(self, timeout: float = 30.0) -> int:
+        """Block until the sold grid reports a result count, and return it."""
+        deadline = time.monotonic() + timeout
+        while True:
+            total = self.driver.execute_script(self._TOTAL_JS)
+            if total is not None:
+                try:
+                    return int(total)
+                except (TypeError, ValueError):
+                    return 0
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"130point returned no sold results within {timeout:.0f}s")
+            time.sleep(0.25)
 
     def _parse_card(self, card) -> dict[str, Any] | None:
         p: dict[str, Any] = {}
@@ -329,14 +449,7 @@ class PriceScraper:
                 except (TypeError, ValueError):
                     p["sale_price"] = None
             else:
-                p["sale_price"] = None
-                for text in card.stripped_strings:
-                    if "$" not in text:  # ← key guard: skip any text without $
-                        continue
-                    candidate = self._parse_price(text)
-                    if candidate and 0.01 < candidate < 100_000:
-                        p["sale_price"] = candidate
-                        break
+                p["sale_price"] = self._scan_price_text(card)
 
         # Sale type
         p["type"] = None
@@ -353,19 +466,27 @@ class PriceScraper:
                 m = re.search(r"(\d+)", bid_el)
                 p["bid_count"] = m.group(1) if m else None
 
-        # Date: find an element whose text contains a month name AND a 4-digit year
-        date_text = None
-        month_re = re.compile(
-            r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
-            r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|"
-            r"Nov(?:ember)?|Dec(?:ember)?)\b",
-            re.IGNORECASE,
-        )
-        for el in card.find_all(["span", "div", "p", "time", "small"]):
-            txt = el.get_text(strip=True)
-            if month_re.search(txt) and re.search(r"\d{4}", txt):
-                date_text = txt
-                break
+        # Date: prefer the row's ISO-8601 timestamp attribute; the text beside it is
+        # localized and ambiguous ('14 Sept 26 19:04:45'), and month names also turn
+        # up in card titles.
+        date_text = anchor.get("data-item-endtime") or card.get("data-item-endtime")
+        if not date_text:
+            end_el = card.find(attrs={"data-result-end-time": True})
+            if end_el:
+                date_text = end_el.get("data-result-end-time")
+
+        if not date_text:
+            month_re = re.compile(
+                r"\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|"
+                r"Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sept?(?:ember)?|Oct(?:ober)?|"
+                r"Nov(?:ember)?|Dec(?:ember)?)\b",
+                re.IGNORECASE,
+            )
+            for el in card.find_all(["span", "div", "p", "time", "small"]):
+                txt = el.get_text(strip=True)
+                if month_re.search(txt) and re.search(r"\d{2,4}", txt):
+                    date_text = txt
+                    break
 
         p.update(self._parse_date(date_text))
         return p
@@ -377,18 +498,14 @@ class PriceScraper:
         rows_per_page: int | None = None,
     ) -> pd.DataFrame:
         self._ensure_started()
-        wait = WebDriverWait(self.driver, 20)
 
         self.driver.get(self.base_url)
         self._do_search(query)
 
-        wait.until(EC.presence_of_element_located((By.ID, "sold-results-panel")))
-        try:
-            wait.until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "#sold-results-panel a[href]"))
-            )
-        except Exception:
-            pass
+        total = self._wait_for_results()
+        if total == 0:
+            logger.info("130point reported no sold results for %r", query)
+            return pd.DataFrame()
         time.sleep(self.polite_delay_s)
 
         soup = BeautifulSoup(self.driver.page_source, "html.parser")
@@ -402,6 +519,12 @@ class PriceScraper:
         candidates = panel.find_all("a", href=True) or panel.find_all(
             ["div", "article"], recursive=False
         )
+        if not candidates:
+            logger.warning(
+                "130point reported %d sold results for %r but the grid rendered none",
+                total,
+                query,
+            )
 
         for candidate in candidates:
             try:
