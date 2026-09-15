@@ -1,5 +1,9 @@
 # Scheduling
 
+> Scheduling the same pipelines on Cloud Run instead of (or alongside) a
+> Windows host is covered in [deployment.md](deployment.md). This page stays
+> the reference for the Windows setup, which is unaffected by it.
+
 On the Windows host, the recurring pipelines run as Task Scheduler tasks in the
 `\shoebox\` folder. Those tasks are **generated from
 [`scripts/tasks.yaml`](../scripts/tasks.yaml)** rather than hand-built in the

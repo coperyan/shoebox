@@ -15,6 +15,7 @@ for notifications, price approvals, and remote command execution.
 | [search.md](search.md) | The saved eBay search feature end to end: setup, YAML, filters, tuning, scheduling, state, troubleshooting |
 | [tcdb.md](tcdb.md) | Trading Card Database automation: the interactive advanced search, manual-login model, config, and how to add more TCDB actions |
 | [scheduling.md](scheduling.md) | The Windows scheduled tasks: `scripts/tasks.yaml`, generating and registering them, troubleshooting |
+| [deployment.md](deployment.md) | Running the recurring pipelines on Cloud Run: what moves, what stays local, and the state/logging/bot changes that made it possible |
 | [metadata.md](metadata.md) | Field-by-field definitions of the checklist & parallel metadata |
 | [slack.md](slack.md) | The Slack notification system: messaging, approval buttons, threading, the command bot, and design decisions |
 | [data-storage.md](data-storage.md) | GCS buckets, BigQuery datasets/tables/views, local JSONL files, and how data moves between them |
@@ -22,7 +23,8 @@ for notifications, price approvals, and remote command execution.
 ## Quick orientation
 
 - **Install**: `pip install -e .` (Python ≥ 3.11), then create the four config files
-  from the templates in `configs/*.example` — see [setup.md](setup.md).
+  from the templates in `configs/*.example` — see [setup.md](setup.md). Add
+  `pip install -e ".[scrapers]"` for the Chrome-driven pipelines.
 - **Run something**: the console script is `shoebox` (equivalently
   `python -m shoebox.cli`). `shoebox --help` lists all commands —
   see [cli.md](cli.md).

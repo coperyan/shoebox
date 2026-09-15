@@ -6,7 +6,8 @@
   relies on the 3.11 `asyncio.TimeoutError` alias).
 - **Google Chrome** on the host — the price scraper (130point.com) and the
   Topps release scraper drive a real browser via `undetected-chromedriver`
-  (both sites block plain HTTP).
+  (both sites block plain HTTP). Only needed if you use those pipelines; see
+  the `scrapers` extra below.
 - Accounts/credentials for: an **eBay developer application** (production
   keys), a **GCP project** (GCS + BigQuery, and the Calendar API if using the
   Topps sync), and a **Slack workspace** where you can create an app.
@@ -25,6 +26,20 @@ pip install -e .
 This installs the `shoebox` console script. All dependencies (including
 `ebay_rest`, `slack-bolt`, `aiohttp`, Google clients, Selenium, Streamlit) come
 from `pyproject.toml`; there is no `requirements.txt`.
+
+Two optional extras:
+
+```bash
+pip install -e ".[scrapers]"   # Chrome-driven pipelines
+pip install -e ".[dev]"        # pytest, ruff, pre-commit
+```
+
+`scrapers` adds `undetected-chromedriver`, which the price scraper, the Topps
+release sync, and the TCDB browser need. It is an extra rather than a base
+dependency because it pins itself to a locally installed Chrome and builds from
+a legacy `setup.py` that fails on newer setuptools — so a machine without
+Chrome (CI, a container) installs cleanly without it. Skip it and those four
+commands raise `ModuleNotFoundError`; everything else works.
 
 ## Configuration files
 

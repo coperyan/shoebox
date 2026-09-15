@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+#
+#   cp deploy/terraform.tfvars.example deploy/terraform.tfvars
+
+project_id = "my-gcp-project"
+region     = "us-central1"
+
+# Pin by digest, not :latest. A Cloud Build run then produces an image without
+# silently changing what tonight's scheduled job runs -- rolling forward stays
+# an explicit `terraform apply`. Get the digest from:
+#   gcloud artifacts docker images list \
+#     us-central1-docker.pkg.dev/my-gcp-project/shoebox/shoebox --include-tags
+image = "us-central1-docker.pkg.dev/my-gcp-project/shoebox/shoebox@sha256:REPLACE_ME"
+
+# Your local zone, so schedules keep their wall-clock hour across daylight
+# saving. These match the Windows task times in scripts/tasks.yaml.
+timezone = "America/Los_Angeles"
+
+# The watcher's floor; each search's own `interval` still gates it.
+watch_searches_schedule = "*/5 * * * *"
+
+# The Socket Mode bot is the only always-on cost. Set false to keep it on a
+# workstation and deploy the scheduled jobs only.
+enable_bot = true

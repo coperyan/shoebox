@@ -21,7 +21,8 @@ import re
 import subprocess
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -480,6 +481,40 @@ def pull_searches_repo(path: str | Path, *, timeout: float = 60) -> bool:
     return True
 
 
+@contextmanager
+def _state_session(settings, store: SearchStateStore) -> Iterator[bool]:
+    """Hold whichever lock actually guards this host, with state to match.
+
+    On a normal checkout that is the advisory file lock, unchanged. When
+    ``state_sync`` is on, the run is wrapped in a GCS lease that *other hosts*
+    can see and the state directory is pulled and pushed around it -- the file
+    lock is kept as well, since a container scheduler is not the only thing that
+    can double-fire a cron entry on one machine.
+
+    Yields False when something else is already running, in both modes.
+    """
+    sync = getattr(settings, "state_sync", None)
+    if not (sync and sync.enabled):
+        with store.lock() as acquired:
+            yield acquired
+        return
+
+    from ..clients.state_mirror import GcsStateMirror
+
+    mirror = GcsStateMirror(
+        bucket=sync.bucket or settings.gcs.ebay_bucket,
+        prefix=sync.prefix,
+        base_dir=store.base_dir,
+        lock_ttl_seconds=sync.lock_ttl_seconds,
+    )
+    with mirror.session() as leased:
+        if not leased:
+            yield False
+            return
+        with store.lock() as acquired:
+            yield acquired
+
+
 def watch_searches(
     *,
     force: bool = False,
@@ -540,7 +575,7 @@ def watch_searches(
     fetch = fetch or _default_fetch
     post = post or _default_post
 
-    with store.lock() as acquired:
+    with _state_session(settings, store) as acquired:
         if not acquired:
             logger.warning("Another watch-searches run holds the lock; skipping this tick.")
             return []

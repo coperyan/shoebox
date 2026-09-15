@@ -178,6 +178,28 @@ class TcdbSettings(BaseModel):
     search_defaults: dict[str, str] = Field(default_factory=dict)
 
 
+class StateSyncSettings(BaseModel):
+    """Mirror the saved-search state directory to GCS around each run.
+
+    Off by default, because a Mac or Windows checkout keeps its state on the
+    local filesystem and needs none of this. Turn it on only for a stateless
+    host (a container scheduler), where every execution starts with an empty
+    disk and the advisory file lock cannot see other executions --
+    ``clients/state_mirror.py`` explains both failure modes.
+    """
+
+    enabled: bool = False
+    # Defaults to gcs.ebay_bucket when blank, which is where the watcher's
+    # hit logs already land.
+    bucket: str = ""
+    prefix: str = "state/searches"
+    # Lease length for the cross-host lock. Must exceed the longest expected
+    # run: a run still going when its lease expires can have the lock stolen
+    # out from under it. Comfortably above the scheduler's period, too, or a
+    # crashed run blocks the next tick for longer than necessary.
+    lock_ttl_seconds: int = 900
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -190,6 +212,7 @@ class Settings(BaseModel):
     google_calendar: GoogleCalendarSettings
     store: StoreSettings = Field(default_factory=StoreSettings)
     tcdb: TcdbSettings = Field(default_factory=TcdbSettings)
+    state_sync: StateSyncSettings = Field(default_factory=StateSyncSettings)
 
 
 def _resolve_config_path(config_path: str | os.PathLike[str] | None = None) -> Path:

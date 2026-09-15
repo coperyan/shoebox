@@ -42,3 +42,37 @@ jobs:
         run: ruff check .
       - name: Ruff format check
         run: ruff format --check .
+
+  # The deploy image is a third supported host alongside macOS and Windows, so
+  # it is built on every change rather than only when someone deploys. The smoke
+  # test catches the failure mode that matters: a dependency that resolves on a
+  # workstation but not in the container.
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t shoebox:ci .
+
+      - name: CLI responds
+        run: docker run --rm shoebox:ci --help
+
+      - name: Chrome-only extra is absent, and its absence is not fatal
+        run: |
+          docker run --rm --entrypoint python shoebox:ci -c "
+          import importlib.util, shoebox.cli
+          assert importlib.util.find_spec('undetected_chromedriver') is None, \
+              'undetected-chromedriver should not be in the image'
+          print('cli imports without the scrapers extra')
+          "
+
+      - name: Console-only logging writes no log directory
+        run: |
+          docker run --rm --entrypoint python shoebox:ci -c "
+          import pathlib
+          from shoebox.utils.logging_setup import setup_logging
+          setup_logging()
+          assert not pathlib.Path('logs').exists(), 'container should not write log files'
+          print('logging is console-only')
+          "

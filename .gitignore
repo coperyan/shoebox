@@ -30,6 +30,15 @@ scripts/*.bat
 scripts/*.xml
 scripts/tasks/*.xml
 
+# --- Terraform (deploy/) ---
+# State can contain secret *values*, not just references -- never commit it.
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
 # --- Local tooling / editor / caches ---
 .claude/
 .vscode/

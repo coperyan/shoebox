@@ -86,6 +86,25 @@ google_calendar:
   # Target calendar for the Topps release sync.
   calendar_id: your-calendar-id@group.calendar.google.com
 
+# Mirror the watch-searches state directory to GCS around each run.
+#
+# Leave this off for a local checkout (Mac, Windows, or any machine that keeps
+# its own filesystem between runs) -- the watcher's seen-cache and advisory
+# lock work exactly as they always have.
+#
+# Turn it on ONLY for a stateless host such as a container scheduler, where
+# every execution starts with an empty disk. Without it the watcher re-seeds
+# silently on every run and reports success while alerting you about nothing.
+# See shoebox/clients/state_mirror.py and deploy/README.md.
+state_sync:
+  enabled: false
+  # Blank uses gcs.ebay_bucket, where the watcher's hit logs already land.
+  bucket: ""
+  prefix: state/searches
+  # Lease for the cross-host lock. Must exceed your longest expected run, and
+  # sit comfortably above the scheduler's period.
+  lock_ttl_seconds: 900
+
 # Trading Card Database (tcdb.com) browser automation -- `shoebox tcdb-search`.
 # Optional: every key has a default. See docs/tcdb.md.
 tcdb:

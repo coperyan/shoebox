@@ -25,6 +25,9 @@ named in `paths`.
 | `EBAY_REST_CONFIG_PATH` | Full path to `ebay_rest.json`, overriding `ebay.path` |
 | `SHOEBOX_TITLE_CROSSWALK` | Path to the team/title crosswalk (default `configs/title_crosswalk.yaml`) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC override, used when `gcp.service_account_json` doesn't exist |
+| `SHOEBOX_LOG_DIR` | Directory for the per-run log file (default `logs`). `-` or empty logs to the console only — what a container wants, since the platform collects stdout and the filesystem is discarded |
+| `SHOEBOX_BOT_COMMANDS` | Comma-separated subset of commands the `slack-bot` service will run. Unset means all of them. Used to withhold commands a given host cannot service |
+| `PORT` | When set, `slack-bot` serves a health endpoint on this port alongside the Socket Mode listener, so a container platform can see it started |
 
 ## Settings schema
 
@@ -148,6 +151,19 @@ live listings (eBay rejects offers that reference bogus policy IDs).
 
 Routing in `utils/ad_campaign.get_ad_campaign`: `by_sport` → `by_set` →
 current-year default → `default`.
+
+### `state_sync`
+
+Mirrors the `watch-searches` state directory to GCS around each run. **Off by
+default**; a host that keeps its own filesystem between runs needs none of it.
+Turn it on only for a stateless host — see [deployment.md](deployment.md).
+
+| Key | Type | Meaning |
+|---|---|---|
+| `enabled` | bool | Mirror state to GCS and take a cross-host lock instead of relying on the local file lock. Default `false` |
+| `bucket` | str | Bucket for the state mirror. Blank uses `gcs.ebay_bucket` |
+| `prefix` | str | Object prefix for the mirrored files (default `state/searches`) |
+| `lock_ttl_seconds` | int | Lease length for the lock (default `900`). Must exceed your longest expected run — a run still going when its lease expires can have the lock stolen — and sit well above the scheduler's period |
 
 ## Saved searches (`configs/searches.yaml`)
 

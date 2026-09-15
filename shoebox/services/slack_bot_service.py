@@ -1,9 +1,23 @@
-"""Slack bot service: listens for messages and runs CLI commands."""
+"""Slack bot service: listens for messages and runs CLI commands.
+
+Environment variables (both unset on a normal checkout, so local behaviour is
+the historical one):
+
+- ``PORT``: serve a health endpoint on this port alongside the Socket Mode
+  listener. Container platforms that manage long-running services decide
+  whether a revision started by probing HTTP, and a Socket Mode bot dials *out*
+  and would otherwise never answer.
+- ``SHOEBOX_BOT_COMMANDS``: comma-separated subset of the commands below that
+  this deployment may run. Commands the host cannot actually service should be
+  withheld rather than offered and left to fail -- see the note on
+  ``ALLOWED_COMMANDS``.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 
@@ -47,17 +61,48 @@ ALLOWED_COMMANDS: dict[str, dict[str, bool]] = {
     },
 }
 
-_HELP_TEXT = "Available commands:\n" + "\n".join(
-    f"  /{cmd}"
-    + (
-        "  ["
-        + " | ".join(f"{f} NAME" if takes_value else f for f, takes_value in flags.items())
-        + "]"
-        if flags
-        else ""
+
+def enabled_commands() -> dict[str, dict[str, bool]]:
+    """``ALLOWED_COMMANDS``, narrowed by ``SHOEBOX_BOT_COMMANDS`` when set.
+
+    A deployment can only service the commands its host is actually equipped
+    for. ``create-listings`` and ``create-queue-excel`` read card scans and
+    Excel workbooks from local paths and drive Chrome for price scraping, so a
+    container running this bot has nothing for them to work on. Offering a
+    command that is certain to fail is worse than not listing it: the failure
+    arrives as a traceback in a Slack thread minutes later, and looks like a
+    bug rather than a deployment boundary.
+
+    Unknown names in the variable are ignored with a warning rather than being
+    fatal -- a typo in a deploy config should not take the bot down.
+    """
+    raw = os.getenv("SHOEBOX_BOT_COMMANDS")
+    if not raw or not raw.strip():
+        return ALLOWED_COMMANDS
+
+    wanted = [name.strip() for name in raw.split(",") if name.strip()]
+    unknown = [name for name in wanted if name not in ALLOWED_COMMANDS]
+    if unknown:
+        logger.warning("Ignoring unknown SHOEBOX_BOT_COMMANDS entries: %s", ", ".join(unknown))
+    selected = {name: ALLOWED_COMMANDS[name] for name in wanted if name in ALLOWED_COMMANDS}
+    if not selected:
+        logger.warning("SHOEBOX_BOT_COMMANDS matched nothing; falling back to the full set")
+        return ALLOWED_COMMANDS
+    return selected
+
+
+def help_text() -> str:
+    return "Available commands:\n" + "\n".join(
+        f"  /{cmd}"
+        + (
+            "  ["
+            + " | ".join(f"{f} NAME" if takes_value else f for f, takes_value in flags.items())
+            + "]"
+            if flags
+            else ""
+        )
+        for cmd, flags in enabled_commands().items()
     )
-    for cmd, flags in ALLOWED_COMMANDS.items()
-)
 
 
 def parse_command(command: str, args: list[str]) -> tuple[str, list[str]] | None:
@@ -67,9 +112,10 @@ def parse_command(command: str, args: list[str]) -> tuple[str, list[str]] | None
     value-taking flag with no value is dropped whole rather than passed on to
     argparse, which would abort the run over what was probably a typo in chat.
     """
-    if command not in ALLOWED_COMMANDS:
+    commands = enabled_commands()
+    if command not in commands:
         return None
-    allowed = ALLOWED_COMMANDS[command]
+    allowed = commands[command]
     valid_args: list[str] = []
     ignored: list[str] = []
     i = 0
@@ -113,7 +159,7 @@ async def dispatch(event: dict, client: AsyncWebClient, command: str, args: list
     thread_ts = event["ts"]
 
     if command in ("help", "h"):
-        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=_HELP_TEXT)
+        await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text=help_text())
         return
 
     parsed = parse_command(command, args)
@@ -121,7 +167,7 @@ async def dispatch(event: dict, client: AsyncWebClient, command: str, args: list
         await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
-            text=f"Unknown command: {command!r}\n\n{_HELP_TEXT}",
+            text=f"Unknown command: {command!r}\n\n{help_text()}",
         )
         return
 
@@ -142,10 +188,44 @@ async def dispatch(event: dict, client: AsyncWebClient, command: str, args: list
     )
 
 
+async def serve_health(port: int) -> None:
+    """Answer HTTP on ``port`` so a container platform can see the bot is up.
+
+    Socket Mode opens an outbound WebSocket and never accepts a request, so a
+    platform that decides "did this start?" by connecting to a port would kill
+    an otherwise healthy bot. This says nothing about Slack connectivity -- it
+    reports that the process is alive, which is precisely what a startup probe
+    is asking.
+    """
+    from aiohttp import web
+
+    async def ok(_request):
+        return web.Response(text="ok")
+
+    app = web.Application()
+    app.router.add_get("/", ok)
+    app.router.add_get("/healthz", ok)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    await web.TCPSite(runner, "0.0.0.0", port).start()
+    logger.info("Health endpoint listening on port %d", port)
+
+
+async def _run_service() -> None:
+    port = os.getenv("PORT")
+    if port:
+        try:
+            await serve_health(int(port))
+        except ValueError:
+            logger.warning("Ignoring non-numeric PORT=%r", port)
+    await listen_for_commands(dispatch=dispatch)
+
+
 def start_bot_service() -> None:
     """Start the Slack command-listener bot. Runs until interrupted."""
     from shoebox.settings import get_settings
 
     channel = get_settings().slack.command_channel
     logger.info("Starting Slack bot service on channel=%s", channel)
-    asyncio.run(listen_for_commands(dispatch=dispatch))
+    asyncio.run(_run_service())

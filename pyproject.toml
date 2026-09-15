@@ -27,12 +27,23 @@ dependencies = [
   "selenium",
   "setuptools<81",
   "streamlit",
-  "undetected-chromedriver",
   "unidecode",
   "xmltodict"
 ]
 
 [project.optional-dependencies]
+# Chrome-driven pipelines: the 130point price scraper, the Topps release
+# calendar sync, and the TCDB browser. undetected-chromedriver pins itself to
+# a locally installed Chrome, so it is only useful on a workstation that has
+# one -- and it is the single dependency here that builds from a legacy
+# setup.py, which fails outright on newer setuptools. Keeping it out of the
+# base set means a container image (and CI) installs cleanly without Chrome,
+# while a local install adds it explicitly:
+#
+#   pip install -e ".[scrapers]"
+scrapers = [
+  "undetected-chromedriver",
+]
 dev = [
   "pytest>=8",
   "ruff>=0.6",

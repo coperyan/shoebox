@@ -25,6 +25,10 @@ Automate common workflows for an eBay sports card store:
 setup, configuration reference, CLI reference, pipeline details, the Slack
 integration, and data/storage layout. This README is a quick orientation.
 
+Runs on macOS, Windows, and Linux. The recurring pipelines can also be deployed
+to Cloud Run instead of a workstation — see
+[docs/deployment.md](docs/deployment.md) and [`deploy/`](deploy/README.md).
+
 ---
 
 ## Repository overview
@@ -71,6 +75,9 @@ python -m venv .venv
 source .venv/bin/activate   # Windows: .\.venv\Scripts\Activate.ps1
 pip install -U pip
 pip install -e .
+
+# Chrome-driven pipelines (price scraping, Topps calendar, TCDB):
+pip install -e ".[scrapers]"
 ```
 
 ### eBay REST client

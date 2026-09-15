@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cloud Run deployment** for the recurring pipelines, as an additional host
+  rather than a replacement: a local macOS or Windows checkout runs every
+  command exactly as before. `Dockerfile`, `deploy/cloudbuild.yaml`, and
+  Terraform in `deploy/` define Cloud Run jobs for `sync-orders`,
+  `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`,
+  `watch-searches` and `orders-awaiting-shipment --message`, Cloud Scheduler
+  triggers with an explicit timezone, Secret Manager mounts for the gitignored
+  config files, and an always-on service for the Slack bot. The runner service
+  account replaces `configs/gcp.json` entirely, since the GCS and BigQuery
+  clients already fall back to Application Default Credentials.
+  `scripts/tasks.yaml` is unchanged and remains the source of truth for Windows
+  Task Scheduler. See `docs/deployment.md`.
+
+- `state_sync` config section and `clients/state_mirror.py`: mirrors the
+  `watch-searches` state directory to GCS around each run and takes a
+  cross-host lock (a GCS object created with `if_generation_match=0`, with an
+  expiring lease so a crashed run cannot wedge the schedule). Required on a
+  stateless host, where every execution starts with an empty seen-cache and
+  `cache_was_lost` would otherwise re-seed *silently* — leaving the watcher
+  reporting success while alerting about nothing. Off by default;
+  `SearchStateStore` and its on-disk format are untouched.
+
 - `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
   (undetected-chromedriver, persistent profile so Cloudflare clearance and the
   TCDB login survive between runs), prompts you to log in by hand once per
@@ -19,6 +41,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `shoebox/clients/tcdb/` package and `models/tcdb.py`, laid out so further
   TCDB actions are one parser plus one browser method each (see
   `docs/tcdb.md`).
+
+### Changed
+
+- `undetected-chromedriver` moved from the base dependencies to a new
+  `scrapers` extra (`pip install -e ".[scrapers]"`). It pins itself to a
+  locally installed Chrome and builds from a legacy `setup.py` that fails on
+  newer setuptools, so keeping it in the base set broke `pip install -e .` on a
+  clean machine and in any Chrome-less environment. Only `create-listings
+  --scrape-prices`, `relist-listings --scrape-prices`, `sync-topps-calendar`
+  and `tcdb-search` need it.
+
+- `setup_logging()` honours `SHOEBOX_LOG_DIR`; `-` or empty logs to the console
+  only, for hosts that collect stdout and discard the filesystem. Unset
+  behaves as before (`logs/<timestamp>.log`).
+
+- `slack-bot` serves a health endpoint when `PORT` is set, so a container
+  platform can tell that a Socket Mode listener started, and honours
+  `SHOEBOX_BOT_COMMANDS` to withhold commands a given host cannot service
+  (the container has no card scans, workbooks, or Chrome). Both unset locally.
 
 ### Fixed
 
