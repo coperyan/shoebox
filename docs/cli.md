@@ -340,6 +340,24 @@ Note: the CLI invocation runs with `dry_run=False, headless=False` (a visible
 browser). For a headless/dry-run invocation use the module directly:
 `python -m shoebox.pipelines.sync_topps_calendar --dry-run`.
 
+## TCDB
+
+### `tcdb-search`
+Interactive advanced search on tcdb.com in a real Chrome window (Cloudflare
+blocks plain HTTP). Ensures you are logged in once per session — you sign in by
+hand in the browser, shoebox never sees the password — then loops on a
+`card #>` prompt: each card number is searched with your defaults, matches are
+printed with their URLs, and the results page stays open in Chrome so you can
+add the card to your collection. Positional card numbers are searched before
+the prompt starts. Full reference, session commands and config: [tcdb.md](tcdb.md).
+
+| Flag | Effect |
+|---|---|
+| `--name`, `--year`, `--set-name`, `--set-type`, `--category`, `--team`, `--note` | Search defaults for this session (override `tcdb.search_defaults`) |
+| `--no-login` | Skip the login check and search anonymously |
+| `--rows N` | Cap printed rows per search (default all) |
+| `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
+
 ## Not exposed via the CLI
 
 - **`services/orders_awaiting_shipment.display_orders`** defaults differ when
