@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
+  (undetected-chromedriver, persistent profile so Cloudflare clearance and the
+  TCDB login survive between runs), prompts you to log in by hand once per
+  session, then takes card numbers one at a time and searches them with saved
+  defaults (`--name Bonds`, `tcdb.search_defaults`, or `set year=1993` inside
+  the session). Matches print as a table and the results page stays open in
+  Chrome so the card can be added to the collection. New `tcdb` config section,
+  `shoebox/clients/tcdb/` package and `models/tcdb.py`, laid out so further
+  TCDB actions are one parser plus one browser method each (see
+  `docs/tcdb.md`).
+
 ### Fixed
 
 - `sync-active-listing-details` no longer throws away a whole sweep because one

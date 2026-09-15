@@ -110,6 +110,17 @@ An entry that is already an existing file path is used as-is.
 |---|---|---|
 | `calendar_id` | str | Target calendar for the Topps release sync (`…@group.calendar.google.com`). The service account must be granted "Make changes to events" on it |
 
+### `tcdb`
+
+Trading Card Database browser automation (`tcdb-search`). Every key has a
+default, so the section is optional. See [tcdb.md](tcdb.md).
+
+| Key | Type | Description |
+|---|---|---|
+| `profile_dir` | str | Persistent Chrome profile that keeps the Cloudflare clearance and your TCDB login between runs (default `data/tcdb_chrome_profile`, gitignored) |
+| `login_timeout_s` | int | Seconds to wait for you to log in by hand in the browser before the run fails (default 300) |
+| `search_defaults` | dict[str, str] | Advanced-search fields applied to every search unless overridden by a CLI flag or `set field=value` in the session. Keys: `category`, `year`, `set_name`, `set_type`, `card_number`, `name`, `team`, `note` |
+
 ### `store`
 
 Store-specific identity and eBay-account values used when building listings.
