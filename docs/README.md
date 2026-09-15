@@ -13,6 +13,7 @@ for notifications, price approvals, and remote command execution.
 | [cli.md](cli.md) | Every `shoebox` CLI command, its flags, and what it runs |
 | [pipelines.md](pipelines.md) | Detailed walkthrough of each pipeline and service |
 | [search.md](search.md) | The saved eBay search feature end to end: setup, YAML, filters, tuning, scheduling, state, troubleshooting |
+| [tcdb.md](tcdb.md) | Trading Card Database automation: the interactive advanced search, manual-login model, config, and how to add more TCDB actions |
 | [scheduling.md](scheduling.md) | The Windows scheduled tasks: `scripts/tasks.yaml`, generating and registering them, troubleshooting |
 | [metadata.md](metadata.md) | Field-by-field definitions of the checklist & parallel metadata |
 | [slack.md](slack.md) | The Slack notification system: messaging, approval buttons, threading, the command bot, and design decisions |
