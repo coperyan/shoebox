@@ -76,6 +76,7 @@ by the shipped SQL views/queries:
 | `exports/jsonl/searches/<name>_seen.jsonl` | Persistent, append-only | Saved-search dedup cache; later lines win. Compacted and pruned (`prune_seen_after_days`) at end of run |
 | `exports/jsonl/searches/search_hits_append.jsonl` | Flushed after successful GCS+BQ sync | Buffered `search_hits` rows; survives a failed flush and retries next run |
 | `exports/jsonl/searches/.lock` | Per run | Advisory lock (`flock` / `msvcrt.locking`) guarding against overlapping scheduled invocations |
+| `exports/jsonl/reviews/price_review_state.json` | Persistent | Price-review memory: item id → last decision (`repriced`/`kept`), price, and review count. Drives the `review.cooldown_days` check; pruned to listings that are still live |
 | `data/checklist.csv`, `data/parallels.csv` | Overwritten per sync | Normalized metadata extracts |
 | `data/Inputs (Param).xlsm` | User-maintained | Excel queue input |
 | `scans_dir/<scan_prefix><id><scan_extension>` | User-maintained | Source card scans (naming set by `scan_prefix`/`scan_number_padding`/`scan_extension`) |

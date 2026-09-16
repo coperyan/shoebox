@@ -151,12 +151,13 @@ Four pipelines prompt the pricing channel. Replies are parsed by
 |---|---|---|---|---|
 | `relist-listings` | `*Price approval:* <title>` with `Approve $X` button | Button click | Threaded reply with a number | **Skip the listing** (stays live untouched; next run retries). Rationale: approval is the point — never change a price without sign-off |
 | `create-listings --scrape-prices` | `Please confirm price: X - <card>` | Reply `Y`/`YES` | Reply with a number | **Proceed with the proposed price** (scraped price, or the queue price if scraping failed). Rationale: the card is queued to be listed; the best-known price beats aborting the whole run |
+| `review-listings` | One message per candidate (title, price, views/impressions/watchers, age, photo) with a suggested markdown, all posted up front — to `review.channel` when set, else the pricing channel | Threaded reply with a price, or `ok` for the suggestion → repriced in place | Reply `keep` (price is right; silent for `review.cooldown_days`) or `skip` (raised again next run) | **Unparseable reply, a price at/above the current one or below the floor, or an eBay rejection** → threaded hint, prompt stays pending. **Deadline (`--timeout-s`, default 900 s for the batch)** → stamped `⌛ Expired` and raised again next run. Rationale: no price ever changes without an explicit instruction, and an unanswered prompt must not count as a decision |
 | `send-offers` | One message per eligible listing (title, current price, photo), all posted up front — to `offers_channel` when set, else the pricing channel | Threaded reply with the offer amount → sends immediately | Reply `skip` to resolve without sending | **Unparseable/out-of-range reply or eBay rejection** → threaded hint, prompt stays pending for another reply. **Deadline (`--timeout-s`, default 900 s for the whole batch)** → prompt stamped `⌛ Expired`; the listing reappears next run. Rationale: no offer is ever sent without an explicit amount |
 
-Default timeout is 600 s per prompt (`timeout_s` parameter); `send-offers`
-uses a single 900 s deadline shared by the whole batch. Like `relist-listings`,
-`send-offers` blocks waiting on Slack and therefore stays out of the command
-bot's whitelist.
+Default timeout is 600 s per prompt (`timeout_s` parameter); `send-offers` and
+`review-listings` use a single 900 s deadline shared by the whole batch. Like
+`relist-listings`, both block waiting on Slack and therefore stay out of the
+command bot's whitelist.
 
 ## The command bot (`services/slack_bot_service.py`)
 

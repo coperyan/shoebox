@@ -20,6 +20,7 @@ from shoebox.clients.ebay.errors import EbayClientError
 from shoebox.clients.ebay.inventory import listing_id_of, offer_id_of
 from shoebox.transforms.listing_builder import (
     inventory_item_body_with_title,
+    offer_body_with_price,
     offer_body_with_store_categories,
 )
 
@@ -203,6 +204,91 @@ class ListingService:
             "item_id": item_id,
             "title": new_title,
             "previous_title": current,
+            "method": "inventory",
+            "skipped": False,
+        }
+
+    def update_price(
+        self,
+        *,
+        new_price: float,
+        sku: str | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Change the asking price of a published listing, in place.
+
+        Two routes, mirroring :meth:`update_title`:
+
+        - **With a SKU** the price lives on the offer, so this is a
+          getOffers/updateOffer round-trip that changes ``pricingSummary`` and
+          nothing else.
+        - **Without one** -- listed via the Trading API or eBay's own form --
+          it goes through Trading ``ReviseFixedPriceItem`` by item ID.
+
+        Deliberately not a relist: the listing keeps its ID, its watchers, and
+        the standing it has built up in search. :meth:`relist_listing` is the
+        right tool once a listing is old enough that the search standing is
+        worth nothing anyway; a price that has simply drifted above market is
+        not that.
+        """
+        if not sku and not item_id:
+            raise ValueError("update_price needs a sku or an item_id")
+        if new_price <= 0:
+            raise ValueError(f"new_price must be positive; got {new_price}")
+
+        new_price = round(float(new_price), 2)
+
+        if not sku:
+            self.ebay.trading.revise_listing_price(item_id, new_price)
+            logger.info("Repriced item_id=%s via Trading: $%.2f", item_id, new_price)
+            return {
+                "item_id": item_id,
+                "price": new_price,
+                "method": "trading",
+                "skipped": False,
+            }
+
+        try:
+            offer = self.ebay.inventory.find_offer(sku)
+            if offer is None:
+                raise EbayClientError(f"No offer found for SKU {sku}")
+
+            current = float(offer.price) if offer.price is not None else None
+            if current is not None and abs(current - new_price) < 0.005:
+                logger.info("Price already $%.2f for sku=%s; skipping", new_price, sku)
+                return {
+                    "sku": sku,
+                    "price": new_price,
+                    "method": "inventory",
+                    "skipped": True,
+                }
+
+            body = offer_body_with_price(offer.raw, new_price)
+            self.ebay.inventory.update_offer(offer.offer_id, body)
+        except Exception as inventory_error:
+            if not item_id:
+                raise
+            logger.warning(
+                "Inventory reprice failed for sku=%s (%s); trying Trading API",
+                sku,
+                inventory_error,
+            )
+            self.ebay.trading.revise_listing_price(item_id, new_price)
+            logger.info("Repriced item_id=%s via Trading fallback: $%.2f", item_id, new_price)
+            return {
+                "sku": sku,
+                "item_id": item_id,
+                "price": new_price,
+                "method": "trading_fallback",
+                "skipped": False,
+            }
+
+        logger.info("Repriced sku=%s: $%s -> $%.2f", sku, current, new_price)
+        return {
+            "sku": sku,
+            "item_id": item_id,
+            "price": new_price,
+            "previous_price": current,
             "method": "inventory",
             "skipped": False,
         }

@@ -110,6 +110,24 @@ An entry that is already an existing file path is used as-is.
 |---|---|---|
 | `calendar_id` | str | Target calendar for the Topps release sync (`…@group.calendar.google.com`). The service account must be granted "Make changes to events" on it |
 
+### `review`
+
+Which live listings the periodic price review
+([`review-listings`](cli.md#review-listings)) raises for a second look. Every
+key has a default, so the section is optional.
+
+| Key | Type | Description |
+|---|---|---|
+| `channel` | str | Slack channel for the review prompts (default: falls back to `slack.pricing_channel`) |
+| `min_age_days` | int | Youngest listing worth reviewing (default 14) — under this, release-week pricing is still the market price |
+| `max_age_days` | int | Oldest (default 75). Past ~90 days a listing is stale in search and belongs to `relist-listings`, which rebuilds it |
+| `min_price` | float | Listings under this are left to the relist ladder (default 2.00) |
+| `price_floor` | float | No suggestion ever goes below this (default 0.99) |
+| `min_views` | int | Views needed before silence means anything (default 10) |
+| `max_watchers` | int | Watchers allowed before the listing is left alone (default 0) — a watcher means someone wants it at this price |
+| `cooldown_days` | int | How long a decision (repriced or kept) puts a listing to sleep (default 21). Skipped and unanswered prompts are *not* recorded, so they return next run |
+| `max_per_run` | int | Cap on prompts per run (default 25) |
+
 ### `tcdb`
 
 Trading Card Database browser automation (`tcdb-search`). Every key has a

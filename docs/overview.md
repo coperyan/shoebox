@@ -72,7 +72,7 @@ flowchart TD
 
     EBAY -->|sync-orders / sync-active-listings /\nsync-active-listing-details| BQEBAY
 
-    EBAY <-->|relist-listings / end-oos-listings /\nsend-offers| LIFE[Lifecycle pipelines]
+    EBAY <-->|relist-listings / review-listings /\nend-oos-listings / send-offers| LIFE[Lifecycle pipelines]
     LIFE <-->|price approvals| SLACK[Slack]
     BQEBAY -.->|order summaries| SLACK
 ```
@@ -110,7 +110,7 @@ The `v_active_listing_details` view stitches the latest snapshots together.
 |---|---|---|
 | eBay Sell APIs (REST, via [`ebay_rest`](https://github.com/matecsaj/ebay_rest)) | Inventory items, offers, publishing, promoted listings, analytics, orders, negotiation | `clients/ebay/` |
 | eBay Buy Browse API | Saved-search polling for new listings | `clients/ebay/browse.py`, `pipelines/watch_searches.py` |
-| eBay Trading API (legacy XML) | GetItem details, active/scheduled listing lists, ending listings, adding SKUs | `clients/ebay/trading.py` |
+| eBay Trading API (legacy XML) | GetItem details, active/scheduled listing lists, ending listings, adding SKUs, revising titles/prices/store categories on listings the Inventory API can't see | `clients/ebay/trading.py` |
 | Google Cloud Storage | Card images, metadata staging, log staging | `clients/gcs.py`, `clients/image_log.py` |
 | BigQuery | Metadata source of truth, all monitoring/log tables | `clients/bigquery.py` |
 | Slack (Bolt + Socket Mode) | Notifications, price approvals, command bot | `utils/slack.py`, `services/slack_bot_service.py` |

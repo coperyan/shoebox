@@ -463,3 +463,34 @@ class TestGetWatchList:
         client, _ = self._client_with_pages(monkeypatch, [[self._item("1")]])
         (node,) = client.get_watch_list_items()
         assert node["Seller"]["FeedbackScore"] == "100"
+
+
+class TestReviseListingPrice:
+    """The Trading route for repricing listings the Inventory API can't see."""
+
+    def _client_capturing(self, monkeypatch):
+        client = _client(monkeypatch)
+        bodies: list[str] = []
+
+        def fake_call(self, *, call_name, body, site_id, compatibility_level, timeout=60):
+            assert call_name == "ReviseFixedPriceItem"
+            bodies.append(body)
+            return {"Ack": "Success", "ItemID": "123"}
+
+        monkeypatch.setattr(TradingClient, "_trading_call", fake_call)
+        return client, bodies
+
+    def test_the_price_goes_out_with_two_decimals_and_a_currency(self, monkeypatch):
+        client, bodies = self._client_capturing(monkeypatch)
+        result = client.revise_listing_price("123", 3.5)
+
+        assert '<StartPrice currencyID="USD">3.50</StartPrice>' in bodies[0]
+        assert "<ItemID>123</ItemID>" in bodies[0]
+        assert result == {"ack": "Success", "item_id": "123", "price": 3.5, "currency": "USD"}
+
+    def test_a_nonsense_price_never_reaches_ebay(self, monkeypatch):
+        client, bodies = self._client_capturing(monkeypatch)
+        for bad in (0, -1.0):
+            with pytest.raises(ValueError):
+                client.revise_listing_price("123", bad)
+        assert bodies == []

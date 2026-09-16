@@ -166,9 +166,15 @@ repo root; see [data-storage.md](data-storage.md).
 | `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` |
 | `sync-orders` | Daily 04:00 | `shoebox sync-orders` |
 | `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` |
+| `review-listings` | Every 7 days, 09:00 | `shoebox review-listings --timeout-s 7200` |
 | `watch-searches` | Logon, every 5m | `shoebox watch-searches` |
 | `slack-bot` | Logon (restart ×3) | `shoebox slack-bot` |
 | `ebay-orders-awaiting-shipment` | Manual | `shoebox orders-awaiting-shipment` ×2 |
+
+`review-listings` is the one task that deliberately outlives its own work: it
+posts its prompts and then waits up to two hours for Slack replies, which is
+why it carries a three-hour `execution_time_limit`. Anything unanswered expires
+and is raised again next week.
 
 `watch-searches` and `slack-bot` are the two that stay resident. Overlapping
 `watch-searches` runs are already prevented by an advisory lock inside the

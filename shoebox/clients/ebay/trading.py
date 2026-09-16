@@ -839,6 +839,58 @@ class TradingClient:
             "title": title,
         }
 
+    def revise_listing_price(
+        self,
+        item_id: str,
+        price: float,
+        *,
+        currency: str = "USD",
+        site_id: str = "0",  # 0 = US
+        compatibility_level: str = "1259",
+    ) -> dict[str, Any]:
+        """
+        Change the asking price of a fixed-price listing via `ReviseFixedPriceItem`.
+
+        The Trading counterpart to updating an offer's ``pricingSummary``, and
+        the same caveat as :meth:`revise_listing_title`: this is the path for
+        listings with no SKU, created outside the Sell Inventory API. eBay
+        rejects Trading revisions on Inventory-API listings.
+
+        The listing keeps its ID, its watchers, and the time it has already
+        accrued in search -- which is the whole point of repricing in place
+        rather than relisting.
+        """
+        amount = float(price)
+        if amount <= 0:
+            raise ValueError(f"price must be positive; got {price}")
+
+        body = f"""<?xml version="1.0" encoding="utf-8"?>
+                <ReviseFixedPriceItemRequest xmlns="{EBAY_NS}">
+                <RequesterCredentials>
+                    <eBayAuthToken>{self.token}</eBayAuthToken>
+                </RequesterCredentials>
+                <ErrorLanguage>en_US</ErrorLanguage>
+                <WarningLevel>High</WarningLevel>
+                <Item>
+                    <ItemID>{item_id}</ItemID>
+                    <StartPrice currencyID="{currency}">{amount:.2f}</StartPrice>
+                </Item>
+                </ReviseFixedPriceItemRequest>"""
+
+        payload = self._trading_call(
+            call_name="ReviseFixedPriceItem",
+            body=body,
+            site_id=site_id,
+            compatibility_level=compatibility_level,
+        )
+
+        return {
+            "ack": payload.get("Ack", "Success"),
+            "item_id": payload.get("ItemID", item_id),
+            "price": round(amount, 2),
+            "currency": currency,
+        }
+
     def revise_store_category(
         self,
         item_id: str,

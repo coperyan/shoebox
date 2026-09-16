@@ -151,9 +151,29 @@ shoebox create-variation-listings --excel-path inventory.xlsx [--dry-run] [--pub
 ```
 
 Every mutating pipeline (`create-listings`, `create-variation-listings`,
-`relist-listings`, `send-offers`) supports `--dry-run` and creates offers
-unpublished unless `--publish` is passed. See [docs/cli.md](docs/cli.md) for
-every command and flag.
+`relist-listings`, `review-listings`, `send-offers`) supports `--dry-run` and
+creates offers unpublished unless `--publish` is passed. See
+[docs/cli.md](docs/cli.md) for every command and flag.
+
+### Review prices that have gone stale
+
+Cards listed the week a set drops are priced against that week's market. Weeks
+later the premium is gone and the listing gives no sign of it — it's still
+being shown and clicked, it just doesn't sell. `review-listings` finds those
+(views without watchers, inside a configurable age window), proposes a markdown
+from the store's standard ladder, and asks in Slack:
+
+```bash
+shoebox review-listings --dry-run     # who'd be raised, and why the rest weren't
+shoebox review-listings               # post the prompts (what the weekly task runs)
+shoebox review-listings --auto        # take the suggested markdown, no prompts
+```
+
+Reply in a prompt's thread with a price, `ok`, `keep`, or `skip`. Decisions are
+remembered so nothing is raised twice inside the cooldown; the price is edited
+in place, so the listing keeps its ID, watchers, and search standing. Tune the
+thresholds under `review:` in `app.yaml` — see
+[docs/cli.md](docs/cli.md#review-listings).
 
 ### Watch saved eBay searches
 

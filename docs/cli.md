@@ -87,6 +87,47 @@ reply skips that listing. Cheaper/no-view listings are auto-repriced by rule.
 | `--no-scrape` | Skip 130point price scraping (approval prompt still fires, proposing the current price) |
 | `--dry-run` | Log the repricing decision for each listing without contacting eBay or Slack |
 
+### `review-listings`
+The periodic second look at listings whose opening price has stopped working —
+cards listed in a set's release week, when the market pays the most, still
+sitting there weeks later. The signal is **traffic without interest**: enough
+views to know people found the card, no watchers to say anyone wants it at this
+price, and old enough that the release-week premium has worn off. A $4 listing
+with 20 views and nobody watching is the case it exists for. Thresholds live
+under `review` in `app.yaml`
+([reference](configuration.md#review)); the defaults are 14–75 days old, over
+$2, ≥ 10 views, no watchers.
+
+Each candidate is posted to Slack (`review.channel`, falling back to the
+pricing channel) with its numbers, its photo, and a markdown from the store's
+standard discount ladder. Reply in the thread with:
+
+| Reply | Effect |
+|---|---|
+| a price (`3.29`, `$3.29`) | Repriced to that amount |
+| `ok` / `yes` | Repriced to the suggestion |
+| `keep` | Price is right; not asked again for `review.cooldown_days` |
+| `skip` | Left alone, and raised again on the next run |
+
+Decisions are remembered in `exports/jsonl/reviews/price_review_state.json`, so
+nothing is raised twice inside the cooldown; skips and unanswered prompts are
+deliberately not recorded. The price is edited **in place** (offer update, or
+Trading `ReviseFixedPriceItem` for listings with no SKU) — the listing keeps
+its ID, its watchers, and its standing in search, which is what separates this
+from `relist-listings`.
+
+Like `send-offers`, it blocks on Slack replies and is not in the slack-bot
+whitelist. It is scheduled weekly (see [scheduling.md](scheduling.md)).
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Print the listings that would be raised, and a tally of why the rest weren't; no Slack, no eBay writes, no state |
+| `--auto` | Apply the suggested markdown to every candidate without prompting |
+| `--force` | Ignore the cooldown on recently reviewed listings |
+| `--limit N` | Cap prompts this run (default `review.max_per_run`) |
+| `--timeout-s N` | Seconds to wait for replies before unanswered prompts expire (default `900`) |
+| `--min-age-days N` / `--max-age-days N` / `--min-views N` / `--min-price N` | Override the config thresholds for one run — useful for tuning against `--dry-run` |
+
 ### `end-oos-listings`
 Ends every active "out of stock" listing (quantity − sold = 0) via the Trading
 API and notifies the Slack notify channel with the count.

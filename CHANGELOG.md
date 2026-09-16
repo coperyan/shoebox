@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`review-listings`** — a periodic prompt to reprice listings the market has
+  moved past. Cards go up in a set's release week, when they fetch the most,
+  and weeks later the opening price is quietly above market while the listing
+  looks perfectly healthy. The signal is traffic without interest: enough views
+  to know people found the card, no watchers, and old enough for the
+  release-week premium to have worn off (defaults: 14–75 days, over $2, ≥ 10
+  views, no watchers; all configurable under `review` in `app.yaml`).
+  Candidates are posted to Slack with their numbers, photo, and a markdown from
+  the store's standard ladder — reply with a price, `ok`, `keep`, or `skip`.
+  Decisions are remembered (`clients/review_state.py`) so nothing is raised
+  twice inside the cooldown, while skips and unanswered prompts return next
+  run. Unlike `relist-listings`, the price is edited **in place**
+  (`ListingService.update_price`, new `TradingClient.revise_listing_price` and
+  `transforms.listing_builder.offer_body_with_price`), so the listing keeps its
+  ID, its watchers, and its standing in search. Runs weekly via
+  `scripts/tasks.yaml`; `--dry-run` prints the shortlist and a tally of why
+  everything else was passed over, which is the fastest way to tune the
+  thresholds.
 - `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
   (undetected-chromedriver, persistent profile so Cloudflare clearance and the
   TCDB login survive between runs), prompts you to log in by hand once per

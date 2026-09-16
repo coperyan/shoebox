@@ -602,6 +602,63 @@ def offer_body_with_store_categories(existing_offer: dict, categories: list[str]
     return {k: v for k, v in body.items() if v is not None}
 
 
+def offer_body_with_price(existing_offer: dict, new_price: float) -> dict:
+    """Rebuild an offer payload changing only the asking price.
+
+    The counterpart to :func:`offer_body_with_store_categories`, and the same
+    rule applies: everything else -- quantity, description, store categories
+    and the policy IDs eBay already has -- is carried across untouched. In
+    particular the fulfillment policy is *not* re-derived from the new price
+    the way :func:`rebuild_offer_body` does it, because a markdown across the
+    low/high threshold would then silently change how the card ships.
+
+    ``updateOffer`` is a full PUT, so every required field has to be present
+    even though only ``pricingSummary`` is changing.
+    """
+    if new_price <= 0:
+        raise ValueError(f"new_price must be positive; got {new_price}")
+
+    policies = existing_offer.get("listing_policies") or {}
+    pricing = existing_offer.get("pricing_summary") or {}
+    price = pricing.get("price") or {}
+
+    listing_policies: dict[str, Any] = {
+        "fulfillmentPolicyId": policies.get("fulfillment_policy_id"),
+        "paymentPolicyId": policies.get("payment_policy_id"),
+        "returnPolicyId": policies.get("return_policy_id"),
+    }
+    if policies.get("best_offer_terms"):
+        listing_policies["bestOfferTerms"] = {"bestOfferEnabled": True}
+    listing_policies = {k: v for k, v in listing_policies.items() if v is not None}
+
+    body = {
+        "sku": existing_offer["sku"],
+        "marketplaceId": existing_offer.get("marketplace_id") or "EBAY_US",
+        "format": existing_offer.get("format") or "FIXED_PRICE",
+        "availableQuantity": existing_offer.get("available_quantity"),
+        "categoryId": existing_offer.get("category_id"),
+        "listingDescription": existing_offer.get("listing_description"),
+        "listingDuration": existing_offer.get("listing_duration") or "GTC",
+        "merchantLocationKey": (
+            existing_offer.get("merchant_location_key")
+            or get_settings().store.merchant_location_key
+        ),
+        "listingPolicies": listing_policies,
+        # Empty rather than absent would clear the listing's store categories.
+        "storeCategoryNames": [
+            x for x in (existing_offer.get("store_category_names") or []) if "None" not in x
+        ]
+        or None,
+        "pricingSummary": {
+            "price": {
+                "value": f"{float(new_price):.2f}",
+                "currency": price.get("currency") or "USD",
+            }
+        },
+    }
+    return {k: v for k, v in body.items() if v is not None}
+
+
 def build_draft(
     *, row: ListingQueueRow, image_urls: list[str], sku: str, schedule: bool = False
 ) -> EbayListingDraft:

@@ -140,6 +140,49 @@ which is what lets relist flows find existing inventory items and offers.
   withdraw + delete old offer, create + publish new offer, re-promote (7%).
 - Failures are collected per row and printed; the loop continues.
 
+### `pipelines/review_listings.py` (CLI: `review-listings`)
+
+The weekly "is this still priced right?" pass, aimed at the window
+`relist_listings.py` doesn't cover: a card listed in a set's release week —
+when the market is at its highest — that is still live weeks later.
+
+- **Rows** (`fetch_listing_rows`): active listings (Trading) joined to 89-day
+  view/impression counts (Analytics). A traffic failure raises rather than
+  zeroing the counts the way `relist_listings` does: traffic *is* the criterion
+  here, so a run without it would report "nothing to review", which is worse
+  than an error.
+- **Selection** (`transforms/listing_review.py`, pure): inside the age window,
+  above `review.min_price`, at least `review.min_views` views, at most
+  `review.max_watchers` watchers, not inside its cooldown, and not a variation
+  listing. Ranked views-first (most people who looked and walked away), price
+  second, then capped at `review.max_per_run`. Every rejected listing keeps its
+  reason, which is what `--dry-run` prints as a tally — the fastest way to tune
+  the thresholds.
+- **Suggestion**: the store's own markdown ladder (`utils/pricing`), 5% off
+  above the matrix's top tier, always strictly below the current price and
+  never under `review.price_floor`. A review is a prompt to take one step down,
+  not a second repricing engine.
+- **Photos**: one `GetItem` per candidate, *after* the per-run cap — a couple of
+  dozen calls, not a couple of thousand. Best effort; a failure just means a
+  prompt without a picture.
+- **Prompting**: `notify_batch_and_wait`, same shape as `send_offers.py` — one
+  message per listing, replies dispatched as they arrive, unparseable ones get
+  a threaded hint and stay pending, and anything still pending at `timeout_s`
+  expires and returns next run.
+- **Applying**: `ListingService.update_price` — an offer update by SKU
+  (`transforms.listing_builder.offer_body_with_price`, which changes the price
+  and *only* the price; re-deriving the fulfillment policy would silently
+  reshuffle shipping across the low/high threshold), or Trading
+  `ReviseFixedPriceItem` for listings with no SKU, which is also the fallback
+  when the inventory route fails. In place, so the listing keeps its ID,
+  watchers, and age.
+- **State** (`clients/review_state.py`): one JSON document keyed by item id,
+  holding the last decision and how many reviews a listing has had. Only
+  `repriced` and `kept` are recorded — a skipped or unanswered prompt leaves no
+  trace so it comes back. Records for listings that are no longer live (sold,
+  relisted) are pruned on each run — a relist is a genuinely new listing and
+  should be reviewable on its own merits. `--dry-run` writes nothing at all.
+
 ### `pipelines/end_oos_listings.py`
 
 Trading API: find active listings with zero remaining quantity, end them all

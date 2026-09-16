@@ -85,6 +85,38 @@ def main() -> None:
     p_relist.add_argument("--no-scrape", action="store_true")
     p_relist.add_argument("--dry-run", action="store_true")
 
+    # Periodic price review
+    p_review = sub.add_parser(
+        "review-listings",
+        help="Ask Slack to reprice listings with views but no interest",
+    )
+    p_review.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print the listings that would be raised (and why the rest weren't); no Slack, no eBay writes",
+    )
+    p_review.add_argument(
+        "--auto",
+        action="store_true",
+        help="Apply the suggested markdown to every candidate without prompting",
+    )
+    p_review.add_argument(
+        "--force", action="store_true", help="Ignore the cooldown on recently reviewed listings"
+    )
+    p_review.add_argument(
+        "--limit", type=int, help="Cap prompts this run (default review.max_per_run)"
+    )
+    p_review.add_argument(
+        "--timeout-s",
+        type=int,
+        default=900,
+        help="Seconds to wait for Slack replies before unanswered prompts expire (default 900)",
+    )
+    p_review.add_argument("--min-age-days", type=int, help="Override review.min_age_days")
+    p_review.add_argument("--max-age-days", type=int, help="Override review.max_age_days")
+    p_review.add_argument("--min-views", type=int, help="Override review.min_views")
+    p_review.add_argument("--min-price", type=float, help="Override review.min_price")
+
     # Send offers to watchers
     p_offers = sub.add_parser(
         "send-offers", help="Send negotiation offers to eligible watchers via Slack prompts"
@@ -387,6 +419,24 @@ def main() -> None:
             schedule=args.schedule,
             price_scrape=not args.no_scrape,
             dry_run=args.dry_run,
+        )
+        return
+
+    if args.cmd == "review-listings":
+        from shoebox.pipelines.review_listings import main as review_listings
+
+        review_listings(
+            dry_run=args.dry_run,
+            auto=args.auto,
+            force=args.force,
+            limit=args.limit,
+            timeout_s=args.timeout_s,
+            overrides={
+                "min_age_days": args.min_age_days,
+                "max_age_days": args.max_age_days,
+                "min_views": args.min_views,
+                "min_price": args.min_price,
+            },
         )
         return
 

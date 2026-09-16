@@ -159,6 +159,39 @@ class StoreSettings(BaseModel):
     ad_campaigns: StoreAdCampaignSettings = Field(default_factory=StoreAdCampaignSettings)
 
 
+class ListingReviewSettings(BaseModel):
+    """Which live listings ``review-listings`` asks you to reprice.
+
+    The defaults describe one specific situation: a card listed in the week a
+    set dropped, when the market pays the most for it, still live a few weeks
+    later with plenty of views and nobody watching. Every field has a default,
+    so the whole ``review`` section is optional.
+    """
+
+    # Slack channel for the review prompts. Falls back to ``slack.pricing_channel``.
+    channel: str = ""
+    # Youngest listing worth a second look. Under this, release-week pricing is
+    # still roughly the market price and a markdown just gives away margin.
+    min_age_days: int = 14
+    # Oldest. Past ~90 days a listing has gone stale in search and needs
+    # relist-listings (a fresh listing), not a price edit.
+    max_age_days: int = 75
+    # Cheaper listings are left to the relist ladder -- there is no markdown
+    # worth making below it.
+    min_price: float = 2.00
+    # Never propose a price under this.
+    price_floor: float = 0.99
+    # Views are the "people looked and passed" signal. Below this there simply
+    # isn't enough traffic to read anything into the silence.
+    min_views: int = 10
+    # A watcher means somebody does want the card at this price; leave it be.
+    max_watchers: int = 0
+    # How long a decision (repriced or kept) puts a listing to sleep for.
+    cooldown_days: int = 21
+    # Cap on prompts per run so one run can't bury the channel.
+    max_per_run: int = 25
+
+
 class TcdbSettings(BaseModel):
     """Trading Card Database (tcdb.com) browser automation.
 
@@ -190,6 +223,7 @@ class Settings(BaseModel):
     google_calendar: GoogleCalendarSettings
     store: StoreSettings = Field(default_factory=StoreSettings)
     tcdb: TcdbSettings = Field(default_factory=TcdbSettings)
+    review: ListingReviewSettings = Field(default_factory=ListingReviewSettings)
 
 
 def _resolve_config_path(config_path: str | os.PathLike[str] | None = None) -> Path:

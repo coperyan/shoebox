@@ -76,6 +76,19 @@ tasks:
       type: daily
       at: "05:00"
 
+  # Weekly price review. The prompts wait on Slack replies, so this task lives
+  # for as long as --timeout-s (2h) rather than exiting immediately; anything
+  # unanswered simply expires and comes back next week.
+  - name: review-listings
+    run: review-listings --timeout-s 7200
+    description: Ask Slack to reprice listings with views but no interest.
+    execution_time_limit: PT3H
+    start_when_available: true
+    trigger:
+      type: daily
+      at: "09:00"
+      every_days: 7
+
   - name: watch-searches
     run: watch-searches
     description: Poll saved eBay searches and post new hits to Slack.
