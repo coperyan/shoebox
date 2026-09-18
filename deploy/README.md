@@ -27,6 +27,40 @@ deploy/
 
 ## One-time setup
 
+Steps are ordered by dependency: secrets must exist before `terraform apply`
+(the IAM bindings reference them), and the image must exist before that too
+(Cloud Run validates it at deploy time).
+
+**0. Prerequisites and APIs.**
+
+```bash
+gcloud auth login
+gcloud config set project YOUR_PROJECT
+
+gcloud services enable \
+  run.googleapis.com \
+  cloudscheduler.googleapis.com \
+  secretmanager.googleapis.com \
+  artifactregistry.googleapis.com \
+  cloudbuild.googleapis.com
+```
+
+Storage and BigQuery are already enabled if shoebox has been running. You also
+need `terraform` >= 1.5 locally.
+
+> **Check the eBay refresh token first.** The mounted `ebay_rest.json` is
+> read-only, which is fine because `ebay_rest` never writes a refreshed token
+> back — but it means the file you upload must *already* contain a valid
+> `refresh_token`. If it is empty, `ebay_rest` tries to open a consent browser,
+> which in a container just fails. Confirm before uploading:
+>
+> ```bash
+> python scripts/refresh_ebay_token.py --check
+> ```
+>
+> It should print `refresh_token: present`. If it says `EMPTY (consent will
+> run)`, mint one locally first — see [../docs/setup.md](../docs/setup.md).
+
 **1. Create the secrets.** Four of the five gitignored config files become
 Secret Manager secrets. `gcp.json` is not one of them — the runner service
 account replaces it.
@@ -95,10 +129,62 @@ Pin the image by **digest**, not `:latest`. A Cloud Build run then produces an
 image without silently changing what tonight's scheduled job executes — rolling
 forward stays an explicit `terraform apply`.
 
-**5. Grant bucket and dataset access.** `terraform output runner_service_account`
-gives the email; it needs object write on the four buckets in `app.yaml` and
-BigQuery append on the datasets. The project-level roles in `main.tf` cover the
-common case; tighten to per-bucket bindings if you prefer.
+**5. Bucket and dataset access — usually nothing to do.** `main.tf` grants the
+runner `roles/storage.objectAdmin` and `roles/bigquery.dataEditor` at the
+project level, which already covers the four buckets and three datasets in
+`app.yaml`. `terraform output runner_service_account` gives the email if you
+would rather replace those with per-bucket and per-dataset bindings.
+
+## Cutting over from the Windows host
+
+Two components must not run in both places at once. Everything else is safe to
+overlap — the daily syncs write snapshot rows keyed by `file_date`, so a
+duplicate run is a duplicate snapshot, not corruption.
+
+**`watch-searches` will double-alert.** The Windows host keeps its seen-cache on
+disk and the cloud keeps its own in GCS, so neither sees what the other has
+already posted and every new listing arrives in Slack twice. Disable the Windows
+task before the first cloud run:
+
+```powershell
+Disable-ScheduledTask -TaskName watch-searches -TaskPath \shoebox\
+```
+
+Then seed the cloud with the state you already have, so the first run picks up
+where Windows left off instead of re-seeding from scratch:
+
+```bash
+cd /path/to/shoebox
+gsutil cp exports/jsonl/searches/search_state.json \
+          exports/jsonl/searches/*_seen.jsonl \
+          gs://YOUR_EBAY_BUCKET/state/searches/
+```
+
+Copy the state and seen files only — not `.lock`, which is host-local.
+
+Skipping the copy is not harmful, just lossy: the first cloud run seeds
+silently, so you get no flood, but you also get no alerts for anything listed
+during the gap. The same applies if you leave a long pause between disabling
+Windows and applying — a search whose `last_run_at` is more than six intervals
+old re-seeds silently by design.
+
+**`slack-bot` will answer every command twice.** Both instances are listening on
+the same Socket Mode connection:
+
+```powershell
+Disable-ScheduledTask -TaskName slack-bot -TaskPath \shoebox\
+```
+
+Or set `enable_bot = false` and leave the bot on Windows.
+
+**The rest can overlap** while you build confidence. Disable each Windows task
+once its Cloud Run counterpart has run cleanly a few times:
+
+```powershell
+Get-ScheduledTask -TaskPath \shoebox\ | Disable-ScheduledTask
+```
+
+Nothing is deleted, so re-enabling is one command if you want to fall back.
 
 ## Verifying
 
@@ -114,6 +200,30 @@ should report pulling files rather than seeding:
 ```bash
 gcloud run jobs execute watch-searches --region us-central1 --wait
 gsutil ls gs://YOUR_EBAY_BUCKET/state/searches/
+```
+
+## When a step fails
+
+| Symptom | Cause |
+|---|---|
+| `terraform apply`: `Error 403 ... permission 'iam.serviceAccounts.actAs'` | The identity running Terraform needs `roles/iam.serviceAccountUser` on the runner service account. Project owner has it; a narrower role may not |
+| `terraform apply`: secret `not found` | Step 1 was skipped or the secret IDs in `var.secrets` do not match what you created |
+| Job execution fails instantly, `Missing config file` | `SHOEBOX_CONFIG_PATH` points somewhere the secret is not mounted. `terraform output config_paths` shows the real paths |
+| Job fails with `FileNotFoundError` on a `.sql` file | `paths.query_dir` in the uploaded `app.yaml` is not `configs/bigquery/queries` |
+| eBay calls fail with a consent/browser error | The uploaded `ebay_rest.json` has no `refresh_token` — see step 0 |
+| eBay 403, `errorId` 1100, `domain: ACCESS` | A missing scope, not a deployment problem. The token carries the scopes it was granted; see [../docs/setup.md](../docs/setup.md) |
+| `watch-searches` logs `seeding` on every run | `state_sync.enabled` is not `true` in the uploaded `app.yaml`, so state is not surviving between executions |
+| `watch-searches` logs `Another run holds the state lock` forever | A previous execution died without releasing it. It self-heals after `lock_ttl_seconds` (default 15 min); to clear it now, delete `gs://BUCKET/state/searches/.lock.json` |
+| Slack alerts arrive twice | The Windows `watch-searches` task is still enabled — see the cutover section |
+| Cloud Build: `denied: Permission "artifactregistry.repositories.uploadArtifacts"` | The Cloud Build service account needs `roles/artifactregistry.writer`, or the repository in step 3 was never created |
+| Cloud Scheduler complains about a missing App Engine app | Rare on current projects; create one in the same region (`gcloud app create --region=...`) and re-apply |
+
+Logs for any failed run:
+
+```bash
+gcloud logging read \
+  'resource.type=cloud_run_job AND resource.labels.job_name=sync-orders AND severity>=WARNING' \
+  --limit 50 --format='value(textPayload)'
 ```
 
 ## Things worth knowing
