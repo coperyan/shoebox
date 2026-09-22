@@ -54,6 +54,17 @@ def main() -> None:
         help="Concurrent GetItem calls (default 12); lower it if eBay starts throttling",
     )
 
+    # Watch List
+    p_watch = sub.add_parser(
+        "sync-watch-list",
+        help="Update watch list items (with item details) in GCS/BigQuery..",
+    )
+    p_watch.add_argument(
+        "--workers",
+        type=int,
+        help="Concurrent GetItem calls (default 12); lower it if eBay starts throttling",
+    )
+
     # Orders
     sub.add_parser("sync-orders", help="Sync orders in GCS/BigQuery..")
 
@@ -332,6 +343,13 @@ def main() -> None:
 
         kwargs = {"max_workers": args.workers} if args.workers else {}
         sync_active_listing_details(**kwargs)
+        return
+
+    if args.cmd == "sync-watch-list":
+        from shoebox.pipelines.sync_watch_list import sync_watch_list
+
+        kwargs = {"max_workers": args.workers} if args.workers else {}
+        sync_watch_list(**kwargs)
         return
 
     if args.cmd == "enhance-listing-titles":
