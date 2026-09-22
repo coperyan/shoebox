@@ -19,13 +19,12 @@ Writes a JSONL file (aspects kept as ``{name: [values]}``) and a CSV with one
 
 from __future__ import annotations
 
-import argparse
 import csv
 import json
-import pandas as pd
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import pandas as pd
 
 from shoebox.clients.ebay.trading import TradingClient
 from shoebox.settings import get_settings
@@ -81,9 +80,7 @@ def fetch_watch_list(
         rows.append(merged)
 
     if failures:
-        print(
-            f"GetItem failed for {len(failures)} listing(s); kept their watch-list fields."
-        )
+        print(f"GetItem failed for {len(failures)} listing(s); kept their watch-list fields.")
     return rows
 
 
