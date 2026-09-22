@@ -5,6 +5,7 @@ import pytest
 from shoebox.models.ebay.item_summary import ItemSummary
 from shoebox.models.saved_search import SearchesFile
 from shoebox.transforms.search_filters import (
+    aspect_rejection_reason,
     build_aspect_filter,
     build_browse_filter,
     cheapest_shipping,
@@ -289,3 +290,74 @@ class TestFilterItems:
 def test_price_formatting_has_no_trailing_zeros(value, expected):
     f = build_browse_filter(resolve(price={"max": value}))
     assert f"price:[..{expected}]" in f
+
+
+class TestAspectRejectionReason:
+    """eBay's relevance backfill returns listings that ignore aspect_filter.
+
+    Those listings still carry the query words in their titles, so
+    require_query_in_title passes them: a "numbered or autographed Lincecum"
+    watch alerts on plain base cards. This is the check that catches them.
+    """
+
+    def test_accepts_a_listing_carrying_the_required_aspect(self):
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        assert aspect_rejection_reason({"Autographed": ["Yes"]}, search) is None
+
+    def test_rejects_a_listing_that_does_not_declare_the_aspect_at_all(self):
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        # A plain base card: real Lincecum, no autograph aspect. The exact shape
+        # of the 9/17 flood.
+        reason = aspect_rejection_reason({"Sport": ["Baseball"]}, search)
+        assert reason is not None
+        assert "Autographed" in reason
+
+    def test_rejects_a_listing_whose_aspect_value_is_wrong(self):
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        reason = aspect_rejection_reason({"Autographed": ["No"]}, search)
+        assert reason is not None
+        assert "Autographed" in reason
+
+    def test_any_one_configured_value_is_enough(self):
+        """Values OR within an aspect, mirroring aspect_filter's {A|B} syntax."""
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Features": ["Serial Numbered", "Memorabilia", "Short Print"]},
+        )
+        assert aspect_rejection_reason({"Features": ["Memorabilia"]}, search) is None
+
+    def test_every_configured_aspect_must_match(self):
+        """Names AND across each other, also mirroring aspect_filter."""
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"], "Player/Athlete": ["Tim Lincecum"]},
+        )
+        reason = aspect_rejection_reason({"Autographed": ["Yes"]}, search)
+        assert reason is not None
+        assert "Player/Athlete" in reason
+
+    def test_comparison_ignores_case_on_names_and_values(self):
+        """eBay's casing for either is not stable between responses."""
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        assert aspect_rejection_reason({"autographed": ["YES"]}, search) is None
+
+    def test_no_configured_aspects_rejects_nothing(self):
+        assert aspect_rejection_reason({}, resolve()) is None

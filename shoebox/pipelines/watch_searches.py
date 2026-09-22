@@ -32,7 +32,12 @@ from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch, load_searches_file
 from ..models.search_hit import SearchHit, SeenEntry
 from ..settings import get_settings
-from ..transforms.search_filters import build_aspect_filter, build_browse_filter, filter_items
+from ..transforms.search_filters import (
+    aspect_rejection_reason,
+    build_aspect_filter,
+    build_browse_filter,
+    filter_items,
+)
 from ..utils import search_formatting as fmt
 from ..utils.slack import notify
 
@@ -50,6 +55,8 @@ DRY_RUN_SAMPLE = 15
 # (channel, text, thread_ts, unfurl_links, blocks) -> message ts
 PostFn = Callable[[str, str, str | None, bool, list[dict] | None], str]
 FetchFn = Callable[[ResolvedSearch, int], list[ItemSummary]]
+# item_id -> {aspect name: [values]}
+VerifyFn = Callable[[str], dict[str, list[str]]]
 
 
 class SearchRunResult:
@@ -96,6 +103,12 @@ def _default_fetch(search: ResolvedSearch, max_results: int) -> list[ItemSummary
         sort=search.sort,
         max_results=max_results,
     )
+
+
+def _default_verify(item_id: str) -> dict[str, list[str]]:
+    from ..clients.ebay.client import get_client
+
+    return get_client().browse.item_aspects(item_id)
 
 
 def _default_post(
@@ -176,6 +189,64 @@ def _resolve_channel(search: ResolvedSearch) -> str:
     return channel
 
 
+def _verify_aspects(
+    fresh: list[ItemSummary],
+    search: ResolvedSearch,
+    verify: VerifyFn,
+) -> tuple[list[ItemSummary], list[ItemSummary], list[ItemSummary]]:
+    """Split new listings into (confirmed, rejected, unchecked) by their aspects.
+
+    Only new listings are checked: one Browse getItem each, so the cost tracks
+    new listings rather than result-set size, and a quiet run costs nothing.
+
+    Past ``verify_aspects_budget`` the rest come back *unchecked* rather than
+    confirmed or rejected. They are neither alerted nor recorded, so the next
+    run sees them as new again and works through them -- a flood is spread
+    across runs instead of being either trusted blindly or spent in one burst
+    against eBay's daily call quota.
+
+    A getItem failure counts against the budget and leaves that listing
+    unchecked: eBay being unreachable is not evidence a listing is wrong, and
+    the next run retries it.
+    """
+    confirmed: list[ItemSummary] = []
+    rejected: list[ItemSummary] = []
+    unchecked: list[ItemSummary] = []
+
+    for index, item in enumerate(fresh):
+        if index >= search.verify_aspects_budget or not item.item_id:
+            unchecked.append(item)
+            continue
+        try:
+            aspects = verify(item.item_id)
+        except Exception as exc:  # noqa: BLE001 - any API failure defers, never drops
+            logger.warning(
+                "%s: could not verify aspects for %s (%s); leaving it for the next run",
+                search.name,
+                item.item_id,
+                exc,
+            )
+            unchecked.append(item)
+            continue
+        reason = aspect_rejection_reason(aspects, search)
+        if reason is None:
+            confirmed.append(item)
+        else:
+            logger.info("%s: dropping %s -- %s", search.name, item.item_id, reason)
+            rejected.append(item)
+
+    if rejected or unchecked:
+        logger.info(
+            "%s: aspect check kept %d/%d new listing(s) (%d rejected, %d over budget)",
+            search.name,
+            len(confirmed),
+            len(fresh),
+            len(rejected),
+            len(unchecked),
+        )
+    return confirmed, rejected, unchecked
+
+
 def run_one_search(
     search: ResolvedSearch,
     *,
@@ -186,6 +257,7 @@ def run_one_search(
     post: PostFn,
     channel: str,
     seed: bool,
+    verify: VerifyFn = _default_verify,
     notify_seed: bool = False,
     dry_run: bool = False,
     pacing_seconds: float = SLACK_PACING_SECONDS,
@@ -313,6 +385,15 @@ def run_one_search(
         if i.item_id and (prior := seen.get(i.item_id)) and prior.deferred and not prior.notified
     ]
 
+    # eBay's aspect_filter is advisory in practice: the relevance backfill
+    # returns listings that ignore it, and they pass require_query_in_title
+    # because they do carry the query words. Confirm the aspects against the
+    # listing itself before alerting. Ordered before the image deferral so a
+    # rejected listing never occupies a defer slot.
+    aspect_rejected: list[ItemSummary] = []
+    if search.verify_aspects and search.aspects and fresh:
+        fresh, aspect_rejected, _unchecked = _verify_aspects(fresh, search, verify)
+
     # eBay's image CDN often lags a brand-new listing, so alerting the moment
     # it appears posts a photo-less card. Hold image-less finds one interval.
     defer_now: list[ItemSummary] = []
@@ -345,6 +426,12 @@ def run_one_search(
         return SearchRunResult(
             search.name, new_count=len(to_alert), fetched=len(items), deferred=len(defer_now)
         )
+
+    if aspect_rejected and not dry_run:
+        # Recorded as seen-but-not-notified: without this the same listing is
+        # re-fetched and re-verified every interval, paying the getItem call
+        # again each time for an answer that will not change.
+        store.append_seen(scope, [_entry(i, notified=False) for i in aspect_rejected])
 
     if defer_now:
         # Recorded before anything else can fail: the point of a deferral is
@@ -411,7 +498,7 @@ def run_one_search(
     # re-alert it next run.
     handled = {i.item_id for i in to_alert}
     store.append_seen(
-        search.name,
+        scope,
         [
             _refresh_entry(i, seen[i.item_id])
             for i in seen_refresh(items, seen)
@@ -492,6 +579,7 @@ def watch_searches(
     store: SearchStateStore | None = None,
     fetch: FetchFn | None = None,
     post: PostFn | None = None,
+    verify: VerifyFn | None = None,
     pacing_seconds: float = SLACK_PACING_SECONDS,
 ) -> list[SearchRunResult]:
     settings = get_settings()
@@ -539,6 +627,7 @@ def watch_searches(
     store = store or SearchStateStore(settings=settings)
     fetch = fetch or _default_fetch
     post = post or _default_post
+    verify = verify or _default_verify
 
     with store.lock() as acquired:
         if not acquired:
@@ -549,6 +638,7 @@ def watch_searches(
             store=store,
             fetch=fetch,
             post=post,
+            verify=verify,
             force=force,
             dry_run=dry_run,
             only=only,
@@ -564,6 +654,7 @@ def _run_locked(
     store: SearchStateStore,
     fetch: FetchFn,
     post: PostFn,
+    verify: VerifyFn,
     force: bool,
     dry_run: bool,
     only: list[str] | None,
@@ -657,6 +748,7 @@ def _run_locked(
                 now=now,
                 fetch=fetch,
                 post=post,
+                verify=verify,
                 channel=channel,
                 seed=bool(seed_reason),
                 notify_seed=notify_seed,

@@ -223,6 +223,8 @@ slots:
 | Key | Why it can't be server-side |
 |---|---|
 | `require_query_in_title` (default `true`) | eBay pads thin result sets with looser matches that don't contain every `q` term ("results matching fewer words"), which can turn a narrow search into a flood of near-misses. This re-checks the query against titles — AND terms, `(a, b)` OR groups, and `"quoted phrases"` all honored. Turn it off per search if a query is deliberately meant to match item specifics rather than title words |
+| `verify_aspects` (default `true`) | The same backfill also returns listings that ignore `aspect_filter`, and those slip past `require_query_in_title` because they *do* carry the query words — a "numbered or autographed" watch then alerts on plain base cards. This confirms each new listing's aspects against the listing itself before alerting. Costs one Browse `getItem` per new listing (a search result carries no item specifics), so it is budgeted; a rejected listing is recorded as seen and never re-checked |
+| `verify_aspects_budget` (default `40`) | Aspect checks per search per run. Listings past the budget are neither alerted nor recorded, so the next run picks them up — a flood is spread across runs instead of spent in one burst against eBay's daily call quota. A `getItem` failure also leaves the listing for the next run: eBay being unreachable is not evidence a listing is wrong |
 | `title_exclude` | **Browse has no negative-keyword support at all.** `q` is positive-match only. This is the unavoidable one |
 | `title_must_include_all` / `title_must_include_any` | `q` matches the whole listing with Best-Match fuzz, not exact title substrings |
 | `seller_min_feedback_score` | No seller-quality filter exists. A seller with unknown feedback fails a threshold you explicitly asked for |
@@ -597,6 +599,7 @@ ORDER BY alerts DESC;
 | `interval must be a string like '15m'` | Bare numbers are rejected; quote the unit |
 | `no Slack channel` for a search | Set `slack.search_channel` in `app.yaml`, or a `channel:` on the search/defaults |
 | A flood of alerts that only partly match the query | eBay's "fewer words" backfill padding a thin result set. `require_query_in_title` (default on) drops these — `preview-search` shows them as rejected rows. If you see the flood, check that the search doesn't set it to `false` |
+| A flood of alerts that match the query but not the `aspects` (e.g. plain base cards from a "numbered or autographed" watch) | The same backfill, except these listings carry the query words, so `require_query_in_title` cannot see them. `verify_aspects` (default on) confirms the aspects against each listing before alerting; the run log names every drop and its reason |
 | `channel_not_found` / `not_in_channel` | Wrong ID, or the bot was never `/invite`d into that channel |
 | `unknown channel alias` | The alias isn't in the `channels:` block — the error lists the ones that are |
 | Nothing posts, log says "No searches due" | Intervals haven't elapsed. `--force` to override, `--list` to see the resolved intervals |
