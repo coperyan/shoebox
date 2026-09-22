@@ -3,8 +3,8 @@
 Opens a real Chrome window on tcdb.com, makes sure you are logged in (once per
 session; the profile remembers you afterwards), then loops: you type a card
 number, it runs the advanced search with your defaults (e.g. ``name=Bonds``),
-prints the matches, and leaves the results page open in the browser so you can
-click through and add the card to your collection.
+prints the matches, and leaves the results page open in the browser. ``add N``
+adds result N to your collection.
 
 Session commands (also shown by ``help``)::
 
@@ -13,6 +13,7 @@ Session commands (also shown by ``help``)::
     set field=             clear a default
     show                   print the current defaults
     open N                 open result N of the last search in the browser
+    add N                  add result N of the last search to your collection
     help                   list commands
     quit / q / exit        end the session
 
@@ -44,7 +45,7 @@ QUIT_WORDS = frozenset({"q", "quit", "exit"})
 class Command:
     """One parsed line of session input."""
 
-    kind: str  # "search" | "set" | "show" | "open" | "help" | "quit" | "noop"
+    kind: str  # "search" | "set" | "show" | "open" | "add" | "help" | "quit" | "noop"
     value: str = ""
     updates: dict[str, str] = field(default_factory=dict)
     index: int | None = None
@@ -54,7 +55,7 @@ def parse_command(line: str) -> Command:
     """Turn a line of user input into a ``Command``.
 
     Anything that is not a known keyword is treated as a card number to search.
-    Raises ``ValueError`` for a malformed ``set``/``open``.
+    Raises ``ValueError`` for a malformed ``set``/``open``/``add``.
     """
     text = (line or "").strip()
     if not text:
@@ -82,11 +83,12 @@ def parse_command(line: str) -> Command:
                 raise ValueError(f"Expected field=value, got {tok!r}")
             updates[key.strip().casefold().replace("-", "_")] = val.strip()
         return Command("set", updates=updates)
-    if head.casefold() == "open":
+    if head.casefold() in ("open", "add"):
+        kind = head.casefold()
         try:
-            return Command("open", index=int(rest.strip()))
+            return Command(kind, index=int(rest.strip()))
         except ValueError as e:
-            raise ValueError("Usage: open N   (N = result number from the last search)") from e
+            raise ValueError(f"Usage: {kind} N   (N = result number from the last search)") from e
 
     return Command("search", value=text)
 
@@ -98,6 +100,7 @@ Commands:
   set field=               clear a default
   show                     print the current defaults
   open N                   open result N from the last search in the browser
+  add N                    add result N from the last search to your collection
   help                     this text
   quit                     end the session
 Fields: {fields}
@@ -172,7 +175,7 @@ def run_tcdb_search(
             console.print(f"[yellow]No results for {q.describe()}[/yellow]")
             return
         console.print(results_table(last_page, q, max_rows=max_rows))
-        console.print("[dim]Results are open in the browser; add to your collection there.[/dim]")
+        console.print("[dim]Results are open in the browser. 'add N' adds result N.[/dim]")
 
     with TcdbBrowser(profile_dir or tcdb_cfg.profile_dir, headless=headless) as browser:
         if login:
@@ -216,7 +219,7 @@ def run_tcdb_search(
                     console.print(f"[red]{e}[/red]")
                     continue
                 console.print(f"Defaults: {query.describe()}")
-            elif cmd.kind == "open":
+            elif cmd.kind in ("open", "add"):
                 if last_page is None:
                     console.print("[yellow]Run a search first.[/yellow]")
                     continue
@@ -224,8 +227,19 @@ def run_tcdb_search(
                 if match is None:
                     console.print(f"[yellow]No result #{cmd.index} in the last search.[/yellow]")
                     continue
-                browser.open(match.url)
-                console.print(f"Opened {match.title}")
+                if cmd.kind == "open":
+                    browser.open(match.url)
+                    console.print(f"Opened {match.title}")
+                    continue
+                try:
+                    res = browser.add_to_collection(match.url)
+                except Exception as e:  # browser hiccup: report and keep the session alive
+                    logger.exception("TCDB add failed")
+                    console.print(f"[red]Add failed: {e}[/red]")
+                    continue
+                style = "green" if res.ok else "yellow" if res.status == "already_owned" else "red"
+                detail = f" ({res.detail})" if res.detail else ""
+                console.print(f"[{style}]{res.status}[/{style}]: {res.card.title}{detail}")
             elif cmd.kind == "search":
                 do_search(cmd.value)
 

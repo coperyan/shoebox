@@ -176,3 +176,76 @@ class TcdbSearchPage(Model):
     def truncated(self) -> bool:
         """True when TCDB reports more matches than rows we parsed."""
         return self.total_results is not None and self.total_results > len(self.results)
+
+
+class CardSpec(Model):
+    """A card written the way TCDB titles it: ``{year} {set} #{number} {name}``.
+
+    e.g. ``2009 Bowman Chrome - X-Fractors #171 Matt Cain`` ->
+    year ``2009``, set_name ``Bowman Chrome - X-Fractors``, card_number ``171``,
+    name ``Matt Cain``. ``name`` may be empty (match on year/set/number only).
+    """
+
+    raw: str
+    year: str
+    set_name: str
+    card_number: str
+    name: str = ""
+
+    @property
+    def title(self) -> str:
+        """The TCDB title this spec should match exactly."""
+        base = f"{self.year} {self.set_name} #{self.card_number}"
+        return f"{base} {self.name}" if self.name else base
+
+    @property
+    def search_name(self) -> str:
+        """Name to put in the search form: the first player of a multi-player card."""
+        return self.name.split(" / ")[0].strip()
+
+
+class TcdbCardPage(Model):
+    """The identifying bits of a ViewCard.cfm page."""
+
+    url: str
+    title: str
+    set_id: int | None = None
+    card_id: int | None = None
+
+
+class CollectionWidget(Model):
+    """Which collection controls the ViewCard page's ``#colDiv`` box offers.
+
+    TCDB fills ``#colDiv`` from ``ViewCard_ajax.cfm`` after the page loads. The
+    page script wires ``#quickAddBtn`` (add one copy), ``.addAnotherBtn`` (add
+    one more copy) and ``.removeBtn`` (remove a copy); the last two only make
+    sense for a card already in the collection.
+    """
+
+    loaded: bool = False
+    quick_add: bool = False
+    add_another: bool = False
+    remove: bool = False
+
+    @property
+    def owned(self) -> bool:
+        return self.add_another or self.remove
+
+
+class CollectionAddResult(Model):
+    """Outcome of one add-to-collection attempt on a ViewCard.cfm page."""
+
+    # "added" | "already_owned" | "no_add_button" | "failed"
+    status: str
+    card: TcdbCardPage
+    detail: str = ""
+    # The CollectionAdd*_ajax.cfm call the page made, when one was made.
+    request_url: str | None = None
+    # True when the collection box re-rendered showing the card as owned.
+    verified: bool = False
+    # Inner HTML of #colDiv, kept for debugging when the add did not happen.
+    widget_html: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "added"

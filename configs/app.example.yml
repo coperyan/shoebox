@@ -86,7 +86,7 @@ google_calendar:
   # Target calendar for the Topps release sync.
   calendar_id: your-calendar-id@group.calendar.google.com
 
-# Trading Card Database (tcdb.com) browser automation -- `shoebox tcdb-search`.
+# Trading Card Database (tcdb.com) browser automation -- `shoebox tcdb-search` / `tcdb-add`.
 # Optional: every key has a default. See docs/tcdb.md.
 tcdb:
   # Persistent Chrome profile so the Cloudflare clearance and your TCDB login
