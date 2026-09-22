@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from shoebox.models.ebay.item_summary import ItemSummary
 from shoebox.models.saved_search import SearchesFile
@@ -361,3 +362,72 @@ class TestAspectRejectionReason:
 
     def test_no_configured_aspects_rejects_nothing(self):
         assert aspect_rejection_reason({}, resolve()) is None
+
+
+class TestAspectCommaJoinedValues:
+    """getItem returns a multi-valued aspect as one comma-joined string.
+
+    ``Features: "Insert, Serial Numbered, Parallel/Variety"`` is three values,
+    not one, and eBay's aspect_filter indexes them separately -- which is why
+    such a listing is returned by the search at all. Comparing the joined string
+    whole rejected every numbered card that also carried another feature.
+    """
+
+    def numbered(self, **overrides):
+        search = {
+            "query": "Madison Bumgarner",
+            "category_ids": ["261328"],
+            "aspects": {"Features": ["Serial Numbered", "Memorabilia", "Short Print"]},
+        }
+        search.update(overrides)
+        return resolve(**search)
+
+    def test_accepts_a_value_joined_with_others(self):
+        # 2014 Bowman Chrome Mini Gold Die-Cut Wave Refractor 2/50: serial
+        # numbered, and silently dropped for a month because it says so in a
+        # list.
+        aspects = {"Features": ["Insert, Serial Numbered, Parallel/Variety"]}
+        assert aspect_rejection_reason(aspects, self.numbered()) is None
+
+    def test_accepts_a_match_in_any_position(self):
+        for value in (
+            "Serial Numbered, Insert",
+            "Insert, Serial Numbered",
+            "Insert, Serial Numbered, Parallel/Variety",
+        ):
+            assert aspect_rejection_reason({"Features": [value]}, self.numbered()) is None
+
+    def test_still_rejects_when_no_part_matches(self):
+        """Splitting must not turn the check into a substring match."""
+        reason = aspect_rejection_reason(
+            {"Features": ["Insert, Rookie, Parallel"]}, self.numbered()
+        )
+        assert reason is not None
+        assert "Features" in reason
+
+    def test_substring_of_a_part_does_not_match(self):
+        # 'SP' is a part of this list, but 'Short Print' is not -- the parts are
+        # compared whole, so an abbreviation is still a miss.
+        reason = aspect_rejection_reason({"Features": ["SSP, SP, Gold, Insert"]}, self.numbered())
+        assert reason is not None
+
+    def test_a_configured_value_can_never_contain_a_comma(self):
+        """Which is what makes splitting lossless -- see _aspect_match_forms."""
+        with pytest.raises(ValidationError, match="contains a comma"):
+            resolve(category_ids=["261328"], aspects={"Team": ["Yankees, Giants"]})
+
+    def test_a_dual_team_card_matches_either_team(self):
+        search = resolve(
+            query="x", category_ids=["261328"], aspects={"Team": ["San Francisco Giants"]}
+        )
+        aspects = {"Team": ["New York Yankees, San Francisco Giants"]}
+        assert aspect_rejection_reason(aspects, search) is None
+
+    def test_rejection_message_shows_the_value_ebay_sent(self):
+        """Not the split forms: the question is what the listing claims."""
+        reason = aspect_rejection_reason({"Features": ["Insert, Rookie"]}, self.numbered())
+        assert "'insert, rookie'" in reason
+
+    def test_surrounding_whitespace_is_ignored(self):
+        aspects = {"Features": ["  Insert ,  Serial Numbered  "]}
+        assert aspect_rejection_reason(aspects, self.numbered()) is None

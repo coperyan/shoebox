@@ -22,6 +22,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `watch-searches` no longer rejects a listing whose aspect value arrives
+  comma-joined. `getItem` returns a multi-valued aspect as one string —
+  `Features: "Insert, Serial Numbered, Parallel/Variety"` — rather than one
+  entry per value, so the new aspect check compared that whole string against a
+  configured `Serial Numbered` and dropped a card that plainly is one. eBay's
+  own `aspect_filter` indexes those values separately, which is why the search
+  returned the listing at all; only the re-check read them as one opaque value.
+  Each value is now matched against its comma-separated parts, which cannot
+  lose a comma-bearing value because a *configured* value can never contain a
+  comma either (`SavedSearch` rejects that at load time, as eBay documents no
+  escape for `,` inside `aspect_filter`). Parts are still compared whole, so an
+  abbreviation like `SP` does not match `Short Print`. Rejected listings are
+  recorded as seen, so listings already dropped by this bug stay suppressed
+  until their search is `--reseed`ed.
 - `watch-searches` no longer alerts on listings that violate a search's
   `aspects`. eBay's relevance backfill returns listings that ignore
   `aspect_filter`, and because those listings still carry the query words in
