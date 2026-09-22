@@ -69,6 +69,13 @@ tasks:
       type: daily
       at: "04:00"
 
+  - name: sync-watch-list
+    run: sync-watch-list
+    description: Sync watch list items (with item details) into GCS/BigQuery.
+    trigger:
+      type: daily
+      at: "04:30"
+
   - name: end_oos_listings
     run: end-oos-listings
     description: End active listings with no stock available.

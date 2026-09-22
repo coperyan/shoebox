@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `sync-watch-list`: snapshots the account's eBay watch list into
+  `ebay.watch_list` (JSONL → GCS → BigQuery, `WRITE_APPEND`), each listing
+  enriched with `GetItem` item specifics, category, condition, and pictures.
+  Listings whose details can't be fetched are kept with `detail_error` set.
 - `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
   (undetected-chromedriver, persistent profile so Cloudflare clearance and the
   TCDB login survive between runs), prompts you to log in by hand once per

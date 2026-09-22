@@ -225,7 +225,7 @@ runs — eligibility comes fresh from eBay each time.
 
 ## Monitoring
 
-All three follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
+All four follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
 `gs://<ebay_bucket>/logs/<name>/<name>_<timestamp>.jsonl` → BigQuery
 `ebay.<table>` (`WRITE_APPEND`, snapshot keyed by `file_date`).
 
@@ -233,6 +233,7 @@ All three follow: eBay → normalize → `exports/jsonl/<name>.jsonl` →
 |---|---|---|---|
 | `sync_active_listings.py` | Trading `GetMyeBaySelling` + Analytics traffic report (90 days) | `active_listings` | Sends start/complete Slack notifications |
 | `sync_active_listing_details.py` | Trading `GetItem` per listing | `active_listing_details` | Skips "complete your set" variation listings; 1 API call per listing, run 12-wide (see below) |
+| `sync_watch_list.py` | Trading `GetMyeBayBuying` (WatchList) + `GetItem` per watched listing | `watch_list` | Buyer-side: listings this account watches, any seller. Adds item specifics/pictures; a listing whose `GetItem` fails keeps its watch-list fields with `detail_error` set |
 | `sync_orders.py` | Fulfillment API, FULFILLED, ~2 years windowed | `orders` | One row per line item via `Order.flattened_line_items`; constructs clients at import time |
 
 ### `pipelines/sync_active_listing_details.py` — why one call per listing

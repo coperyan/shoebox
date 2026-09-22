@@ -158,6 +158,14 @@ impression/view metrics (Analytics API) into
 `ebay.active_listings` (JSONL → GCS → BigQuery, `WRITE_APPEND`). Sends
 start/complete notifications to Slack.
 
+### `sync-watch-list`
+Snapshots every listing on the account's eBay watch list (Trading
+`GetMyeBayBuying`) into `ebay.watch_list`, enriched with `GetItem` detail —
+item specifics, category, condition, pictures — the same concurrent sweep as
+`sync-active-listing-details`. Watched listings end often, so a listing whose
+details can't be fetched is still written, with the reason in `detail_error`.
+`--workers N` sets the number of concurrent `GetItem` calls (default 12).
+
 ### `sync-active-listing-details`
 Fetches full `GetItem` detail (item specifics, pictures, condition) for every
 active non-variation listing into `ebay.active_listing_details`. One Trading

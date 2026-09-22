@@ -165,6 +165,7 @@ repo root; see [data-storage.md](data-storage.md).
 | `sync-active-listings` | Daily 03:00 | `shoebox sync-active-listings` |
 | `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` |
 | `sync-orders` | Daily 04:00 | `shoebox sync-orders` |
+| `sync-watch-list` | Daily 04:30 | `shoebox sync-watch-list` |
 | `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` |
 | `watch-searches` | Logon, every 5m | `shoebox watch-searches` |
 | `slack-bot` | Logon (restart ×3) | `shoebox slack-bot` |
