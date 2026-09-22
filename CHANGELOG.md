@@ -33,7 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   specifics at all, so it is capped per run by `verify_aspects_budget`
   (default 40): listings over the budget, and listings whose lookup fails, are
   left for the next run rather than alerted unchecked or dropped. A rejected
-  listing is recorded as seen so its lookup is paid for once.
+  listing is recorded as seen so its lookup is paid for once. A seed that posts
+  (`notify_on_seed`) verifies the listings it is about to show, but not the
+  rest of the seed window: those are recorded and never alerted, so leaving
+  them unverified costs nothing, and checking a full 2000-item window would
+  not.
 - `watch-searches` wrote its end-of-run `last_seen_at`/`last_price` refresh to
   a scope named after the *search* instead of the channel scope every other
   write in the run uses, so on any run that posted an alert the refresh missed

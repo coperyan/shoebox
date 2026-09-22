@@ -965,13 +965,14 @@ class TestAspectVerification:
     ASPECTS = {"Autographed": ["Yes"]}
 
     def _yaml(self, searches_yaml, **overrides):
-        return searches_yaml(
-            query="Tim Lincecum",
-            category_ids=["261328"],
-            aspects=self.ASPECTS,
-            notify_on_seed=False,
-            **overrides,
-        )
+        fields = {
+            "query": "Tim Lincecum",
+            "category_ids": ["261328"],
+            "aspects": self.ASPECTS,
+            "notify_on_seed": False,
+        }
+        fields.update(overrides)
+        return searches_yaml(**fields)
 
     def test_listing_missing_the_aspect_is_never_alerted(self, searches_yaml, store):
         path = self._yaml(searches_yaml)
@@ -1056,3 +1057,42 @@ class TestAspectVerification:
 
         results = run(path, store, [item("a")], Recorder(), force=True, verify=boom)
         assert results[0].new_count == 1
+
+    def test_notifying_seed_does_not_post_listings_that_fail_the_aspects(
+        self, searches_yaml, store
+    ):
+        """notify_on_seed posts up to max_notify listings on a first seed, so
+        an unverified seed is its own flood."""
+        path = self._yaml(searches_yaml, notify_on_seed=True)
+        post = Recorder()
+
+        results = run(
+            path,
+            store,
+            [item("auto", TL), item("plain", TL)],
+            post,
+            verify=lambda item_id: (
+                {"Autographed": ["Yes"]} if item_id == "auto" else {"Sport": ["Baseball"]}
+            ),
+        )
+
+        assert results[0].seeded
+        assert len(post.items) == 1
+        assert "auto" in post.items[0][1]
+
+    def test_seed_records_a_rejected_listing_so_it_is_not_new_next_run(self, searches_yaml, store):
+        path = self._yaml(searches_yaml, notify_on_seed=True)
+        run(
+            path,
+            store,
+            [item("plain", TL)],
+            Recorder(),
+            verify=lambda _id: {"Sport": ["Baseball"]},
+        )
+
+        post = Recorder()
+        results = run(
+            path, store, [item("plain", TL)], post, force=True, verify=lambda _id: self.ASPECTS
+        )
+        assert results[0].new_count == 0
+        assert post.items == []

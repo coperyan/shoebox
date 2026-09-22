@@ -324,6 +324,16 @@ def run_one_search(
         # channel flood, not an alert.
         seed_shown = items[: search.max_notify] if notify_seed else []
 
+        # Only the listings actually being posted are aspect-checked. The rest
+        # of a seed is recorded, never alerted, so an unverified one costs
+        # nothing worse than being suppressed -- which is what seeding is for --
+        # and verifying a whole 2000-item seed window would be 2000 API calls.
+        if seed_shown and search.verify_aspects and search.aspects:
+            seed_shown, seed_rejected, _ = _verify_aspects(seed_shown, search, verify)
+            # Dropped here, but still recorded below as part of `rest`, so they
+            # are not re-offered as new on the first normal run.
+            del seed_rejected
+
         if dry_run:
             logger.info("[dry-run] would seed %s with %d items", search.name, len(items))
             if notify_seed:
@@ -369,7 +379,8 @@ def run_one_search(
                 ]
             )
 
-        rest = items[len(seed_shown) :]
+        shown_ids = {i.item_id for i in seed_shown}
+        rest = [i for i in items if i.item_id not in shown_ids]
         store.append_seen(scope, [_entry(i, notified=False) for i in rest])
         store.append_hits([_hit(i, is_seed=True) for i in rest])
         return SearchRunResult(search.name, seeded=True, fetched=len(items))
