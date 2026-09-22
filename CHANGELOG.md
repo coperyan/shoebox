@@ -22,6 +22,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `watch-searches` no longer alerts on listings that violate a search's
+  `aspects`. eBay's relevance backfill returns listings that ignore
+  `aspect_filter`, and because those listings still carry the query words in
+  their titles they passed `require_query_in_title` untouched — an
+  "autographed or serial-numbered" watch would post a burst of plain base
+  cards. New listings are now confirmed against their own item specifics
+  (`verify_aspects`, on by default) before anything is posted. The check costs
+  one Browse `getItem` per new listing, since a search result carries no item
+  specifics at all, so it is capped per run by `verify_aspects_budget`
+  (default 40): listings over the budget, and listings whose lookup fails, are
+  left for the next run rather than alerted unchecked or dropped. A rejected
+  listing is recorded as seen so its lookup is paid for once. A seed that posts
+  (`notify_on_seed`) verifies the listings it is about to show, but not the
+  rest of the seed window: those are recorded and never alerted, so leaving
+  them unverified costs nothing, and checking a full 2000-item window would
+  not.
+- `watch-searches` wrote its end-of-run `last_seen_at`/`last_price` refresh to
+  a scope named after the *search* instead of the channel scope every other
+  write in the run uses, so on any run that posted an alert the refresh missed
+  the real cache. Since pruning keys off `last_seen_at`, a long-lived listing
+  in a busy channel could age out of the seen-cache while still being returned,
+  and then re-alert as new.
 - `sync-active-listing-details` no longer throws away a whole sweep because one
   listing failed, and no longer writes a snapshot that quietly omits listings:
   failures are collected per item, and a run that loses more than 10% of the

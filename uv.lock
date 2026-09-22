@@ -2486,7 +2486,7 @@ requires-dist = [
     { name = "rich" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "selenium" },
-    { name = "setuptools", specifier = "<81" },
+    { name = "setuptools", specifier = "<84" },
     { name = "slack-bolt" },
     { name = "streamlit" },
     { name = "types-pyyaml", marker = "extra == 'dev'" },

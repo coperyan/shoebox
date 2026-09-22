@@ -112,6 +112,16 @@ defaults:
   # substring, case-insensitive, so "auto" also accepts "Autograph". Set false
   # on a search whose query is meant to match item specifics, not title words.
   require_query_in_title: true
+  # `aspects` above is sent to eBay as aspect_filter, but the same backfill
+  # returns listings that ignore it -- and those DO carry the query words, so
+  # require_query_in_title waves them through ("numbered or autographed
+  # Lincecum" alerting on plain base cards). true (default) re-checks the
+  # aspects against the listing itself before alerting. Costs one Browse
+  # getItem per *new* listing, since a search result carries no item specifics;
+  # verify_aspects_budget caps that per run, and anything over the budget waits
+  # for the next run rather than being alerted unchecked.
+  verify_aspects: true
+  verify_aspects_budget: 40
 
   title_exclude: [reprint, lot, digital, custom]
   title_must_include_all: []

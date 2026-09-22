@@ -161,6 +161,30 @@ class BrowseClient:
         """Fetch a single item by its Browse API item ID."""
         return self.api.buy_browse_get_item(item_id=item_id)
 
+    def item_aspects(self, item_id: str) -> dict[str, list[str]]:
+        """Item specifics for one listing, as ``{aspect name: [values]}``.
+
+        ``item_summary/search`` carries no item specifics at all, so an aspect
+        the search constrained server-side cannot be re-checked against a search
+        result -- this call is the only way to see what a listing actually
+        claims. One API call per item, hence the caller-side budget in
+        watch_searches.
+
+        eBay repeats an aspect name once per value rather than nesting them, so
+        values accumulate under the name.
+        """
+        raw = self.get_item(item_id) or {}
+        # ebay_rest snake-cases response keys; tolerate the raw camelCase too so
+        # this keeps working if the call is ever made against the API directly.
+        entries = raw.get("localized_aspects") or raw.get("localizedAspects") or []
+        aspects: dict[str, list[str]] = {}
+        for entry in entries:
+            name = (entry or {}).get("name")
+            value = (entry or {}).get("value")
+            if name and value:
+                aspects.setdefault(name, []).append(value)
+        return aspects
+
     def get_item_by_legacy_id(self, legacy_item_id: str) -> dict[str, Any]:
         """Fetch a single item by its legacy listing ID."""
         return self.api.buy_browse_get_item_by_legacy_id(legacy_item_id=legacy_item_id)
