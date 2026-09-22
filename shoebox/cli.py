@@ -257,6 +257,31 @@ def main() -> None:
     )
     p_tcdb.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
 
+    # Add cards to the TCDB collection from their titles (real browser, manual login)
+    p_tadd = sub.add_parser(
+        "tcdb-add",
+        help="Add cards to your tcdb.com collection, e.g. "
+        "'2009 Bowman Chrome - X-Fractors #171 Matt Cain'",
+    )
+    p_tadd.add_argument(
+        "cards",
+        nargs="*",
+        help="Cards as TCDB titles them ('<year> <set> #<number> <name>') or ViewCard.cfm links",
+    )
+    p_tadd.add_argument(
+        "--file", "-f", help="Text file with one card per line (blank lines and # comments skipped)"
+    )
+    p_tadd.add_argument("--category", help="Sport/category (default Baseball or config)")
+    p_tadd.add_argument(
+        "--dry-run", action="store_true", help="Find each card on TCDB but add nothing"
+    )
+    p_tadd.add_argument(
+        "--allow-duplicates",
+        action="store_true",
+        help="Add another copy of cards already in the collection (default: skip them)",
+    )
+    p_tadd.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
+
     args = parser.parse_args()
 
     # Argument parsing (incl. --help) never touches config; do config-dependent
@@ -469,6 +494,20 @@ def main() -> None:
                 card_numbers=args.card_numbers,
                 login=not args.no_login,
                 max_rows=args.rows,
+                profile_dir=args.profile_dir,
+            )
+        )
+
+    if args.cmd == "tcdb-add":
+        from shoebox.pipelines.tcdb_add import run_tcdb_add
+
+        raise SystemExit(
+            run_tcdb_add(
+                cards=args.cards,
+                file=args.file,
+                category=args.category,
+                dry_run=args.dry_run,
+                allow_duplicates=args.allow_duplicates,
                 profile_dir=args.profile_dir,
             )
         )

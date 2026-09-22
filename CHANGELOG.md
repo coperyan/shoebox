@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `tcdb-add`: adds cards to your tcdb.com collection from their TCDB titles
+  (`shoebox tcdb-add "2009 Bowman Chrome - X-Fractors #171 Matt Cain"`, or
+  `--file` with one per line) or ViewCard links. Each title is found with an
+  advanced search on year + card number + name. Only an exact title match is
+  added, so parallels are never confused, and zero or several matches are
+  reported and skipped. The card page's own Quick Add button is clicked and
+  the resulting `CollectionAdd*_ajax.cfm` request is checked. Cards already in
+  the collection are skipped unless `--allow-duplicates`. `--dry-run` finds
+  cards without adding them. `tcdb-search` sessions gain `add N`.
 - `sync-watch-list`: snapshots the account's eBay watch list into
   `ebay.watch_list` (JSONL → GCS → BigQuery, `WRITE_APPEND`), each listing
   enriched with `GetItem` item specifics, category, condition, and pictures.

@@ -366,6 +366,25 @@ the prompt starts. Full reference, session commands and config: [tcdb.md](tcdb.m
 | `--rows N` | Cap printed rows per search (default all) |
 | `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
 
+Inside the session, `add N` adds result N of the last search to your collection.
+
+### `tcdb-add`
+Adds cards to your tcdb.com collection from their titles, written the way TCDB
+titles them (`"2009 Bowman Chrome - X-Fractors #171 Matt Cain"`), or from
+ViewCard.cfm links. Each title is found with an advanced search on year + card
+number + name, and only an exact title match is added. Anything unmatched or
+ambiguous is reported and skipped. Cards already in the collection are skipped.
+Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-add).
+
+| Flag | Effect |
+|---|---|
+| `cards ...` | Card titles or ViewCard links |
+| `--file`, `-f PATH` | One card per line; blank lines and `#` comments skipped |
+| `--category` | Sport/category (default `tcdb.search_defaults.category`, else Baseball) |
+| `--dry-run` | Find every card but add nothing |
+| `--allow-duplicates` | Add another copy of cards you already have |
+| `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
+
 ## Not exposed via the CLI
 
 - **`services/orders_awaiting_shipment.display_orders`** defaults differ when
