@@ -381,6 +381,88 @@ This is a real run against eBay, GCS and BigQuery.
 
 ---
 
+## Alerting
+
+The pipelines post "Starting" and "Completed" to Slack, so a crash shows up
+only as a message that never arrives. Nobody notices a silence at 04:00. Worse,
+the jobs run with `--max-retries 0` by design, so a failed run is final rather
+than something that quietly recovers.
+
+[`deploy/alerts/job-failed.yaml`](../deploy/alerts/job-failed.yaml) closes that
+gap: a Cloud Monitoring policy on `run.googleapis.com/job/completed_execution_count`
+filtered to `result = "failed"`, grouped per job so the alert names the pipeline
+that broke. It fires on the first failure rather than waiting for a pattern,
+and auto-closes after 30 minutes so the next failure opens a fresh incident
+instead of being suppressed by an old one. The notification body carries the
+log-reading and re-run commands for that specific job.
+
+This covers strictly more than a `try/except` in the CLI would: a container
+that dies before Python starts, from a bad secret mount, an image that will not
+pull, or an out-of-memory kill, never gets the chance to post to Slack itself.
+
+### Sending it to Slack
+
+Cloud Monitoring's Slack channel type needs a token with `chat:write`. There
+are two ways to supply one, and this project already has what the second needs.
+
+**Reuse the existing bot (no new Slack app).** `slack.bot_token` already has
+`chat:write` and the bot is already in `slack.notify_channel`, so alerts arrive
+from the same bot and in the same channel as the pipelines' own messages:
+
+```bash
+python scripts/create_alert_channel.py --dry-run          # show what it will do
+python scripts/create_alert_channel.py --attach-to-policies
+```
+
+The script reads the token from the app config and sends it only to the
+Monitoring API in your own project, which stores it obfuscated. It never
+prints it. Re-running reuses an existing channel rather than duplicating it.
+
+**Or use the console OAuth flow.** Monitoring → Alerting → *Edit notification
+channels* → Slack → *Add new*. This installs Google's own "Google Cloud
+Monitoring" Slack app, which then has to be invited to the channel
+(`/invite @Google Cloud Monitoring`). Use this if you would rather not have the
+bot token in a second place.
+
+Either way, attach the channel to the policy:
+
+```bash
+gcloud monitoring policies list --format='value(name,displayName)'
+gcloud monitoring policies update POLICY_ID --set-notification-channels=CHANNEL_NAME
+```
+
+### Applying the policy
+
+```bash
+gcloud monitoring policies create --policy-from-file=deploy/alerts/job-failed.yaml \
+  --notification-channels=projects/PROJECT/notificationChannels/CHANNEL_ID
+```
+
+The channel is passed on the command line rather than stored in the YAML: its
+id is project-specific and the file is committed to a public repo.
+
+### Testing it
+
+Deliberately fail a throwaway job rather than breaking a real one. `shoebox`
+rejects an unknown subcommand with a non-zero exit before it loads any config
+or calls any API, so nothing is touched:
+
+```bash
+gcloud run jobs deploy alert-test --region us-central1 \
+  --image us-central1-docker.pkg.dev/PROJECT/shoebox/shoebox:latest \
+  --args not-a-real-command --max-retries 0 --task-timeout 120s
+gcloud run jobs execute alert-test --region us-central1 --wait   # exits non-zero
+```
+
+The alert lands in Slack within a few minutes; metric ingestion is not instant.
+Then remove it:
+
+```bash
+gcloud run jobs delete alert-test --region us-central1 --quiet
+```
+
+---
+
 ## When a step fails
 
 | Symptom | Cause |
@@ -433,11 +515,7 @@ the UTC calendar date is the same, so nothing changes. To make the container
 behave exactly like the workstation anyway, uncomment `TZ` under `env` in
 `jobs.yaml`.
 
-**Failure alerts.** The pipelines post "Starting" and "Completed" to Slack; a
-crash is silent there. Options, if you want one: a Cloud Monitoring alert on
-failed Cloud Run job executions (no code change), or a small `try/except` in
-`cli.py` around the dispatch that calls the existing `notify_best_effort`
-before re-raising.
+**Failure alerts** are covered by the Alerting section below.
 
 **Cost.** Four short daily jobs sit inside the free tier or near it. Cloud
 Scheduler is free for the first three jobs and $0.10/month for the fourth.

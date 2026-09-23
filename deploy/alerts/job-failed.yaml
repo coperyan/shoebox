@@ -1,0 +1,79 @@
+# Alerting policy: a scheduled shoebox pipeline failed.
+#
+# The jobs run with --max-retries 0 on purpose (the syncs WRITE_APPEND snapshot
+# rows keyed by file_date, so a retry after a partial load double-counts rather
+# than heals). That makes a failure final, and the only other signal is the
+# absence of the pipeline's own "Completed" message in Slack. This policy turns
+# that silence into a push notification.
+#
+# Apply with (see docs/deployment.md):
+#   gcloud monitoring policies create --policy-from-file=deploy/alerts/job-failed.yaml \
+#     --notification-channels=projects/PROJECT/notificationChannels/CHANNEL_ID
+#
+# The notification channel is supplied on the command line rather than stored
+# here: its id is project-specific, and this file is committed to a public repo.
+
+displayName: shoebox job failed
+combiner: OR
+enabled: true
+
+documentation:
+  mimeType: text/markdown
+  subject: "shoebox: ${metric_or_resource.label.job_name} failed"
+  content: |
+    A scheduled shoebox pipeline exited non-zero.
+
+    *Job:* `${metric_or_resource.label.job_name}`
+
+    These jobs do not retry, so this run is over and its data was not written.
+    Nothing self-heals; re-run it once the cause is understood.
+
+    *Logs for the failed run:*
+    ```
+    gcloud logging read \
+      'resource.type=cloud_run_job AND resource.labels.job_name=${metric_or_resource.label.job_name} AND severity>=WARNING' \
+      --limit 50 --format='value(textPayload)'
+    ```
+
+    *Re-run it:*
+    ```
+    gcloud run jobs execute ${metric_or_resource.label.job_name} --region us-central1 --wait
+    ```
+
+    Common causes are listed in `docs/deployment.md` ("When a step fails"): an
+    expired eBay refresh token, a bad path in the uploaded `app.yaml`, or a
+    missing secret version.
+
+conditions:
+  - displayName: A Cloud Run job execution failed
+    conditionThreshold:
+      # completed_execution_count is a DELTA counter carrying a `result` label
+      # of succeeded or failed; only the failures are of interest.
+      filter: >-
+        resource.type = "cloud_run_job" AND
+        metric.type = "run.googleapis.com/job/completed_execution_count" AND
+        metric.label.result = "failed"
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_DELTA
+          crossSeriesReducer: REDUCE_SUM
+          # Per job, so two jobs failing the same morning are two alerts with
+          # the right name on each rather than one ambiguous alert.
+          groupByFields:
+            - resource.label.job_name
+      comparison: COMPARISON_GT
+      thresholdValue: 0
+      # Fire on the first failure rather than waiting for a sustained pattern:
+      # a daily job only gets one chance.
+      duration: 0s
+      trigger:
+        count: 1
+
+alertStrategy:
+  # These jobs are daily, so an incident left open until the next run would
+  # suppress the next failure. Close it automatically after 30 minutes (the
+  # platform minimum) and let the next failure open a fresh one.
+  autoClose: 1800s
+
+userLabels:
+  app: shoebox
