@@ -323,13 +323,24 @@ The Slack `notify_channel` should show "Starting sync_orders.." and
 "Completed sync_orders..". A manual run appends one snapshot for today, the
 same as running the command by hand on Windows.
 
-**12. Connect the GitHub trigger** (console: Cloud Build → Triggers →
-*Connect repository* → GitHub app → this repo). Create a trigger: event *push
-to branch* `^main$`, configuration *Cloud Build configuration file*
-`deploy/cloudbuild.yaml`, substitution variable `_TAG` = `$SHORT_SHA`, service
-account = the build identity from step 8. From then on every push to `main`
-tests, builds, pushes `:<sha>` and `:latest`, and updates all four jobs to the
-new image. The rendered `gcloud` commands appear in the build log.
+**12. Connect GitHub and create the trigger.** Connecting the repository is a
+browser step: Cloud Build → Triggers → *Connect repository* → GitHub →
+authenticate → *Install Google Cloud Build* on the GitHub account, granting it
+**only** this repository → select it → *Connect*. The trigger itself can then
+be created from the terminal:
+
+```bash
+gcloud builds triggers create github --name=shoebox-main \
+  --repo-owner=coperyan --repo-name=shoebox --branch-pattern='^main$' \
+  --build-config=deploy/cloudbuild.yaml \
+  --substitutions='_TAG=$SHORT_SHA' \
+  --service-account=projects/PROJECT/serviceAccounts/shoebox-builder@PROJECT.iam.gserviceaccount.com
+```
+
+From then on every push to `main` tests, builds, pushes `:<sha>` and
+`:latest`, and updates all four jobs to the new image. The rendered `gcloud`
+commands appear in the build log. Commit the deployment files before the first
+push: the trigger builds whatever is on `main`.
 
 **13. Cut over.** Each Windows run *and* each cloud run appends a snapshot, so
 turn the Windows tasks off the same day the cloud schedules go live. In
