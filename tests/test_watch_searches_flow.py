@@ -948,3 +948,153 @@ class TestChannelScopedDedup:
 
         assert post.items == []
         assert set(store.load_seen(SCOPE)) == {"a"}
+
+
+# A title the "Tim Lincecum" query matches, so these items reach the aspect
+# check rather than being dropped by require_query_in_title first.
+TL = "2008 Topps Chrome Tim Lincecum"
+
+
+class TestAspectVerification:
+    """eBay's aspect_filter is advisory in practice.
+
+    Its relevance backfill returns listings that ignore the filter, and they
+    carry the query words in their titles so require_query_in_title lets them
+    through. The 9/17 Lincecum flood was 137 real Lincecum cards that were
+    neither autographed nor numbered. These cover the re-check.
+    """
+
+    ASPECTS = {"Autographed": ["Yes"]}
+
+    def _yaml(self, searches_yaml, **overrides):
+        fields = {
+            "query": "Tim Lincecum",
+            "category_ids": ["261328"],
+            "aspects": self.ASPECTS,
+            "notify_on_seed": False,
+        }
+        fields.update(overrides)
+        return searches_yaml(**fields)
+
+    def test_listing_missing_the_aspect_is_never_alerted(self, searches_yaml, store):
+        path = self._yaml(searches_yaml)
+        post = Recorder()
+        # Seed first so the next run takes the normal alerting path.
+        run(path, store, [item("seed", TL)], post, verify=lambda _id: self.ASPECTS)
+
+        post = Recorder()
+        results = run(
+            path,
+            store,
+            [item("auto", TL), item("plain", TL)],
+            post,
+            force=True,
+            verify=lambda item_id: (
+                {"Autographed": ["Yes"]} if item_id == "auto" else {"Sport": ["Baseball"]}
+            ),
+        )
+
+        assert results[0].new_count == 1
+        # One header plus the one genuine autograph; the base card never posts.
+        assert len(post.items) == 1
+        assert "auto" in post.items[0][1]
+
+    def test_rejected_listing_is_not_re_verified_next_run(self, searches_yaml, store):
+        """Each getItem costs a call against eBay's daily quota, so an answer
+        that cannot change is paid for once."""
+        path = self._yaml(searches_yaml)
+        run(path, store, [item("seed", TL)], Recorder(), verify=lambda _id: self.ASPECTS)
+
+        checked: list[str] = []
+
+        def verify(item_id):
+            checked.append(item_id)
+            return {"Sport": ["Baseball"]}
+
+        run(path, store, [item("plain", TL)], Recorder(), force=True, verify=verify)
+        run(path, store, [item("plain", TL)], Recorder(), force=True, verify=verify)
+
+        assert checked == ["plain"]
+
+    def test_budget_spreads_a_flood_across_runs_instead_of_alerting_it(self, searches_yaml, store):
+        path = self._yaml(searches_yaml, verify_aspects_budget=2)
+        run(path, store, [item("seed", TL)], Recorder(), verify=lambda _id: self.ASPECTS)
+
+        post = Recorder()
+        flood = [item(f"n{i}", TL) for i in range(10)]
+        results = run(path, store, flood, post, force=True, verify=lambda _id: self.ASPECTS)
+
+        # Only the budget is spent; the rest stay new and are worked through on
+        # later runs rather than being trusted or dropped.
+        assert results[0].new_count == 2
+        assert len(post.items) == 2
+
+    def test_unreachable_ebay_defers_rather_than_dropping_the_listing(self, searches_yaml, store):
+        """A getItem failure is not evidence a listing is wrong."""
+        path = self._yaml(searches_yaml)
+        run(path, store, [item("seed", TL)], Recorder(), verify=lambda _id: self.ASPECTS)
+
+        def boom(_item_id):
+            raise RuntimeError("api.ebay.com unreachable")
+
+        post = Recorder()
+        results = run(path, store, [item("x", TL)], post, force=True, verify=boom)
+        assert results[0].new_count == 0
+        assert post.items == []
+
+        # Next run, eBay back up: the listing is still pending, not lost.
+        post = Recorder()
+        results = run(
+            path, store, [item("x", TL)], post, force=True, verify=lambda _id: self.ASPECTS
+        )
+        assert results[0].new_count == 1
+
+    def test_search_without_aspects_makes_no_verification_calls(self, searches_yaml, store):
+        """Nothing to re-check means nothing to spend."""
+        path = searches_yaml(query="jordan")
+        run(path, store, [item("seed", TL)], Recorder())
+
+        def boom(_item_id):
+            raise AssertionError("verify must not be called without configured aspects")
+
+        results = run(path, store, [item("a")], Recorder(), force=True, verify=boom)
+        assert results[0].new_count == 1
+
+    def test_notifying_seed_does_not_post_listings_that_fail_the_aspects(
+        self, searches_yaml, store
+    ):
+        """notify_on_seed posts up to max_notify listings on a first seed, so
+        an unverified seed is its own flood."""
+        path = self._yaml(searches_yaml, notify_on_seed=True)
+        post = Recorder()
+
+        results = run(
+            path,
+            store,
+            [item("auto", TL), item("plain", TL)],
+            post,
+            verify=lambda item_id: (
+                {"Autographed": ["Yes"]} if item_id == "auto" else {"Sport": ["Baseball"]}
+            ),
+        )
+
+        assert results[0].seeded
+        assert len(post.items) == 1
+        assert "auto" in post.items[0][1]
+
+    def test_seed_records_a_rejected_listing_so_it_is_not_new_next_run(self, searches_yaml, store):
+        path = self._yaml(searches_yaml, notify_on_seed=True)
+        run(
+            path,
+            store,
+            [item("plain", TL)],
+            Recorder(),
+            verify=lambda _id: {"Sport": ["Baseball"]},
+        )
+
+        post = Recorder()
+        results = run(
+            path, store, [item("plain", TL)], post, force=True, verify=lambda _id: self.ASPECTS
+        )
+        assert results[0].new_count == 0
+        assert post.items == []

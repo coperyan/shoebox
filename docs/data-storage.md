@@ -25,7 +25,7 @@ source → normalize → local JSONL (exports/jsonl/…) → GCS staging object 
 |---|---|---|
 | `image_bucket` | `images/<set>/<subset>/<parallel|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies | `ImageLogClient.upload_image`, relist pipelines |
 | `metadata_bucket` | `metadata/checklist/…`, `metadata/parallels/…` staging JSONL | `sync-metadata` (`TableAsset`) |
-| `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/ebay_listings/…`, `logs/search_hits/…` staging JSONL | monitoring pipelines, listing-result sync, saved-search watcher |
+| `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/watch_list/…`, `logs/ebay_listings/…`, `logs/search_hits/…` staging JSONL | monitoring pipelines, listing-result sync, saved-search watcher |
 | `image_log_bucket` | `logs/image_log/…` staging JSONL | `ImageLogClient.flush_append_log` |
 
 Card images are made public (their public URLs go into eBay listings).
@@ -42,6 +42,7 @@ by the shipped SQL views/queries:
 | `ebay` | `orders` | `sync-orders` | `orders.json` | One row per order line item (~40 cols from `Order.flattened_line_items`) |
 | `ebay` | `active_listings` | `sync-active-listings` | `active_listings.json` | Snapshot incl. impressions/views |
 | `ebay` | `active_listing_details` | `sync-active-listing-details` | `active_listing_details.json` | Adds item-specifics + picture URLs as JSON columns |
+| `ebay` | `watch_list` | `sync-watch-list` | `watch_list.json` | Watched listings (any seller) + item-specifics/picture URLs as JSON columns; `detail_error` set when `GetItem` failed |
 | `ebay` | `ebay_listings` | `create-listings` / variation pipeline | `ebay_listings.json` | `EbayListingResult` rows: sku, ids, success, full request/response JSON |
 | `images` | `image_log` | `ImageLogClient` | `image_log.json` | One row per net-new image upload |
 | `ebay` | `search_hits` | `watch-searches` | `search_hits.json` | One row per saved-search observation. `is_seed`/`notified` distinguish silent seeds and `max_notify` overflow from real alerts; `hit_type` is always `NEW_LISTING` in v1 |
@@ -71,7 +72,7 @@ by the shipped SQL views/queries:
 | `exports/jsonl/ebay_listings.jsonl` | Deleted after successful GCS+BQ sync | Listing results buffer |
 | `exports/jsonl/image_cache.jsonl` | Persistent | Image dedup index — cache key → `ImageLogEntry`; prevents re-uploads across runs |
 | `exports/jsonl/image_log_append.jsonl` | Flushed after successful GCS+BQ sync | Net-new uploads awaiting BigQuery |
-| `exports/jsonl/orders.jsonl`, `active_listings.jsonl`, `active_listing_details.jsonl` | Overwritten per run | Monitoring staging |
+| `exports/jsonl/orders.jsonl`, `active_listings.jsonl`, `active_listing_details.jsonl`, `watch_list.jsonl` | Overwritten per run | Monitoring staging |
 | `exports/jsonl/searches/search_state.json` | Persistent | Per-search `last_run_at` / `seeded_at` / status. Read once per tick so the due-check never loads a large cache |
 | `exports/jsonl/searches/<name>_seen.jsonl` | Persistent, append-only | Saved-search dedup cache; later lines win. Compacted and pruned (`prune_seen_after_days`) at end of run |
 | `exports/jsonl/searches/search_hits_append.jsonl` | Flushed after successful GCS+BQ sync | Buffered `search_hits` rows; survives a failed flush and retries next run |

@@ -1,10 +1,12 @@
 from decimal import Decimal
 
 import pytest
+from pydantic import ValidationError
 
 from shoebox.models.ebay.item_summary import ItemSummary
 from shoebox.models.saved_search import SearchesFile
 from shoebox.transforms.search_filters import (
+    aspect_rejection_reason,
     build_aspect_filter,
     build_browse_filter,
     cheapest_shipping,
@@ -289,3 +291,143 @@ class TestFilterItems:
 def test_price_formatting_has_no_trailing_zeros(value, expected):
     f = build_browse_filter(resolve(price={"max": value}))
     assert f"price:[..{expected}]" in f
+
+
+class TestAspectRejectionReason:
+    """eBay's relevance backfill returns listings that ignore aspect_filter.
+
+    Those listings still carry the query words in their titles, so
+    require_query_in_title passes them: a "numbered or autographed Lincecum"
+    watch alerts on plain base cards. This is the check that catches them.
+    """
+
+    def test_accepts_a_listing_carrying_the_required_aspect(self):
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        assert aspect_rejection_reason({"Autographed": ["Yes"]}, search) is None
+
+    def test_rejects_a_listing_that_does_not_declare_the_aspect_at_all(self):
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        # A plain base card: real Lincecum, no autograph aspect. The exact shape
+        # of the 9/17 flood.
+        reason = aspect_rejection_reason({"Sport": ["Baseball"]}, search)
+        assert reason is not None
+        assert "Autographed" in reason
+
+    def test_rejects_a_listing_whose_aspect_value_is_wrong(self):
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        reason = aspect_rejection_reason({"Autographed": ["No"]}, search)
+        assert reason is not None
+        assert "Autographed" in reason
+
+    def test_any_one_configured_value_is_enough(self):
+        """Values OR within an aspect, mirroring aspect_filter's {A|B} syntax."""
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Features": ["Serial Numbered", "Memorabilia", "Short Print"]},
+        )
+        assert aspect_rejection_reason({"Features": ["Memorabilia"]}, search) is None
+
+    def test_every_configured_aspect_must_match(self):
+        """Names AND across each other, also mirroring aspect_filter."""
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"], "Player/Athlete": ["Tim Lincecum"]},
+        )
+        reason = aspect_rejection_reason({"Autographed": ["Yes"]}, search)
+        assert reason is not None
+        assert "Player/Athlete" in reason
+
+    def test_comparison_ignores_case_on_names_and_values(self):
+        """eBay's casing for either is not stable between responses."""
+        search = resolve(
+            query="Tim Lincecum",
+            category_ids=["261328"],
+            aspects={"Autographed": ["Yes"]},
+        )
+        assert aspect_rejection_reason({"autographed": ["YES"]}, search) is None
+
+    def test_no_configured_aspects_rejects_nothing(self):
+        assert aspect_rejection_reason({}, resolve()) is None
+
+
+class TestAspectCommaJoinedValues:
+    """getItem returns a multi-valued aspect as one comma-joined string.
+
+    ``Features: "Insert, Serial Numbered, Parallel/Variety"`` is three values,
+    not one, and eBay's aspect_filter indexes them separately -- which is why
+    such a listing is returned by the search at all. Comparing the joined string
+    whole rejected every numbered card that also carried another feature.
+    """
+
+    def numbered(self, **overrides):
+        search = {
+            "query": "Madison Bumgarner",
+            "category_ids": ["261328"],
+            "aspects": {"Features": ["Serial Numbered", "Memorabilia", "Short Print"]},
+        }
+        search.update(overrides)
+        return resolve(**search)
+
+    def test_accepts_a_value_joined_with_others(self):
+        # 2014 Bowman Chrome Mini Gold Die-Cut Wave Refractor 2/50: serial
+        # numbered, and silently dropped for a month because it says so in a
+        # list.
+        aspects = {"Features": ["Insert, Serial Numbered, Parallel/Variety"]}
+        assert aspect_rejection_reason(aspects, self.numbered()) is None
+
+    def test_accepts_a_match_in_any_position(self):
+        for value in (
+            "Serial Numbered, Insert",
+            "Insert, Serial Numbered",
+            "Insert, Serial Numbered, Parallel/Variety",
+        ):
+            assert aspect_rejection_reason({"Features": [value]}, self.numbered()) is None
+
+    def test_still_rejects_when_no_part_matches(self):
+        """Splitting must not turn the check into a substring match."""
+        reason = aspect_rejection_reason(
+            {"Features": ["Insert, Rookie, Parallel"]}, self.numbered()
+        )
+        assert reason is not None
+        assert "Features" in reason
+
+    def test_substring_of_a_part_does_not_match(self):
+        # 'SP' is a part of this list, but 'Short Print' is not -- the parts are
+        # compared whole, so an abbreviation is still a miss.
+        reason = aspect_rejection_reason({"Features": ["SSP, SP, Gold, Insert"]}, self.numbered())
+        assert reason is not None
+
+    def test_a_configured_value_can_never_contain_a_comma(self):
+        """Which is what makes splitting lossless -- see _aspect_match_forms."""
+        with pytest.raises(ValidationError, match="contains a comma"):
+            resolve(category_ids=["261328"], aspects={"Team": ["Yankees, Giants"]})
+
+    def test_a_dual_team_card_matches_either_team(self):
+        search = resolve(
+            query="x", category_ids=["261328"], aspects={"Team": ["San Francisco Giants"]}
+        )
+        aspects = {"Team": ["New York Yankees, San Francisco Giants"]}
+        assert aspect_rejection_reason(aspects, search) is None
+
+    def test_rejection_message_shows_the_value_ebay_sent(self):
+        """Not the split forms: the question is what the listing claims."""
+        reason = aspect_rejection_reason({"Features": ["Insert, Rookie"]}, self.numbered())
+        assert "'insert, rookie'" in reason
+
+    def test_surrounding_whitespace_is_ignored(self):
+        aspects = {"Features": ["  Insert ,  Serial Numbered  "]}
+        assert aspect_rejection_reason(aspects, self.numbered()) is None

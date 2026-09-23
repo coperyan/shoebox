@@ -169,10 +169,18 @@ repo root; see [data-storage.md](data-storage.md).
 
 | Task | Trigger | Runs |
 |---|---|---|
+<<<<<<< HEAD
 | `sync-active-listings` | Daily 03:00 | `shoebox sync-active-listings` (also a Cloud Run job) |
 | `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` (also a Cloud Run job) |
 | `sync-orders` | Daily 04:00 | `shoebox sync-orders` (also a Cloud Run job) |
 | `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` (also a Cloud Run job, as `end-oos-listings`) |
+=======
+| `sync-active-listings` | Daily 03:00 | `shoebox sync-active-listings` |
+| `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` |
+| `sync-orders` | Daily 04:00 | `shoebox sync-orders` |
+| `sync-watch-list` | Daily 04:30 | `shoebox sync-watch-list` |
+| `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` |
+>>>>>>> 5590e1bb071b97a3a55ebdee1d1dfe03b5765ce1
 | `watch-searches` | Logon, every 5m | `shoebox watch-searches` |
 | `slack-bot` | Logon (restart ×3) | `shoebox slack-bot` |
 | `ebay-orders-awaiting-shipment` | Manual | `shoebox orders-awaiting-shipment` ×2 |

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+<<<<<<< HEAD
 - **Cloud Run deployment** for the four daily syncs (`sync-orders`,
   `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`),
   so they no longer depend on a workstation being awake. `Dockerfile` builds
@@ -22,6 +23,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and BigQuery clients already fall back to Application Default Credentials.
   A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
 
+=======
+- `sync-watch-list`: snapshots the account's eBay watch list into
+  `ebay.watch_list` (JSONL → GCS → BigQuery, `WRITE_APPEND`), each listing
+  enriched with `GetItem` item specifics, category, condition, and pictures.
+  Listings whose details can't be fetched are kept with `detail_error` set.
+>>>>>>> 5590e1bb071b97a3a55ebdee1d1dfe03b5765ce1
 - `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
   (undetected-chromedriver, persistent profile so Cloudflare clearance and the
   TCDB login survive between runs), prompts you to log in by hand once per
@@ -41,6 +48,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `watch-searches` no longer rejects a listing whose aspect value arrives
+  comma-joined. `getItem` returns a multi-valued aspect as one string —
+  `Features: "Insert, Serial Numbered, Parallel/Variety"` — rather than one
+  entry per value, so the new aspect check compared that whole string against a
+  configured `Serial Numbered` and dropped a card that plainly is one. eBay's
+  own `aspect_filter` indexes those values separately, which is why the search
+  returned the listing at all; only the re-check read them as one opaque value.
+  Each value is now matched against its comma-separated parts, which cannot
+  lose a comma-bearing value because a *configured* value can never contain a
+  comma either (`SavedSearch` rejects that at load time, as eBay documents no
+  escape for `,` inside `aspect_filter`). Parts are still compared whole, so an
+  abbreviation like `SP` does not match `Short Print`. Rejected listings are
+  recorded as seen, so listings already dropped by this bug stay suppressed
+  until their search is `--reseed`ed.
+- `watch-searches` no longer alerts on listings that violate a search's
+  `aspects`. eBay's relevance backfill returns listings that ignore
+  `aspect_filter`, and because those listings still carry the query words in
+  their titles they passed `require_query_in_title` untouched — an
+  "autographed or serial-numbered" watch would post a burst of plain base
+  cards. New listings are now confirmed against their own item specifics
+  (`verify_aspects`, on by default) before anything is posted. The check costs
+  one Browse `getItem` per new listing, since a search result carries no item
+  specifics at all, so it is capped per run by `verify_aspects_budget`
+  (default 40): listings over the budget, and listings whose lookup fails, are
+  left for the next run rather than alerted unchecked or dropped. A rejected
+  listing is recorded as seen so its lookup is paid for once. A seed that posts
+  (`notify_on_seed`) verifies the listings it is about to show, but not the
+  rest of the seed window: those are recorded and never alerted, so leaving
+  them unverified costs nothing, and checking a full 2000-item window would
+  not.
+- `watch-searches` wrote its end-of-run `last_seen_at`/`last_price` refresh to
+  a scope named after the *search* instead of the channel scope every other
+  write in the run uses, so on any run that posted an alert the refresh missed
+  the real cache. Since pruning keys off `last_seen_at`, a long-lived listing
+  in a busy channel could age out of the seen-cache while still being returned,
+  and then re-alert as new.
 - `sync-active-listing-details` no longer throws away a whole sweep because one
   listing failed, and no longer writes a snapshot that quietly omits listings:
   failures are collected per item, and a run that loses more than 10% of the

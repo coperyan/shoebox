@@ -1,0 +1,122 @@
+[
+  {
+    "name": "item_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "title",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "seller",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "listing_type",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "listing_status",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "price",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "currency",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "buy_it_now_price",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "bid_count",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "quantity",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "quantity_sold",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "time_left",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "start_time",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "end_time",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "view_item_url",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "gallery_url",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "category_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "category_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "condition_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "condition_display_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "item_specifics",
+    "type": "JSON",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "picture_urls",
+    "type": "JSON",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "detail_error",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "file_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  }
+]

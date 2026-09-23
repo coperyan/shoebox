@@ -181,6 +181,14 @@ class SearchDefaults(_ConfigModel):
     # against titles on our side. Off per search if a query is deliberately
     # meant to match item specifics rather than title words.
     require_query_in_title: bool = True
+    # ``aspects`` is sent to eBay as aspect_filter, but eBay's relevance
+    # backfill returns listings that ignore it, and those listings still carry
+    # the query words in their titles so require_query_in_title waves them
+    # through. Re-checking costs one Browse getItem per *new* listing (a search
+    # result carries no item specifics), so it is budgeted per run rather than
+    # unbounded. Off only if you would rather trust eBay than spend the call.
+    verify_aspects: bool = True
+    verify_aspects_budget: int = Field(default=40, ge=1)
     title_exclude: list[str] = Field(default_factory=list)
     title_must_include_all: list[str] = Field(default_factory=list)
     title_must_include_any: list[str] = Field(default_factory=list)
@@ -230,6 +238,8 @@ class SavedSearch(_ConfigModel):
     free_shipping_only: bool | None = None
 
     require_query_in_title: bool | None = None
+    verify_aspects: bool | None = None
+    verify_aspects_budget: int | None = Field(default=None, ge=1)
     title_exclude: list[str] | None = None
     title_must_include_all: list[str] | None = None
     title_must_include_any: list[str] | None = None
@@ -295,6 +305,8 @@ class ResolvedSearch(_ConfigModel):
     free_shipping_only: bool
 
     require_query_in_title: bool
+    verify_aspects: bool
+    verify_aspects_budget: int
     title_exclude: list[str]
     title_must_include_all: list[str]
     title_must_include_any: list[str]

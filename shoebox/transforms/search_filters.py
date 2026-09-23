@@ -204,6 +204,64 @@ def rejection_reason(item: ItemSummary, search: ResolvedSearch) -> str | None:
     return None
 
 
+def _aspect_match_forms(value: str) -> set[str]:
+    """The casefolded values one ``getItem`` aspect string actually asserts.
+
+    ``getItem`` returns a *multi-valued* aspect as a single comma-joined string
+    — ``Features: "Insert, Serial Numbered, Parallel/Variety"`` — rather than as
+    one entry per value, so comparing the whole string against a configured
+    ``Serial Numbered`` never matches and a genuinely numbered card is rejected.
+    eBay's own ``aspect_filter`` indexes those values separately, which is why
+    the search returned the listing in the first place; only this re-check was
+    reading them as one opaque string.
+
+    Splitting cannot lose a value that legitimately contains a comma, because a
+    *configured* value can never contain one either: ``SavedSearch`` rejects
+    that at load time, as eBay documents no escape for ',' inside
+    ``aspect_filter``. So a comma-bearing value is already unmatchable whole,
+    and the parts are the only forms worth comparing.
+    """
+    return {part.strip() for part in value.lower().split(",") if part.strip()}
+
+
+def aspect_rejection_reason(
+    item_aspects: dict[str, list[str]], search: ResolvedSearch
+) -> str | None:
+    """Why this listing fails the search's ``aspects``, or None if it satisfies them.
+
+    ``aspects`` is pushed to eBay as ``aspect_filter`` and so is nominally
+    server-side, but eBay backfills a thin result set with looser matches that
+    ignore it -- the same "results matching fewer words" padding
+    ``require_query_in_title`` exists to catch, except aspects survive it,
+    because a padded listing still carries the query words in its title. A
+    "numbered or autographed" watch then alerts on plain base cards.
+
+    Semantics mirror ``aspect_filter``: every configured aspect must be present
+    (AND across names), and matches any one of its configured values (OR within
+    a name). Aspect names and values are compared case-insensitively because
+    eBay's casing for either is not stable, and a value is matched against its
+    comma-separated parts as well as whole (see ``_aspect_match_forms``).
+
+    ``item_aspects`` comes from ``BrowseClient.item_aspects`` -- a search result
+    alone can never answer this, as it carries no item specifics.
+    """
+    folded = {
+        name.lower(): [v.strip().lower() for v in values] for name, values in item_aspects.items()
+    }
+    for name in sorted(search.aspects):
+        have = folded.get(name.lower())
+        if not have:
+            return f"aspects: listing does not declare {name!r}"
+        matchable = {form for value in have for form in _aspect_match_forms(value)}
+        wanted = {v.lower() for v in search.aspects[name]}
+        if not (matchable & wanted):
+            allowed = " or ".join(repr(v) for v in search.aspects[name])
+            # Reports the values as eBay sent them, not the split forms: the
+            # question the message answers is what the listing actually claims.
+            return f"aspects: {name}={sorted(have)!r} is none of {allowed}"
+    return None
+
+
 def passes_post_filters(item: ItemSummary, search: ResolvedSearch) -> bool:
     """Apply the filters eBay has no server-side equivalent for."""
     return rejection_reason(item, search) is None
