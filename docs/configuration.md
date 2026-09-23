@@ -25,6 +25,7 @@ named in `paths`.
 | `EBAY_REST_CONFIG_PATH` | Full path to `ebay_rest.json`, overriding `ebay.path` |
 | `SHOEBOX_TITLE_CROSSWALK` | Path to the team/title crosswalk (default `configs/title_crosswalk.yaml`) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC override, used when `gcp.service_account_json` doesn't exist |
+| `SHOEBOX_LOG_DIR` | Directory for the per-run log file (default `logs`). `-` or empty logs to the console only, which is what a container wants: the platform collects stdout and discards the filesystem. See [deployment.md](deployment.md) |
 
 ## Settings schema
 

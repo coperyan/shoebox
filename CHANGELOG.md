@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Cloud Run deployment** for the four daily syncs (`sync-orders`,
+  `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`),
+  so they no longer depend on a workstation being awake. `Dockerfile` builds
+  one image whose entry point is the `shoebox` CLI; `deploy/jobs.yaml`
+  declares each Cloud Run job and its Cloud Scheduler cron (the cloud
+  counterpart of `scripts/tasks.yaml`); `scripts/deploy_cloud_run.py` renders
+  it into `gcloud` commands (`--list`, `--dry-run`, `--only`, `--jobs-only`);
+  `deploy/cloudbuild.yaml` builds, pushes and rolls the image out on every
+  push to `main`. The gitignored config files are mounted from Secret Manager
+  and the job's service account replaces `configs/gcp.json`, since the GCS
+  and BigQuery clients already fall back to Application Default Credentials.
+  A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
+
 - `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
   (undetected-chromedriver, persistent profile so Cloudflare clearance and the
   TCDB login survive between runs), prompts you to log in by hand once per
@@ -19,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `shoebox/clients/tcdb/` package and `models/tcdb.py`, laid out so further
   TCDB actions are one parser plus one browser method each (see
   `docs/tcdb.md`).
+
+### Changed
+
+- `setup_logging()` honours `SHOEBOX_LOG_DIR`; `-` or empty logs to the console
+  only, for hosts that collect stdout and discard the filesystem. Unset
+  behaves as before (`logs/<timestamp>.log`).
 
 ### Fixed
 

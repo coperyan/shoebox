@@ -4,6 +4,7 @@ No mocking library: run_one_search / watch_searches take ``fetch`` and ``post``
 callables, so a plain local function plus tmp_path covers the whole flow.
 """
 
+import shutil
 import subprocess
 
 import pytest
@@ -803,6 +804,7 @@ class TestConfigErrors:
             watch_searches(config_path=tmp_path / "nope.yaml", store=store, post=post, flush=False)
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs a git binary")
 class TestGitPull:
     """pull_searches_repo and its searches_git_pull hook, against real git repos."""
 

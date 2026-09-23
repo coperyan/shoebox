@@ -1,0 +1,110 @@
+# Cloud Run job + Cloud Scheduler definitions for the API-only daily pipelines.
+#
+# This is the cloud counterpart of scripts/tasks.yaml: the same idea (a
+# `defaults:` block every job may override, one entry per pipeline), rendered
+# into `gcloud` commands by scripts/deploy_cloud_run.py instead of Task
+# Scheduler XML. Windows stays the host for everything that needs Chrome, card
+# scans, Excel workbooks or on-disk state -- see docs/deployment.md.
+#
+#   python scripts/deploy_cloud_run.py --list
+#   python scripts/deploy_cloud_run.py --dry-run             # print gcloud commands, run nothing
+#   python scripts/deploy_cloud_run.py                       # jobs + IAM + schedules
+#   python scripts/deploy_cloud_run.py --only sync-orders
+#   python scripts/deploy_cloud_run.py --jobs-only --image ...:abc1234   # what Cloud Build runs
+#
+# Nothing is ever deleted: removing or renaming an entry leaves the old Cloud
+# Run job and Scheduler job in GCP until you delete them by hand.
+
+defaults:
+  # GCP project. Left out on purpose (this repo is public): the script takes
+  # --project, else `gcloud config get-value project`.
+  # project: my-project
+  region: us-central1
+
+  # Image every job runs. {project} and {region} are filled in by the script;
+  # Cloud Build overrides this with the SHA-tagged image it just pushed.
+  image: "{region}-docker.pkg.dev/{project}/shoebox/shoebox:latest"
+
+  # Runtime identity. Replaces configs/gcp.json: the GCS and BigQuery clients
+  # fall back to Application Default Credentials when that file is absent, and
+  # in Cloud Run ADC is this service account. Reuse the account that already
+  # owns the buckets and datasets (client_email in configs/gcp.json), or create
+  # shoebox-runner and grant it bigquery.jobUser, bigquery.dataEditor and
+  # storage.objectAdmin. Either way it needs secretmanager.secretAccessor on
+  # each secret below.
+  runner_service_account: "ebay-sports-cards-automation-s@ebay-sports-cards-automation.iam.gserviceaccount.com"
+  # Identity Cloud Scheduler uses to start a job. It only ever gets
+  # roles/run.invoker on each job (granted by the script) -- never a secret.
+  scheduler_service_account: "shoebox-scheduler@{project}.iam.gserviceaccount.com"
+
+  # IANA timezone for every schedule, so 03:00 stays 03:00 across DST.
+  timezone: America/Los_Angeles
+
+  # Container environment. The two *_PATH variables point the app at the
+  # mounted secrets; SHOEBOX_LOG_DIR=- turns off the per-run log file (Cloud
+  # Run collects stdout, and the filesystem is discarded after each run).
+  env:
+    SHOEBOX_LOG_DIR: "-"
+    SHOEBOX_CONFIG_PATH: /secrets/app/app.yaml
+    EBAY_REST_CONFIG_PATH: /secrets/ebay-rest/ebay_rest.json
+    # Uncomment to make naive datetime.now() calls behave as on the workstation.
+    # TZ: America/Los_Angeles
+
+  # Secret Manager secrets mounted as files: <path in container>: <secret>:<version>.
+  # Cloud Run mounts a secret as a directory, and two secrets cannot share one,
+  # so every file gets its own directory. The uploaded app.yaml must reference
+  # /secrets/ebay-legacy/ebay_legacy.json as ebay.trading_token_path.
+  secrets:
+    /secrets/app/app.yaml: shoebox-app-yaml:latest
+    /secrets/ebay-rest/ebay_rest.json: shoebox-ebay-rest:latest
+    /secrets/ebay-legacy/ebay_legacy.json: shoebox-ebay-legacy:latest
+
+  cpu: "1"
+  memory: 1Gi
+  # Wall-clock cap on one execution (gcloud duration, e.g. 1800s or 30m).
+  timeout: 1800s
+  # No retries. The syncs WRITE_APPEND snapshot rows keyed by file_date, so a
+  # retry after a partial BigQuery load double-counts instead of healing.
+  max_retries: 0
+
+  # Cloud Scheduler: how long it waits for the :run call (which returns as soon
+  # as the execution is created), and how many times it retries a failed call.
+  # Zero for the same reason as max_retries.
+  attempt_deadline: 320s
+  scheduler_retries: 0
+
+  labels:
+    app: shoebox
+    managed-by: deploy-cloud-run
+
+  # false pauses the Scheduler job (the Cloud Run job stays and can still be
+  # run by hand). Mirrors `enabled:` in scripts/tasks.yaml.
+  enabled: true
+
+jobs:
+  - name: sync-active-listings
+    run: sync-active-listings
+    description: Update active listings in GCS/BigQuery.
+    schedule: "0 3 * * *"
+
+  - name: sync-active-listing-details
+    # A list is passed to the container verbatim; a string is split like a shell would.
+    run: sync-active-listing-details
+    description: Update active listing details in GCS/BigQuery.
+    schedule: "30 3 * * *"
+    timeout: 3600s
+    memory: 2Gi
+
+  - name: sync-orders
+    run: sync-orders
+    description: Sync orders into GCS/BigQuery.
+    schedule: "0 4 * * *"
+
+  # Windows calls this task end_oos_listings; Cloud Run names must be
+  # lowercase letters, digits and hyphens.
+  - name: end-oos-listings
+    run: end-oos-listings
+    description: End active listings with no stock available.
+    schedule: "0 5 * * *"
+    timeout: 900s
+    memory: 512Mi

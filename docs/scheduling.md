@@ -1,5 +1,12 @@
 # Scheduling
 
+> The four daily syncs (`sync-active-listings`, `sync-active-listing-details`,
+> `sync-orders`, `end_oos_listings`) can run as Cloud Run jobs instead, so they
+> no longer depend on this machine being awake -- see
+> [deployment.md](deployment.md). Once they do, disable their Windows tasks
+> (`enabled: false` here, then `--register`) so each snapshot is taken once.
+> This page stays the reference for the Windows setup, which is unchanged.
+
 On the Windows host, the recurring pipelines run as Task Scheduler tasks in the
 `\shoebox\` folder. Those tasks are **generated from
 [`scripts/tasks.yaml`](../scripts/tasks.yaml)** rather than hand-built in the
@@ -162,10 +169,10 @@ repo root; see [data-storage.md](data-storage.md).
 
 | Task | Trigger | Runs |
 |---|---|---|
-| `sync-active-listings` | Daily 03:00 | `shoebox sync-active-listings` |
-| `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` |
-| `sync-orders` | Daily 04:00 | `shoebox sync-orders` |
-| `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` |
+| `sync-active-listings` | Daily 03:00 | `shoebox sync-active-listings` (also a Cloud Run job) |
+| `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` (also a Cloud Run job) |
+| `sync-orders` | Daily 04:00 | `shoebox sync-orders` (also a Cloud Run job) |
+| `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` (also a Cloud Run job, as `end-oos-listings`) |
 | `watch-searches` | Logon, every 5m | `shoebox watch-searches` |
 | `slack-bot` | Logon (restart ×3) | `shoebox slack-bot` |
 | `ebay-orders-awaiting-shipment` | Manual | `shoebox orders-awaiting-shipment` ×2 |

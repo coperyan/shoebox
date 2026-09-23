@@ -25,6 +25,9 @@ Automate common workflows for an eBay sports card store:
 setup, configuration reference, CLI reference, pipeline details, the Slack
 integration, and data/storage layout. This README is a quick orientation.
 
+The daily sync pipelines can run as **Cloud Run jobs** instead of on a
+workstation; see [docs/deployment.md](docs/deployment.md).
+
 ---
 
 ## Repository overview

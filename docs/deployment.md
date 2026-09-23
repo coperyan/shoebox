@@ -1,0 +1,451 @@
+# Deployment (Cloud Run)
+
+How to run the daily sync pipelines as **Cloud Run jobs** on a schedule, so
+they no longer depend on a workstation being awake, and which pipelines
+deliberately stay put.
+
+The container is an **additional host**, not a replacement. A Mac or Windows
+checkout runs every command exactly as before, and the two schedulers coexist:
+[`scripts/tasks.yaml`](../scripts/tasks.yaml) stays the source of truth for
+Windows Task Scheduler ([scheduling.md](scheduling.md)), and
+[`deploy/jobs.yaml`](../deploy/jobs.yaml) is its cloud counterpart.
+
+```
+Dockerfile                    one image; ENTRYPOINT is the `shoebox` CLI
+deploy/jobs.yaml              the jobs: command, cron, resources   <- edit this
+scripts/deploy_cloud_run.py   renders jobs.yaml into gcloud commands and runs them
+deploy/cloudbuild.yaml        Cloud Build: test -> build -> push -> roll the image out
+```
+
+---
+
+## What runs where
+
+| Workload | Host | Why |
+|---|---|---|
+| `sync-orders`, `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings` | **Cloud Run job** | API → JSONL → GCS → BigQuery. No browser, no local input, no state between runs |
+| `watch-searches` | Workstation (for now) | Keeps its seen-cache and lock on disk; needs a GCS-backed state mirror before it can move |
+| `slack-bot` | Workstation (for now) | Long-running Socket Mode listener; would be a Cloud Run *service*, not a job |
+| `create-listings`, `create-variation-listings`, `relist-listings`, `send-offers` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
+| `sync-topps-calendar`, `tcdb-search` | Workstation | Drive a real Chrome via `undetected-chromedriver` |
+| `ui` (Streamlit), `sync-metadata`, `orders-awaiting-shipment --display` | Workstation | Interactive, or need the master workbook |
+
+The line is simple: pipelines that talk only to APIs move; pipelines that need
+a browser, a local file, or a human in the loop stay.
+
+## Why no pipeline code changed
+
+Three seams already existed:
+
+- `SHOEBOX_CONFIG_PATH` relocates `app.yaml`; `EBAY_REST_CONFIG_PATH`
+  relocates `ebay_rest.json`; `ebay.trading_token_path` inside `app.yaml`
+  relocates `ebay_legacy.json`.
+- The GCS and BigQuery clients fall back to **Application Default Credentials**
+  when the file named by `gcp.service_account_json` does not exist. In Cloud
+  Run, ADC is the job's service account, so `configs/gcp.json` is never uploaded.
+- `SHOEBOX_LOG_DIR=-` (set in the Dockerfile) turns off the per-run log file.
+  Cloud Run collects stdout and discards the filesystem after each run.
+
+The image's working directory is the repo root, exactly like the Windows tasks,
+so `configs/bigquery/...` schemas and SQL resolve unchanged.
+
+---
+
+## `deploy/jobs.yaml` and the deploy script
+
+```bash
+python scripts/deploy_cloud_run.py --list                  # what is configured
+python scripts/deploy_cloud_run.py --dry-run               # print every gcloud command, run nothing
+python scripts/deploy_cloud_run.py                         # jobs + IAM bindings + schedules
+python scripts/deploy_cloud_run.py --only sync-orders
+python scripts/deploy_cloud_run.py --scheduler-only        # after editing a cron or `enabled:`
+python scripts/deploy_cloud_run.py --jobs-only --image REGION-docker.pkg.dev/PROJECT/shoebox/shoebox:TAG
+```
+
+Everything is create-or-update, so re-running is safe. For each job the script
+runs, in order: `gcloud run jobs deploy` (image, args, env, secret volumes,
+resources, **no retries**), `gcloud run jobs add-iam-policy-binding` (lets the
+scheduler identity start it), `gcloud scheduler jobs create|update http` (the
+cron, calling the job's `:run` endpoint), and `pause`/`resume` only when
+`enabled:` disagrees with the schedule's current state. `--dry-run` prints one
+shell line per command; it is what Cloud Build pipes to `bash`.
+
+Nothing is ever deleted. Removing or renaming an entry leaves the old Cloud
+Run job and Scheduler job in GCP until you `gcloud run jobs delete` /
+`gcloud scheduler jobs delete` them.
+
+`defaults:` supplies every setting and each job overrides what it needs:
+
+```yaml
+- name: sync-orders                 # Cloud Run + Scheduler job name (lowercase, digits, hyphens)
+  run: sync-orders                  # the shoebox subcommand; a string is shell-split, a list is verbatim
+  description: Sync orders into GCS/BigQuery.
+  schedule: "0 4 * * *"             # 5-field cron in defaults.timezone, or `manual`
+  timeout: 1800s                    # any defaults key may be overridden here
+  memory: 1Gi
+```
+
+| Default | Meaning |
+|---|---|
+| `region` | Cloud Run and Scheduler region |
+| `image` | Image every job runs; `{project}` / `{region}` are filled in. Cloud Build overrides it per rollout |
+| `runner_service_account` | The job's identity. Needs GCS object write, BigQuery load/query, and `secretmanager.secretAccessor` on the three secrets |
+| `scheduler_service_account` | The identity Cloud Scheduler uses. Only ever gets `roles/run.invoker`, never a secret |
+| `timezone` | IANA zone for every cron, so 03:00 stays 03:00 across DST |
+| `env` | Container environment (`SHOEBOX_LOG_DIR`, the two `*_CONFIG_PATH` variables) |
+| `secrets` | `<file path in container>: <secret>:<version>`. **One secret per directory** — Cloud Run mounts a secret as a directory and refuses two at one path |
+| `cpu`, `memory`, `timeout`, `max_retries` | Cloud Run task resources. `max_retries: 0` on purpose — see below |
+| `attempt_deadline`, `scheduler_retries` | How long Scheduler waits for the `:run` call (it returns as soon as the execution starts) and how often it retries. Zero, same reason |
+| `enabled` | `false` pauses the schedule (a new one is created and paused in the same run); the job stays and can still be run by hand |
+
+**Why no retries.** The syncs `WRITE_APPEND` snapshot rows keyed by
+`file_date`. A retry after a partial BigQuery load appends a second snapshot
+instead of repairing the first. Re-run a failed day deliberately once you know
+why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`.
+
+### Current jobs
+
+| Job | Schedule (America/Los_Angeles) | Runs | Windows task |
+|---|---|---|---|
+| `sync-active-listings` | 03:00 daily | `shoebox sync-active-listings` | `sync-active-listings` |
+| `sync-active-listing-details` | 03:30 daily | `shoebox sync-active-listing-details` (1h, 2Gi) | `sync-active-listing-details` |
+| `sync-orders` | 04:00 daily | `shoebox sync-orders` | `sync-orders` |
+| `end-oos-listings` | 05:00 daily | `shoebox end-oos-listings` | `end_oos_listings` |
+
+---
+
+## The cloud copy of `app.yaml`
+
+A Secret Manager secret holds the **whole** `app.yaml`: every section your
+workstation file has (`gcp`, `bigquery`, `gcs`, `paths`, `ebay`, `slack`,
+`google_calendar`, `store`, ...), because the container validates it with the
+same schema and fails on a missing section. Keep a separate copy,
+`configs/app.cloud.yaml` (gitignored), made by copying your real file and
+changing **only** the lines shown below. Do not upload just this excerpt.
+
+```bash
+cp configs/app.yaml configs/app.cloud.yaml
+# edit the lines below, then check it still loads:
+SHOEBOX_CONFIG_PATH=configs/app.cloud.yaml python -c "from shoebox.settings import get_settings as g; print(g().paths.scans_dir)"
+```
+
+The two `*_CONFIG_PATH` environment variables handle `app.yaml` and
+`ebay_rest.json`; everything else below is resolved by `app.yaml` itself.
+
+```yaml
+gcp:
+  service_account_json: configs/gcp.json   # deliberately absent in the image -> ADC -> the runner SA
+
+paths:
+  data_dir: data                           # all relative to /app and writable by the container user
+  query_dir: configs/bigquery/queries      # baked into the image; must stay exactly this
+  exports_dir: exports
+  scans_dir: scans                         # NOT your OneDrive path (see below)
+  set_images_dir: set_images               # same
+  tools_dir: tools
+  searches_file: configs/searches.yaml     # unused by these jobs; must not be a workstation path
+  searches_git_pull: false
+
+ebay:
+  path: /secrets/ebay-rest                 # redundant with EBAY_REST_CONFIG_PATH, harmless
+  trading_token_path: /secrets/ebay-legacy/ebay_legacy.json
+```
+
+> **Every `paths.*_dir` must be relative.** The CLI calls
+> `ensure_runtime_dirs()` before any command and `mkdir -p`s each of them. A
+> workstation value such as `/users/you/OneDrive/Pictures/...` makes every job
+> die at startup with `PermissionError` before doing any work.
+
+---
+
+## One-time setup
+
+Steps are ordered by dependency. `PROJECT` is your GCP project ID; the region
+is `us-central1` unless you change `deploy/jobs.yaml`.
+
+**0. Tools and auth.** The Google Cloud SDK is not part of the repo's
+requirements:
+
+```bash
+brew install --cask google-cloud-sdk      # macOS; see https://cloud.google.com/sdk/docs/install
+gcloud auth login
+gcloud config set project PROJECT
+```
+
+**1. Check the eBay refresh token.** The mounted `ebay_rest.json` is read-only,
+which is fine because `ebay_rest` never writes a refreshed token back — but the
+file you upload must *already* contain a valid `refresh_token`. If it is
+empty, `ebay_rest` tries to open a consent browser, which in a container just
+fails.
+
+```bash
+python scripts/refresh_ebay_token.py --check      # must say: refresh_token: present
+```
+
+**2. Enable the APIs.**
+
+```bash
+gcloud services enable run.googleapis.com cloudscheduler.googleapis.com \
+  secretmanager.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com
+```
+
+**3. Write `configs/app.cloud.yaml`** as described above: a full copy of
+`app.yaml` with the path lines changed, not just the excerpt.
+
+**4. Create the secrets.** Three of the gitignored config files become
+secrets. `gcp.json` is not one of them.
+
+```bash
+gcloud secrets create shoebox-app-yaml    --replication-policy=automatic --data-file=configs/app.cloud.yaml
+gcloud secrets create shoebox-ebay-rest   --replication-policy=automatic --data-file=configs/ebay_rest.json
+gcloud secrets create shoebox-ebay-legacy --replication-policy=automatic --data-file=configs/ebay_legacy.json
+```
+
+To change one later, add a version; jobs read `latest` on their next run:
+
+```bash
+gcloud secrets versions add shoebox-app-yaml --data-file=configs/app.cloud.yaml
+```
+
+**5. Runner service account.** The simplest choice is to **reuse the account
+you already have** — the `client_email` in `configs/gcp.json` — since it
+already owns the buckets and datasets. Put its email in
+`deploy/jobs.yaml` → `runner_service_account`, then let it read the secrets:
+
+```bash
+RUNNER=your-existing-sa@PROJECT.iam.gserviceaccount.com
+for s in shoebox-app-yaml shoebox-ebay-rest shoebox-ebay-legacy; do
+  gcloud secrets add-iam-policy-binding $s --member serviceAccount:$RUNNER --role roles/secretmanager.secretAccessor
+done
+```
+
+If you would rather start clean: `gcloud iam service-accounts create
+shoebox-runner`, then grant it `roles/bigquery.jobUser`,
+`roles/bigquery.dataEditor` and `roles/storage.objectAdmin` (project-wide, or
+per dataset and bucket) plus the three bindings above. Once the jobs run under
+this identity you can delete the downloaded key from your workstation.
+
+**6. Scheduler service account.** Gets no project roles at all; the deploy
+script grants it `roles/run.invoker` on each job.
+
+```bash
+gcloud iam service-accounts create shoebox-scheduler --display-name "shoebox scheduler"
+```
+
+**7. Artifact Registry.**
+
+```bash
+gcloud artifacts repositories create shoebox --repository-format=docker --location=us-central1
+```
+
+**8. Build identity.** Projects that enabled Cloud Build after mid-2024 run
+builds as the Compute Engine default service account. Either grant that
+account the roles below or, better, create `shoebox-builder` and select it on
+the trigger in step 12. Two of the roles belong on a specific resource, not
+the project, so grant them from the terminal rather than the IAM page:
+
+| Role | Where | Why |
+|---|---|---|
+| `roles/run.developer` | project | `gcloud run jobs deploy` |
+| `roles/logging.logWriter` | project | build logs (required for any user-specified build SA) |
+| `roles/artifactregistry.writer` | the `shoebox` repository | push the image |
+| `roles/iam.serviceAccountUser` | **on the runner SA only** | deploy a job that runs as it (`actAs`). Project-wide would let the builder act as any account |
+
+```bash
+BUILDER=shoebox-builder@PROJECT.iam.gserviceaccount.com
+RUNNER=your-runner-sa@PROJECT.iam.gserviceaccount.com
+
+gcloud iam service-accounts create shoebox-builder --display-name "shoebox Cloud Build"
+gcloud projects add-iam-policy-binding PROJECT --member serviceAccount:$BUILDER --role roles/run.developer
+gcloud projects add-iam-policy-binding PROJECT --member serviceAccount:$BUILDER --role roles/logging.logWriter
+gcloud artifacts repositories add-iam-policy-binding shoebox --location us-central1 \
+  --member serviceAccount:$BUILDER --role roles/artifactregistry.writer
+gcloud iam service-accounts add-iam-policy-binding $RUNNER \
+  --member serviceAccount:$BUILDER --role roles/iam.serviceAccountUser
+```
+
+The builder needs nothing else: no `run.admin`, no secret access, nothing on
+Cloud Scheduler. It only ever runs `--jobs-only`; IAM bindings and schedules
+are applied from your laptop in step 10.
+
+A build only runs as the builder when it names it: the trigger in step 12
+does, and `gcloud builds submit` does when you pass `--service-account`.
+Submitting by hand also uploads the source to a bucket named
+`PROJECT_cloudbuild`, which the builder must be able to read (without this the
+submit fails with `could not resolve source ... storage.objects.get`):
+
+```bash
+gcloud storage buckets add-iam-policy-binding gs://PROJECT_cloudbuild \
+  --member serviceAccount:$BUILDER --role roles/storage.objectViewer
+```
+
+Your own account needs `roles/iam.serviceAccountUser` on both the runner SA
+(step 10 deploys jobs as it) and the builder (to submit builds and create the
+trigger as it). Project Owner has both; a narrower role may not.
+
+**9. First image.** Skip the rollout, since the jobs do not exist yet — Cloud
+Run validates the image at deploy time, so it must be pushed first.
+
+```bash
+gcloud builds submit --config deploy/cloudbuild.yaml \
+  --service-account projects/PROJECT/serviceAccounts/shoebox-builder@PROJECT.iam.gserviceaccount.com \
+  --substitutions=_TAG=$(git rev-parse --short HEAD),_DEPLOY_JOBS=false
+```
+
+Passing `--service-account` makes the first build exercise the same identity
+the trigger will use, so a missing role shows up now rather than on the first
+push to `main`. This also runs the test suite inside the image's own
+interpreter.
+
+**10. First deploy, from your laptop.** Do this once with your own credentials
+so that any IAM or API problem surfaces where you can fix it. Cloud Build only
+ever needs `--jobs-only` afterwards.
+
+```bash
+python scripts/deploy_cloud_run.py --dry-run     # read it
+python scripts/deploy_cloud_run.py               # jobs, invoker bindings, schedules
+```
+
+To keep the schedules paused while you verify by hand, set `enabled: false`
+under `defaults:` first, then flip it and run `--scheduler-only`.
+
+**11. Verify.**
+
+```bash
+gcloud run jobs execute sync-orders --region us-central1 --wait
+gcloud run jobs executions list --region us-central1
+gcloud logging read 'resource.type=cloud_run_job AND resource.labels.job_name=sync-orders' \
+  --limit 50 --format='value(textPayload)'
+bq query --use_legacy_sql=false 'SELECT MAX(file_date) FROM `PROJECT.ebay.orders`'
+```
+
+The Slack `notify_channel` should show "Starting sync_orders.." and
+"Completed sync_orders..". A manual run appends one snapshot for today, the
+same as running the command by hand on Windows.
+
+**12. Connect the GitHub trigger** (console: Cloud Build → Triggers →
+*Connect repository* → GitHub app → this repo). Create a trigger: event *push
+to branch* `^main$`, configuration *Cloud Build configuration file*
+`deploy/cloudbuild.yaml`, substitution variable `_TAG` = `$SHORT_SHA`, service
+account = the build identity from step 8. From then on every push to `main`
+tests, builds, pushes `:<sha>` and `:latest`, and updates all four jobs to the
+new image. The rendered `gcloud` commands appear in the build log.
+
+**13. Cut over.** Each Windows run *and* each cloud run appends a snapshot, so
+turn the Windows tasks off the same day the cloud schedules go live. In
+`scripts/tasks.yaml` set `enabled: false` on the four daily tasks and
+re-register (`python scripts/generate_tasks.py --register`), or:
+
+```powershell
+Get-ScheduledTask -TaskPath \shoebox\ |
+  Where-Object Name -in sync-active-listings,sync-active-listing-details,sync-orders,end_oos_listings |
+  Disable-ScheduledTask
+```
+
+Leave `watch-searches` and `slack-bot` alone; they stay on Windows. Nothing is
+deleted, so falling back is one `Enable-ScheduledTask`.
+
+---
+
+## Running the image locally
+
+Useful for reproducing a cloud failure with the same code and interpreter.
+Bind-mount the config files where the jobs expect them:
+
+```bash
+docker build -t shoebox .
+docker run --rm shoebox --help
+docker run --rm \
+  -e SHOEBOX_CONFIG_PATH=/secrets/app/app.yaml \
+  -e EBAY_REST_CONFIG_PATH=/secrets/ebay-rest/ebay_rest.json \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/secrets/gcp.json \
+  -v "$PWD/configs/app.cloud.yaml:/secrets/app/app.yaml:ro" \
+  -v "$PWD/configs/ebay_rest.json:/secrets/ebay-rest/ebay_rest.json:ro" \
+  -v "$PWD/configs/ebay_legacy.json:/secrets/ebay-legacy/ebay_legacy.json:ro" \
+  -v "$PWD/configs/gcp.json:/secrets/gcp.json:ro" \
+  shoebox sync-orders
+```
+
+This is a real run against eBay, GCS and BigQuery.
+
+---
+
+## When a step fails
+
+| Symptom | Cause |
+|---|---|
+| `error: \`gcloud\` is not on PATH` | Step 0 |
+| `Permission ... iam.serviceAccounts.actAs denied` on deploy | The deploying identity needs `roles/iam.serviceAccountUser` on the runner SA (step 8) |
+| Deploy fails with `Permission denied on secret` | The runner SA lacks `secretmanager.secretAccessor` on that secret (step 5) |
+| Job fails instantly with a pydantic `validation error` listing missing fields | The uploaded `app.yaml` is incomplete (only the excerpt was uploaded). Upload a full copy as a new secret version |
+| Job fails instantly: `Missing config file` | `SHOEBOX_CONFIG_PATH` points where no secret is mounted; compare `env` and `secrets` in `jobs.yaml` |
+| Job fails instantly: `PermissionError: ... /users/...` | A `paths.*_dir` in the uploaded `app.yaml` is a workstation path. Make them relative and add a secret version |
+| `FileNotFoundError` on a `.sql` file | `paths.query_dir` in the uploaded `app.yaml` is not `configs/bigquery/queries` |
+| eBay calls fail with a consent/browser error | The uploaded `ebay_rest.json` has no `refresh_token` — step 1 |
+| eBay 403, `errorId` 1100, `domain: ACCESS` | A missing scope, not a deployment problem; see [setup.md](setup.md) |
+| `Missing Trading API token file` | `ebay.trading_token_path` in the uploaded `app.yaml` is not `/secrets/ebay-legacy/ebay_legacy.json` |
+| `gcloud builds submit`: `could not resolve source ... storage.objects.get` | The builder cannot read the `PROJECT_cloudbuild` source bucket (step 8) |
+| Cloud Build `test` step: `FileNotFoundError: ... 'git'` | The test step installs git before pytest; the saved-search tests need it. Check `deploy/cloudbuild.yaml` was not trimmed |
+| Cloud Build: `denied: Permission "artifactregistry.repositories.uploadArtifacts"` | The build SA needs `roles/artifactregistry.writer`, or the repository (step 7) was never created |
+| Cloud Build `rollout` step: `PERMISSION_DENIED` on `run.jobs.update` | The build SA needs `roles/run.developer` and `actAs` on the runner SA |
+| Scheduler tick fails with a token or permission error | The scheduler SA lacks `roles/run.invoker` on that job; re-run the script with `--scheduler-only` |
+| Cloud Scheduler complains about a missing App Engine app | Rare on current projects; `gcloud app create --region=us-central` once and re-run |
+| Rows appear twice in BigQuery for one `file_date` day | Both hosts ran; step 13 |
+
+Logs for any failed run:
+
+```bash
+gcloud logging read \
+  'resource.type=cloud_run_job AND resource.labels.job_name=sync-orders AND severity>=WARNING' \
+  --limit 50 --format='value(textPayload)'
+```
+
+---
+
+## Things worth knowing
+
+**The eBay refresh token expires (~18 months).** Renewal is a browser consent
+flow, so it happens on a workstation via `scripts/refresh_ebay_token.py`, after
+which you upload a new secret version:
+
+```bash
+gcloud secrets versions add shoebox-ebay-rest --data-file=configs/ebay_rest.json
+```
+
+Nothing warns you before it expires except the jobs failing. A calendar
+reminder is cheap.
+
+**Timezone.** Schedules use `defaults.timezone`, so they keep firing at the
+same local hour across DST. The container's clock is UTC. `sync-active-listings`
+builds its 90-day traffic window from a naive `datetime.now()`; at 03:00 Pacific
+the UTC calendar date is the same, so nothing changes. To make the container
+behave exactly like the workstation anyway, uncomment `TZ` under `env` in
+`jobs.yaml`.
+
+**Failure alerts.** The pipelines post "Starting" and "Completed" to Slack; a
+crash is silent there. Options, if you want one: a Cloud Monitoring alert on
+failed Cloud Run job executions (no code change), or a small `try/except` in
+`cli.py` around the dispatch that calls the existing `notify_best_effort`
+before re-raising.
+
+**Cost.** Four short daily jobs sit inside the free tier or near it. Cloud
+Scheduler is free for the first three jobs and $0.10/month for the fourth.
+Secret Manager and Artifact Registry are pennies.
+
+**Job overlap.** Cloud Run has no equivalent of Task Scheduler's
+`IgnoreNew`; a second `execute` while one is running starts a second
+execution. Daily schedules with sub-hour timeouts cannot self-overlap, and the
+four jobs are independent of each other.
+
+**Moving more pipelines later.** `watch-searches` needs its seen-cache and
+lock moved from `exports/jsonl/searches/` to GCS; `slack-bot` needs to become
+a Cloud Run service with one always-on instance. Both are follow-ups; the image
+already contains the code for them.
+
+---
+
+## See also
+
+- [scheduling.md](scheduling.md) — the Windows Task Scheduler setup, unchanged
+- [configuration.md](configuration.md) — `SHOEBOX_LOG_DIR` and the other environment variables
+- [data-storage.md](data-storage.md) — what each pipeline writes to GCS and BigQuery
