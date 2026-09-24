@@ -649,6 +649,8 @@ def watch_searches(
     post = post or _default_post
     verify = verify or _default_verify
 
+    store.limit_to_scopes(_scopes_in_use(all_searches))
+
     with store.lock() as acquired:
         if not acquired:
             logger.warning("Another watch-searches run holds the lock; skipping this tick.")
@@ -666,6 +668,23 @@ def watch_searches(
             flush=flush,
             pacing_seconds=pacing_seconds,
         )
+
+
+def _scopes_in_use(searches: list[ResolvedSearch]) -> set[str]:
+    """Every seen-cache scope a search in the file could read or write.
+
+    All searches, not just the due ones: the set only decides what gets
+    downloaded, and over-including costs a few MB while under-including a
+    scope that then gets written would be refused at upload. A search with no
+    resolvable channel fails on its own later and touches no cache.
+    """
+    scopes: set[str] = set()
+    for search in searches:
+        try:
+            scopes.add(seen_scope(_resolve_channel(search)))
+        except ValueError:
+            continue
+    return scopes
 
 
 def _require_durable_state_in_cloud(state_uri: str | None) -> None:

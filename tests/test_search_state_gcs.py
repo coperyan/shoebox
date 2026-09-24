@@ -65,6 +65,7 @@ class FakeBlob:
         self.name = name
         self.generation: int | None = None
         self.time_created: datetime | None = None
+        self.size: int | None = None
 
     def _check(self, if_generation_match):
         current = self.bucket.objects.get(self.name)
@@ -98,6 +99,7 @@ class FakeBlob:
         if self.bucket.fail_reads:
             raise RuntimeError("simulated GCS outage")
         Path(filename).write_bytes(self._get().data)
+        self.bucket.downloads.append(self.name)
 
     def download_as_text(self, encoding="utf-8"):
         return self._get().data.decode(encoding)
@@ -105,6 +107,7 @@ class FakeBlob:
     def reload(self):
         obj = self._get()
         self.generation, self.time_created = obj.generation, obj.time_created
+        self.size = len(obj.data)
 
     def delete(self, if_generation_match=None):
         self._get()
@@ -119,6 +122,7 @@ class FakeBucket:
         self.generations = itertools.count(1)
         self.uploads: list[str] = []
         self.deletes: list[str] = []
+        self.downloads: list[str] = []
         self.fail_writes = False
         self.fail_reads = False
         self.clock = lambda: datetime.now(UTC)
@@ -342,6 +346,49 @@ class TestSync:
             bucket.fail_writes = True
         bucket.fail_writes = False
         assert "searches/state/.lock" not in bucket.objects
+
+
+class TestScopeLimit:
+    ORPHAN = "searches/state/barry_bonds_v1_seen.jsonl"
+
+    def test_unused_seen_caches_are_not_downloaded(self, bucket, tmp_path):
+        bucket.put("searches/state/C0123456789_seen.jsonl", "{}\n")
+        bucket.put(f"searches/state/{STATE_FILENAME}", "{}")
+        bucket.put(f"searches/state/{HITS_APPEND_FILENAME}", "{}\n")
+        bucket.put(self.ORPHAN, "x" * 1000)
+        store = make_store(bucket, tmp_path)
+        store.limit_to_scopes({"C0123456789"})
+        with store.lock():
+            assert not (store.base_dir / "barry_bonds_v1_seen.jsonl").exists()
+        assert self.ORPHAN not in bucket.downloads
+        assert {
+            "searches/state/C0123456789_seen.jsonl",
+            f"searches/state/{STATE_FILENAME}",
+            f"searches/state/{HITS_APPEND_FILENAME}",
+        } <= set(bucket.downloads)
+        # Skipped is not deleted: push only removes what it pulled.
+        assert bucket.text(self.ORPHAN) == "x" * 1000
+
+    def test_skipped_object_is_never_overwritten(self, bucket, tmp_path):
+        bucket.put(self.ORPHAN, "precious\n")
+        store = make_store(bucket, tmp_path)
+        store.limit_to_scopes({"C0123456789"})
+        with store.lock():
+            store.append_seen("barry_bonds_v1", [entry("a")])
+        assert bucket.text(self.ORPHAN) == "precious\n"
+
+    def test_no_limit_downloads_everything(self, bucket, tmp_path):
+        bucket.put(self.ORPHAN, "x\n")
+        store = make_store(bucket, tmp_path)
+        with store.lock():
+            assert (store.base_dir / "barry_bonds_v1_seen.jsonl").exists()
+
+    def test_watcher_skips_caches_no_search_uses(self, bucket, tmp_path, searches_path):
+        bucket.put(self.ORPHAN, "x\n")
+        run(bucket, tmp_path, searches_path("s1"), [item("1")], Recorder())
+        assert self.ORPHAN not in bucket.downloads
+        assert "searches/state/C0123456789_seen.jsonl" in bucket.objects
+        assert bucket.text(self.ORPHAN) == "x\n"
 
 
 # ----------------------------------------------------------------------
