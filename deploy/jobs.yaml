@@ -136,4 +136,4 @@ jobs:
     timeout: 900s
     # Paused until the cutover: migrate the workstation's state first, then
     # flip this to true and run `deploy_cloud_run.py --scheduler-only`.
-    enabled: false
+    enabled: true

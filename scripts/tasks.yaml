@@ -88,6 +88,7 @@ tasks:
   # separate state, or listings alert twice.
   - name: watch-searches
     run: watch-searches
+    enabled: false
     description: Poll saved eBay searches and post new hits to Slack.
     trigger:
       type: logon
