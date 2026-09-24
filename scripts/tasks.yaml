@@ -83,6 +83,9 @@ tasks:
       type: daily
       at: "05:00"
 
+  # Also a Cloud Run job (deploy/jobs.yaml). Disable this one at the cutover in
+  # docs/deployment.md ("Saved searches") -- the two must not both run with
+  # separate state, or listings alert twice.
   - name: watch-searches
     run: watch-searches
     description: Poll saved eBay searches and post new hits to Slack.

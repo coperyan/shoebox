@@ -449,7 +449,20 @@ def load_searches_file(path: str | Path) -> SearchesFile:
 
     Mirrors ``settings.get_settings`` but is deliberately *not* cached — a
     long-running process should pick up edits to the file.
+
+    ``path`` may be a ``gs://bucket/object`` URI, which is how the Cloud Run
+    job reads the copy a push to the searches repo deploys (see
+    docs/deployment.md). It is re-downloaded on every call for the same reason
+    a local file is re-read.
     """
+    if isinstance(path, str) and path.startswith("gs://"):
+        # Imported lazily: every workstation command that loads searches would
+        # otherwise pay for importing google-cloud-storage.
+        from ..clients.gcs import read_gs_text
+
+        text = read_gs_text(path)
+        return _parse_searches_text(text, path)
+
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(
@@ -458,7 +471,11 @@ def load_searches_file(path: str | Path) -> SearchesFile:
             "(or point paths.searches_file at another location)."
         )
 
-    raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return _parse_searches_text(path.read_text(encoding="utf-8"), path)
+
+
+def _parse_searches_text(text: str, source: str | Path) -> SearchesFile:
+    raw = yaml.safe_load(text) or {}
     if not isinstance(raw, dict):
-        raise ValueError(f"{path} must contain a YAML mapping at the top level")
+        raise ValueError(f"{source} must contain a YAML mapping at the top level")
     return SearchesFile(**raw)

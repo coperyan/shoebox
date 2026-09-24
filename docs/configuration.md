@@ -73,7 +73,9 @@ All local working directories; created by `ensure_runtime_dirs()`.
 | `scan_extension` | `.jpg` | Scan file extension (leading dot optional) |
 | `set_images_dir` | (folder) | Hero/default images for variation listings |
 | `tools_dir` | `tools` | Master metadata workbook location |
-| `searches_file` | `configs/searches.yaml` | Saved eBay search definitions (a **file**, not a directory — not created by `ensure_dirs()`) |
+| `searches_file` | `configs/searches.yaml` | Saved eBay search definitions (a **file**, not a directory — not created by `ensure_dirs()`). May be a `gs://bucket/object` URI, re-read every run; that is how the Cloud Run job reads the copy a push to the searches repo deploys ([deployment.md](deployment.md#saved-searches-watch-searches)) |
+| `searches_git_pull` | `false` | `git pull --ff-only` next to `searches_file` before every `watch-searches` run. Ignored when `searches_file` is a `gs://` URI |
+| `searches_state_uri` | unset | Where `watch-searches` keeps its seen-caches, run state, lock and hits buffer. Unset: `<exports_dir>/jsonl/searches/`. A `gs://bucket/prefix` URI keeps them in GCS, which the Cloud Run job requires; every host naming the same URI shares one state and one lock |
 
 A bare scan number typed in the UI or listed in the queue workbook is resolved
 to `scans_dir/<scan_prefix><zero-padded number><scan_extension>` — e.g. with the

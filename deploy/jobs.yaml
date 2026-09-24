@@ -1,10 +1,11 @@
-# Cloud Run job + Cloud Scheduler definitions for the API-only daily pipelines.
+# Cloud Run job + Cloud Scheduler definitions for the API-only pipelines: the
+# daily syncs and the saved-search watcher.
 #
 # This is the cloud counterpart of scripts/tasks.yaml: the same idea (a
 # `defaults:` block every job may override, one entry per pipeline), rendered
 # into `gcloud` commands by scripts/deploy_cloud_run.py instead of Task
 # Scheduler XML. Windows stays the host for everything that needs Chrome, card
-# scans, Excel workbooks or on-disk state -- see docs/deployment.md.
+# scans, Excel workbooks or a human in the loop -- see docs/deployment.md.
 #
 #   python scripts/deploy_cloud_run.py --list
 #   python scripts/deploy_cloud_run.py --dry-run             # print gcloud commands, run nothing
@@ -100,6 +101,14 @@ jobs:
     description: Sync orders into GCS/BigQuery.
     schedule: "0 4 * * *"
 
+  # Same shape as sync-active-listing-details (watch list -> GetItem per
+  # listing -> JSONL -> GCS -> BigQuery), but over the watch list rather than
+  # every active listing, so the default timeout and memory are plenty.
+  - name: sync-watch-list
+    run: sync-watch-list
+    description: Sync watch list items (with item details) into GCS/BigQuery.
+    schedule: "30 4 * * *"
+
   # Windows calls this task end_oos_listings; Cloud Run names must be
   # lowercase letters, digits and hyphens.
   - name: end-oos-listings
@@ -108,3 +117,23 @@ jobs:
     schedule: "0 5 * * *"
     timeout: 900s
     memory: 512Mi
+
+  # Saved-search watcher. One tick every 5 minutes, same as the Windows task;
+  # each search's own `interval` decides whether it actually fires, so adding
+  # a search is a push to the searches repo and nothing here.
+  #
+  # Needs two gs:// settings in the uploaded app.yaml -- paths.searches_file
+  # (deployed by deploy/searches-cloudbuild.yaml) and paths.searches_state_uri
+  # (seen-caches, run state and the lock) -- and refuses to run without the
+  # second. See docs/deployment.md, "Saved searches".
+  - name: watch-searches
+    run: watch-searches
+    description: Poll saved eBay searches and post new hits to Slack.
+    schedule: "*/5 * * * *"
+    # A normal tick takes well under a minute; a seed or a full max_notify
+    # batch a few. The GCS lock goes stale after 20 minutes
+    # (search_state_gcs.LOCK_STALE_AFTER), which must stay above this.
+    timeout: 900s
+    # Paused until the cutover: migrate the workstation's state first, then
+    # flip this to true and run `deploy_cloud_run.py --scheduler-only`.
+    enabled: false

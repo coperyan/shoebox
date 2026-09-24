@@ -172,6 +172,18 @@ def _parse_dt(value: object) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
 
 
+def open_search_state_store(settings: Settings | None = None) -> SearchStateStore:
+    """The store ``paths.searches_state_uri`` asks for: GCS when it is set,
+    ``<exports_dir>/jsonl/searches/`` on local disk otherwise."""
+    settings = settings or get_settings()
+    uri = settings.paths.searches_state_uri
+    if uri:
+        from .search_state_gcs import GCSSearchStateStore
+
+        return GCSSearchStateStore(uri, settings=settings)
+    return SearchStateStore(settings=settings)
+
+
 class SearchStateStore:
     """Seen-cache, run state, and the hits append log."""
 
@@ -219,6 +231,15 @@ class SearchStateStore:
                 _release(handle)
         finally:
             handle.close()
+
+    def checkpoint(self) -> None:
+        """Make everything written so far durable.
+
+        A no-op here: every write already lands on local disk. The GCS-backed
+        store (``search_state_gcs``) works on a scratch copy and overrides this
+        to upload it, and the watcher calls it after each search so a killed
+        run loses at most the search it was in the middle of.
+        """
 
     # ------------------------------------------------------------------
     # Run state
