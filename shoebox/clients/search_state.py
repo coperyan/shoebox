@@ -232,6 +232,10 @@ class SearchStateStore:
         finally:
             handle.close()
 
+    def limit_to_scopes(self, scopes: set[str]) -> None:
+        """Hint which seen-cache scopes this run can touch. A no-op here; the
+        GCS-backed store uses it to skip downloading caches nothing reads."""
+
     def checkpoint(self) -> None:
         """Make everything written so far durable.
 
