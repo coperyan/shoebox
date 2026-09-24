@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the workstation's state across with no reseed. In Cloud Run the watcher
   refuses to start without durable state. See `docs/deployment.md`, "Saved
   searches".
+- `sync-watch-list` is now a Cloud Run job too, at 04:30 daily like its
+  Windows task.
 - **Failure alerting** for the Cloud Run jobs. `deploy/alerts/job-failed.yaml`
   is a Cloud Monitoring policy on failed job executions, grouped per job, that
   fires on the first failure and carries the log-reading and re-run commands

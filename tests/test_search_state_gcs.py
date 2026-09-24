@@ -669,6 +669,17 @@ class TestDeployConfig:
         # A job that outlives the lock's stale window could have it stolen.
         assert timedelta(seconds=int(job["timeout"].rstrip("s"))) < LOCK_STALE_AFTER
 
+    def test_every_windows_daily_sync_has_a_cloud_job(self):
+        tasks = yaml.safe_load((REPO_ROOT / "scripts" / "tasks.yaml").read_text())["tasks"]
+        jobs = yaml.safe_load((REPO_ROOT / "deploy" / "jobs.yaml").read_text())["jobs"]
+        cloud_runs = {j["run"] for j in jobs}
+        windows_syncs = {
+            t["run"]
+            for t in tasks
+            if isinstance(t.get("run"), str) and t["run"].startswith("sync-")
+        }
+        assert windows_syncs <= cloud_runs
+
     def test_searches_build_validates_before_uploading(self):
         build = yaml.safe_load((REPO_ROOT / "deploy" / "searches-cloudbuild.yaml").read_text())
         steps = {s["id"]: s for s in build["steps"]}

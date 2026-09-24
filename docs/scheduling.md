@@ -1,7 +1,7 @@
 # Scheduling
 
-> The four daily syncs (`sync-active-listings`, `sync-active-listing-details`,
-> `sync-orders`, `end_oos_listings`) and `watch-searches` can run as Cloud Run
+> The five daily syncs (`sync-active-listings`, `sync-active-listing-details`,
+> `sync-orders`, `sync-watch-list`, `end_oos_listings`) and `watch-searches` can run as Cloud Run
 > jobs instead, so they no longer depend on this machine being awake -- see
 > [deployment.md](deployment.md). Once they do, disable their Windows tasks
 > (`enabled: false` here, then `--register`) so each snapshot is taken once and
@@ -173,7 +173,7 @@ repo root; see [data-storage.md](data-storage.md).
 | `sync-active-listings` | Daily 03:00 | `shoebox sync-active-listings` (also a Cloud Run job) |
 | `sync-active-listing-details` | Daily 03:30 | `shoebox sync-active-listing-details` (also a Cloud Run job) |
 | `sync-orders` | Daily 04:00 | `shoebox sync-orders` (also a Cloud Run job) |
-| `sync-watch-list` | Daily 04:30 | `shoebox sync-watch-list` |
+| `sync-watch-list` | Daily 04:30 | `shoebox sync-watch-list` (also a Cloud Run job) |
 | `end_oos_listings` | Daily 05:00 | `shoebox end-oos-listings` (also a Cloud Run job, as `end-oos-listings`) |
 | `watch-searches` | Logon, every 5m | `shoebox watch-searches` (also a Cloud Run job) |
 | `slack-bot` | Logon (restart ×3) | `shoebox slack-bot` |

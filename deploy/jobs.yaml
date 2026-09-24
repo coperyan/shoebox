@@ -101,6 +101,14 @@ jobs:
     description: Sync orders into GCS/BigQuery.
     schedule: "0 4 * * *"
 
+  # Same shape as sync-active-listing-details (watch list -> GetItem per
+  # listing -> JSONL -> GCS -> BigQuery), but over the watch list rather than
+  # every active listing, so the default timeout and memory are plenty.
+  - name: sync-watch-list
+    run: sync-watch-list
+    description: Sync watch list items (with item details) into GCS/BigQuery.
+    schedule: "30 4 * * *"
+
   # Windows calls this task end_oos_listings; Cloud Run names must be
   # lowercase letters, digits and hyphens.
   - name: end-oos-listings

@@ -24,7 +24,7 @@ deploy/searches-cloudbuild.yaml  Cloud Build: validate searches.yaml -> copy it 
 
 | Workload | Host | Why |
 |---|---|---|
-| `sync-orders`, `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings` | **Cloud Run job** | API → JSONL → GCS → BigQuery. No browser, no local input, no state between runs |
+| `sync-orders`, `sync-active-listings`, `sync-active-listing-details`, `sync-watch-list`, `end-oos-listings` | **Cloud Run job** | API → JSONL → GCS → BigQuery. No browser, no local input, no state between runs |
 | `watch-searches` | **Cloud Run job** | Seen-caches, run state and lock live in GCS (`paths.searches_state_uri`); `searches.yaml` is deployed to GCS on every push to the searches repo. See [Saved searches](#saved-searches-watch-searches) |
 | `slack-bot` | Workstation (for now) | Long-running Socket Mode listener; would be a Cloud Run *service*, not a job |
 | `create-listings`, `create-variation-listings`, `relist-listings`, `send-offers` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
@@ -115,6 +115,7 @@ why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`
 | `sync-active-listings` | 03:00 daily | `shoebox sync-active-listings` | `sync-active-listings` |
 | `sync-active-listing-details` | 03:30 daily | `shoebox sync-active-listing-details` (1h, 2Gi) | `sync-active-listing-details` |
 | `sync-orders` | 04:00 daily | `shoebox sync-orders` | `sync-orders` |
+| `sync-watch-list` | 04:30 daily | `shoebox sync-watch-list` | `sync-watch-list` |
 | `end-oos-listings` | 05:00 daily | `shoebox end-oos-listings` | `end_oos_listings` |
 | `watch-searches` | every 5 minutes (**paused** until [cutover](#cutover)) | `shoebox watch-searches` (15m timeout) | `watch-searches` |
 
@@ -345,20 +346,24 @@ gcloud builds triggers create github --name=shoebox-main \
 ```
 
 From then on every push to `main` tests, builds, pushes `:<sha>` and
-`:latest`, and updates all four jobs to the new image. The rendered `gcloud`
+`:latest`, and updates every job to the new image. The rendered `gcloud`
 commands appear in the build log. Commit the deployment files before the first
 push: the trigger builds whatever is on `main`.
 
 **13. Cut over.** Each Windows run *and* each cloud run appends a snapshot, so
 turn the Windows tasks off the same day the cloud schedules go live. In
-`scripts/tasks.yaml` set `enabled: false` on the four daily tasks and
+`scripts/tasks.yaml` set `enabled: false` on the five daily tasks and
 re-register (`python scripts/generate_tasks.py --register`), or:
 
 ```powershell
 Get-ScheduledTask -TaskPath \shoebox\ |
-  Where-Object Name -in sync-active-listings,sync-active-listing-details,sync-orders,end_oos_listings |
+  Where-Object Name -in sync-active-listings,sync-active-listing-details,sync-orders,sync-watch-list,end_oos_listings |
   Disable-ScheduledTask
 ```
+
+A job added later (as `sync-watch-list` was) goes live only when you run the
+deploy script, since Cloud Build's rollout never touches schedules. Disable
+its Windows task the same day.
 
 Leave `slack-bot` alone; it stays on Windows. `watch-searches` has its own
 [cutover](#cutover), because its state has to move with it. Nothing is
@@ -743,18 +748,18 @@ behave exactly like the workstation anyway, uncomment `TZ` under `env` in
 
 **Failure alerts** are covered by the Alerting section below.
 
-**Cost.** Four short daily jobs sit inside the free tier or near it.
+**Cost.** Five short daily jobs sit inside the free tier or near it.
 `watch-searches` is about 288 executions a day. Most are a few seconds of
 "nothing due", so expect roughly $1–3/month beyond the free tier. Cloud
 Scheduler is free for the first three jobs and $0.10/month for each after,
-so $0.20 for five. The searches bucket, Secret Manager and Artifact Registry
+so $0.30 for six. The searches bucket, Secret Manager and Artifact Registry
 are pennies. The eBay Browse call budget is unchanged: one call per due
 search, the same as on Windows ([search.md](search.md#scheduling)).
 
 **Job overlap.** Cloud Run has no equivalent of Task Scheduler's
 `IgnoreNew`; a second `execute` while one is running starts a second
 execution. Daily schedules with sub-hour timeouts cannot self-overlap, and the
-four jobs are independent of each other. `watch-searches` can outlast its
+daily jobs are independent of each other. `watch-searches` can outlast its
 five-minute tick. The next execution then finds the GCS lock held, logs it,
 and exits 0.
 
