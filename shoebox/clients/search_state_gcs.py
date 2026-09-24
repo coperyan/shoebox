@@ -68,6 +68,9 @@ logger = logging.getLogger(__name__)
 LOCK_STALE_AFTER = timedelta(minutes=20)
 
 
+SEEN_SUFFIX = "_seen.jsonl"
+
+
 def _digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -84,7 +87,7 @@ def _upload_order(name: str) -> tuple[int, str]:
     to a missing cache is detected and reseeded silently, whereas the reverse
     order could leave a cache claiming items the state has never heard of.
     """
-    if name.endswith("_seen.jsonl"):
+    if name.endswith(SEEN_SUFFIX):
         return (0, name)
     if name == STATE_FILENAME:
         return (2, name)
@@ -117,6 +120,10 @@ class GCSSearchStateStore(SearchStateStore):
         # name -> digest of what GCS holds, as of the last pull/push.
         self._remote: dict[str, str] = {}
         self._lock_generation: int | None = None
+        # Seen-cache scopes worth downloading (None = all), and the objects a
+        # pull skipped because of it -- which push must then never overwrite.
+        self._scopes: set[str] | None = None
+        self._skipped: set[str] = set()
 
     # ------------------------------------------------------------------
     # GCS plumbing
@@ -146,6 +153,17 @@ class GCSSearchStateStore(SearchStateStore):
     # ------------------------------------------------------------------
     # Sync
     # ------------------------------------------------------------------
+    def limit_to_scopes(self, scopes: set[str]) -> None:
+        """Download only these seen-caches (plus run state and the hits buffer).
+
+        Cloud Run's filesystem lives in the container's memory, so every byte
+        pulled counts against the job's memory limit. A seen-cache no current
+        search posts to -- a renamed channel, or the per-search caches from
+        before dedup became per-channel -- is dead weight that can grow into
+        hundreds of MB and OOM the run. Skipped objects stay in GCS untouched.
+        """
+        self._scopes = set(scopes)
+
     def pull(self) -> int:
         """Replace the scratch directory's contents with what GCS holds.
 
@@ -157,17 +175,42 @@ class GCSSearchStateStore(SearchStateStore):
         list_prefix = f"{self.prefix}/" if self.prefix else ""
         lock_name = self._object_name(LOCK_FILENAME)
         self._remote = {}
+        self._skipped = set()
+        skipped_bytes = loaded_bytes = 0
         for blob in self.bucket.list_blobs(prefix=list_prefix):
             name = blob.name[len(list_prefix) :]
             # Flat layout: anything in a "subdirectory" is not ours (a manual
             # backup, say) and must not be deleted by the next push.
             if blob.name == lock_name or not name or "/" in name:
                 continue
+            if (
+                self._scopes is not None
+                and name.endswith(SEEN_SUFFIX)
+                and name[: -len(SEEN_SUFFIX)] not in self._scopes
+            ):
+                self._skipped.add(name)
+                skipped_bytes += blob.size or 0
+                continue
             target = self.base_dir / name
             blob.download_to_filename(str(target))
             self._remote[name] = _digest(target)
+            loaded_bytes += target.stat().st_size
 
-        logger.info("Loaded %d search state file(s) from %s", len(self._remote), self.uri)
+        logger.info(
+            "Loaded %d search state file(s) (%.1f MB) from %s",
+            len(self._remote),
+            loaded_bytes / 1e6,
+            self.uri,
+        )
+        if self._skipped:
+            logger.warning(
+                "Ignored %d seen-cache object(s) (%.1f MB) that no search uses: %s. "
+                "They are left in GCS; move them out of %s to silence this.",
+                len(self._skipped),
+                skipped_bytes / 1e6,
+                ", ".join(sorted(self._skipped)[:5]) + (" ..." if len(self._skipped) > 5 else ""),
+                self.uri,
+            )
         return len(self._remote)
 
     def push(self) -> tuple[int, int]:
@@ -180,6 +223,11 @@ class GCSSearchStateStore(SearchStateStore):
         uploaded = deleted = 0
 
         for name in sorted(local, key=_upload_order):
+            if name in self._skipped:
+                # Never downloaded, so a local file by this name is not a
+                # continuation of the remote one; uploading it would destroy it.
+                logger.error("Not uploading %s: its copy in %s was not loaded", name, self.uri)
+                continue
             digest = _digest(local[name])
             if self._remote.get(name) == digest:
                 continue

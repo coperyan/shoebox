@@ -69,8 +69,10 @@ tasks:
       type: daily
       at: "04:00"
 
+  # Runs as a Cloud Run job now (deploy/jobs.yaml); kept here for fallback.
   - name: sync-watch-list
     run: sync-watch-list
+    enabled: false
     description: Sync watch list items (with item details) into GCS/BigQuery.
     trigger:
       type: daily
