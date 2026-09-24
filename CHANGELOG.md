@@ -9,7 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-<<<<<<< HEAD
+- **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
+  syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
+  paused until the cutover). New `paths.searches_state_uri: gs://bucket/prefix`
+  keeps the seen-caches, run state, hits buffer and lock in GCS
+  (`clients/search_state_gcs.py`). Each run takes a generation-matched lock
+  object, downloads the state to a scratch directory, runs the unchanged
+  watcher, and uploads what changed after each search. SIGTERM still saves and
+  releases, and a lock from a killed run goes stale after 20 minutes. Every
+  host naming the same URI shares one state and one lock, so the workstation
+  and the Slack bot's `watch-searches --reseed` stay consistent with the
+  cloud. `paths.searches_file` may now be a `gs://` object. It is deployed by
+  a new Cloud Build trigger on the private searches repo
+  (`deploy/searches-cloudbuild.yaml`), which validates with the new
+  `scripts/validate_searches.py` before copying, so a broken edit fails the
+  commit instead of the job. `scripts/migrate_search_state_to_gcs.py` moves
+  the workstation's state across with no reseed. In Cloud Run the watcher
+  refuses to start without durable state. See `docs/deployment.md`, "Saved
+  searches".
 - **Cloud Run deployment** for the four daily syncs (`sync-orders`,
   `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`),
   so they no longer depend on a workstation being awake. `Dockerfile` builds
@@ -22,13 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the job's service account replaces `configs/gcp.json`, since the GCS
   and BigQuery clients already fall back to Application Default Credentials.
   A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
-
-=======
 - `sync-watch-list`: snapshots the account's eBay watch list into
   `ebay.watch_list` (JSONL → GCS → BigQuery, `WRITE_APPEND`), each listing
   enriched with `GetItem` item specifics, category, condition, and pictures.
   Listings whose details can't be fetched are kept with `detail_error` set.
->>>>>>> 5590e1bb071b97a3a55ebdee1d1dfe03b5765ce1
 - `tcdb-search`: interactive advanced search on tcdb.com. Drives a real Chrome
   (undetected-chromedriver, persistent profile so Cloudflare clearance and the
   TCDB login survive between runs), prompts you to log in by hand once per

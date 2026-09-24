@@ -293,6 +293,10 @@ Per run:
    on Unix, `msvcrt.locking` on Windows, where `fcntl` does not exist. A run
    posting at ~1 message/sec can outlast the scheduler's period, and two
    concurrent processes would double-post and clobber each other's state.
+   With `paths.searches_state_uri` set (the Cloud Run job), the lock is a GCS
+   object created with `ifGenerationMatch=0` instead. Taking it also
+   downloads the state to a scratch directory, and the state is uploaded
+   again after each search and at the end (`clients/search_state_gcs.py`).
 2. Load and validate `configs/searches.yaml`. A config error aborts the whole
    run (it's global, not per-search) and is posted to Slack — under cron nobody
    reads the log.

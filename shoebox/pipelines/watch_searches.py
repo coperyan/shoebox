@@ -17,6 +17,7 @@ mid-run to exactly one duplicate rather than the entire run's worth.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import subprocess
 import time
@@ -27,7 +28,7 @@ from pathlib import Path
 
 from slack_sdk.errors import SlackApiError
 
-from ..clients.search_state import UNCHANGED, SearchStateStore
+from ..clients.search_state import UNCHANGED, SearchStateStore, open_search_state_store
 from ..models.ebay.item_summary import ItemSummary
 from ..models.saved_search import ResolvedSearch, load_searches_file
 from ..models.search_hit import SearchHit, SeenEntry
@@ -600,7 +601,12 @@ def watch_searches(
     # then ask the Slack bot for watch-searches --list" is the validation loop,
     # and it only works if listing sees the freshly pushed file.
     if settings.paths.searches_git_pull:
-        pull_searches_repo(path)
+        if str(path).startswith("gs://"):
+            # A gs:// file is deployed by a push to the searches repo, not
+            # pulled; there is no clone here to run git in.
+            logger.info("searches_git_pull ignored: %s is not a git clone", path)
+        else:
+            pull_searches_repo(path)
 
     # A config error is global, not per-search: fail the whole run rather than
     # half-running a broken file. Under cron nobody reads the log, so the error
@@ -635,7 +641,10 @@ def watch_searches(
             )
         return []
 
-    store = store or SearchStateStore(settings=settings)
+    if store is None and not dry_run:
+        _require_durable_state_in_cloud(settings.paths.searches_state_uri)
+    # Local disk, or GCS when paths.searches_state_uri is set (Cloud Run).
+    store = store or open_search_state_store(settings)
     fetch = fetch or _default_fetch
     post = post or _default_post
     verify = verify or _default_verify
@@ -657,6 +666,23 @@ def watch_searches(
             flush=flush,
             pacing_seconds=pacing_seconds,
         )
+
+
+def _require_durable_state_in_cloud(state_uri: str | None) -> None:
+    """Refuse to run in Cloud Run with local state.
+
+    A Cloud Run execution's filesystem is empty at start and discarded at the
+    end, so local state would make every run a first run: a silent reseed at
+    best, and a repost of every ``notify_on_seed`` search's matches every five
+    minutes at worst. Cloud Run sets ``CLOUD_RUN_JOB`` in every job container.
+    """
+    if state_uri or not os.environ.get("CLOUD_RUN_JOB"):
+        return
+    raise RuntimeError(
+        "watch-searches is running in Cloud Run with local state, which is "
+        "discarded after every run. Set paths.searches_state_uri to a gs:// URI "
+        "in the uploaded app.yaml (docs/deployment.md, 'Saved searches')."
+    )
 
 
 def _run_locked(
@@ -776,6 +802,9 @@ def _run_locked(
                     seeded_at=now if seed_reason else UNCHANGED,
                     seed_count=result.fetched if seed_reason else UNCHANGED,
                 )
+                # Durable per search, so a killed run re-alerts at most the
+                # search it was in (a no-op for the local store).
+                store.checkpoint()
             logger.info(
                 "%s: fetched=%d new=%d deferred=%d%s",
                 search.name,
@@ -791,6 +820,7 @@ def _run_locked(
                 # Advance last_run_at anyway: a permanently broken search that
                 # retried every tick would burn the Browse quota for nothing.
                 store.mark(search.name, last_run_at=now, status="error", error=str(exc))
+                store.checkpoint()
 
     # Once per scope, after every search has finished appending to it — a
     # per-search compaction would rewrite the same shared file repeatedly.
@@ -806,6 +836,10 @@ def _run_locked(
             obj = store.flush_append_log()
             if obj:
                 logger.info("Flushed search hits to gs://.../%s", obj)
+                # Record the emptied buffer at once: a GCS-backed run dying
+                # before its final upload would otherwise re-load these rows
+                # into BigQuery next run.
+                store.checkpoint()
         except Exception:
             # The buffer survives and retries next run. Dedup never depended on
             # BigQuery, so this cannot cause a duplicate or a missed alert.
