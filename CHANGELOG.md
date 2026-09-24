@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 <<<<<<< HEAD
+- **Failure alerting** for the Cloud Run jobs. `deploy/alerts/job-failed.yaml`
+  is a Cloud Monitoring policy on failed job executions, grouped per job, that
+  fires on the first failure and carries the log-reading and re-run commands
+  for that pipeline in its notification body. Because the jobs never retry, a
+  failed run is final, and it would otherwise show up only as a "Completed"
+  message that never arrived. `scripts/create_alert_channel.py` points the
+  alerts at the Slack channel the pipelines already use, reusing the existing
+  bot token rather than installing a second Slack app. See `docs/deployment.md`.
+
 - **Cloud Run deployment** for the four daily syncs (`sync-orders`,
   `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`),
   so they no longer depend on a workstation being awake. `Dockerfile` builds
