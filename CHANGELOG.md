@@ -170,6 +170,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--diagnose` (per-scope endpoint probe), and `--verify`.
 - The `sell.stores` OAuth scope in `configs/ebay_rest.example.json` and the
   scope/re-mint documentation in `docs/setup.md`.
+- `send-offers` is now a Cloud Run job. It runs interactively every 15
+  minutes from 08:00 to 21:45 Pacific, with a 10-minute reply window and a
+  14-minute timeout, so runs never overlap. It needs only the eBay APIs and
+  Slack. See `docs/deployment.md`, "send-offers".
 
 ### Changed
 
