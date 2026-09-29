@@ -26,6 +26,7 @@ deploy/searches-cloudbuild.yaml  Cloud Build: validate searches.yaml -> copy it 
 |---|---|---|
 | `sync-orders`, `sync-active-listings`, `sync-active-listing-details`, `sync-watch-list`, `end-oos-listings` | **Cloud Run job** | API → JSONL → GCS → BigQuery. No browser, no local input, no state between runs |
 | `watch-searches` | **Cloud Run job** | Seen-caches, run state and lock live in GCS (`paths.searches_state_uri`); `searches.yaml` is deployed to GCS on every push to the searches repo. See [Saved searches](#saved-searches-watch-searches) |
+| `send-offers` | **Cloud Run job** | eBay Negotiation/Trading API + Slack only. Interactive replies arrive over Socket Mode, an outbound connection that works from a container. See [send-offers](#send-offers) |
 | `slack-bot` | Workstation (for now) | Long-running Socket Mode listener; would be a Cloud Run *service*, not a job |
 | `create-listings`, `create-variation-listings`, `relist-listings`, `send-offers` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
 | `sync-topps-calendar`, `tcdb-search` | Workstation | Drive a real Chrome via `undetected-chromedriver` |
@@ -118,6 +119,26 @@ why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`
 | `sync-watch-list` | 04:30 daily | `shoebox sync-watch-list` | `sync-watch-list` |
 | `end-oos-listings` | 05:00 daily | `shoebox end-oos-listings` | `end_oos_listings` |
 | `watch-searches` | every 5 minutes (**paused** until [cutover](#cutover)) | `shoebox watch-searches` (15m timeout) | `watch-searches` |
+| `send-offers` | every 15 minutes, 08:00–21:45 | `shoebox send-offers --timeout-s 600` (14m timeout, 512Mi) | — (was run by hand) |
+
+### send-offers
+
+`send-offers` runs interactively every 15 minutes from 08:00 to 21:45 Pacific
+(`*/15 8-21 * * *`). Each tick posts every eligible listing to
+`slack.offers_channel` and waits 10 minutes (`--timeout-s 600`) for threaded
+replies. Prompts still unanswered are stamped `⌛ Expired` and posted again on
+the next tick, for as long as eBay keeps returning the listing.
+
+Runs never overlap: the 14-minute job timeout (`840s`) is below the
+15-minute cadence, and the reply window plus the eligible-listing fetch fits
+inside it. Change the three together. Two executions at once would post every
+prompt twice, and your replies would go to whichever run's Socket Mode
+connection Slack picked.
+
+To run it outside the schedule:
+
+```bash
+# The scheduled command, now.
 
 ---
 

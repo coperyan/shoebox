@@ -1,5 +1,5 @@
 # Cloud Run job + Cloud Scheduler definitions for the API-only pipelines: the
-# daily syncs and the saved-search watcher.
+# daily syncs and the saved-search watcher, and on-demand jobs such as send-offers.
 #
 # This is the cloud counterpart of scripts/tasks.yaml: the same idea (a
 # `defaults:` block every job may override, one entry per pipeline), rendered
@@ -137,3 +137,21 @@ jobs:
     # Paused until the cutover: migrate the workstation's state first, then
     # flip this to true and run `deploy_cloud_run.py --scheduler-only`.
     enabled: true
+
+  # Interactive offer prompts every 15 minutes, 08:00-21:45 Pacific. Talks to
+  # nothing but the eBay Negotiation/Trading APIs and Slack, so it needs no
+  # scans, workbook or Chrome. Prompts go to slack.offers_channel and replies
+  # arrive over Socket Mode, so the uploaded app.yaml needs slack.app_token as
+  # well as bot_token. Each run re-posts every listing still eligible, so a
+  # prompt left unanswered comes back on the next tick.
+  #
+  # No overlapping runs: the 10-minute reply window (--timeout-s 600) plus the
+  # eligible-listing fetch must fit inside the 14-minute timeout, which stays
+  # below the 15-minute cadence. Change all three together.
+  #   gcloud run jobs execute send-offers --region us-central1 --args=send-offers,--auto
+  - name: send-offers
+    run: send-offers --timeout-s 600
+    description: Send negotiation offers to eligible watchers via Slack prompts.
+    schedule: "*/15 8-21 * * *"
+    timeout: 840s
+    memory: 512Mi
