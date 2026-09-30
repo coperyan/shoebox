@@ -1,3 +1,5 @@
+CREATE OR REPLACE VIEW `ebay.v_active_listing_details` AS 
+
 WITH active_listings AS (
   SELECT
     l.item_id,
@@ -27,7 +29,8 @@ WITH active_listings AS (
       JSON_VALUE(item_specifics,'$."Parallel/Variety"[0]') IN ('Base','[Base]') THEN NULL 
         ELSE JSON_VALUE(item_specifics,'$."Parallel/Variety"[0]') END AS parallel_variety,
     JSON_VALUE(item_specifics,'$."Card Number"[0]') AS card_number,
-    JSON_VALUE(item_specifics,'$."Print Run"[0]') AS print_run
+    JSON_VALUE(item_specifics,'$."Print Run"[0]') AS print_run,
+    JSON_VALUE(item_specifics,'$."Autographed"[0]') AS autographed
   FROM
     `ebay.active_listings` l
       LEFT JOIN `ebay.active_listing_details` ld

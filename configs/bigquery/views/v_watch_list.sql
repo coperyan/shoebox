@@ -71,4 +71,3 @@ SELECT
   sport,
 FROM watch_list
 ;
-

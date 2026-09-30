@@ -1,7 +1,5 @@
 
-CREATE VIEW `ebay.v_orders_current` AS
-
-
+CREATE OR REPLACE VIEW `ebay.v_orders_current` AS
 WITH
   sku_to_metadata AS (
 
@@ -82,9 +80,4 @@ FROM
       ON o.sku = stm.sku
 WHERE
   1=1
-AND
-  DATE(order_creation_date,"America/Los_Angeles") >= '2026-07-28'
-
-
-
-
+  ;
