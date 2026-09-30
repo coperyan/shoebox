@@ -249,3 +249,51 @@ class CollectionAddResult(Model):
     @property
     def ok(self) -> bool:
         return self.status == "added"
+
+
+class WantlistCard(Model):
+    """One card on a member's want list (a ``Filter=W`` collection row)."""
+
+    title: str
+    url: str
+    # Pulled apart from the title: "1986 Topps Traded - Limited Edition (Tiffany)
+    # #11T Barry Bonds" -> 1986 / "1986 Topps Traded" / "Limited Edition
+    # (Tiffany)" / "11T" / "Barry Bonds". A set with no subset gets "Base".
+    set_year: str = ""
+    set_name: str = ""
+    subset_name: str = ""
+    card_number: str = ""
+    player: str = ""
+    # Filled only when the export is asked for teams: it costs a page per card.
+    team: str = ""
+    # TCDB's short codes on the row, e.g. "RC", "VAR", "SN50", "XRC".
+    notes: str = ""
+    # The <figcaption> spelling out a code, when the row carries one.
+    note_detail: str = ""
+    set_id: int | None = None
+    card_id: int | None = None
+    # TCDB's id for this row of the collection, needed to edit or remove it.
+    item_id: int | None = None
+    quantity: int = 1
+    # The amount in the row's price column, when it has one. TCDB uses this
+    # column for the value you recorded against the card, so most rows are blank.
+    price: float | None = None
+    price_text: str = ""
+    # The row icon's label, e.g. "Wantlist".
+    status: str = ""
+    category: str = ""
+
+
+class WantlistPage(Model):
+    """One page of a want list (100 rows) plus what the page says about the rest."""
+
+    cards: list[WantlistCard] = Field(default_factory=list)
+    query_url: str = ""
+    category: str = ""
+    page_index: int = 1
+    total_records: int | None = None
+    total_pages: int | None = None
+
+    @property
+    def has_more(self) -> bool:
+        return bool(self.total_pages and self.page_index < self.total_pages)

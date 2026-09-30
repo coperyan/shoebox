@@ -1,10 +1,11 @@
 # TCDB automation
 
 Browser automation for the [Trading Card Database](https://www.tcdb.com)
-(TCDB): the site where the collection is catalogued. It covers two
-workflows, **advanced search by card number** (`tcdb-search`) and **adding
-cards to your collection** (`tcdb-add`, or `add N` inside a search session);
-the module is laid out so further TCDB actions slot in beside it.
+(TCDB): the site where the collection is catalogued. It covers three
+workflows: **advanced search by card number** (`tcdb-search`), **adding cards
+to your collection** (`tcdb-add`, or `add N` inside a search session) and
+**exporting your want list** (`tcdb-wantlist`); the module is laid out so
+further TCDB actions slot in beside them.
 
 ## Why a real browser
 
@@ -151,6 +152,96 @@ every card was `added`, `already_owned`, or `found` (dry run), and 1 otherwise.
 
 Cards go into the collection the card page opens on (your first collection).
 
+## `shoebox tcdb-wantlist`
+
+```
+shoebox tcdb-wantlist [--category Baseball | --all-categories] [--member NAME]
+                      [--out PATH] [--format csv|jsonl] [--max-pages N]
+                      [--profile-dir PATH]
+```
+
+Writes every card on your want list to a file. Read-only: each request is a
+page read, nothing on TCDB changes.
+
+```
+$ shoebox tcdb-wantlist
+Signed in as rcbbsf247
+  Baseball: page 1/41 (100 of 4,018)
+  ...
+Wrote exports/csv/tcdb_wantlist_20260929_201450.csv
+```
+
+Columns (CSV and JSONL alike):
+
+| Column | From | Example |
+|---|---|---|
+| `category` | the sport queried | `Baseball` |
+| `set_year` | the title | `1986` |
+| `set_name` | the title, master set with year | `1986 Topps Traded` |
+| `subset_name` | the title, `Base` when there is no subset | `Limited Edition (Tiffany)` |
+| `card_number` | the title | `11T`, `NNO`, `131 / 292` |
+| `player` | the title | `Barry Bonds / Neil Allen` |
+| `team` | the card page — **only with `--with-team`** | `Pittsburgh Pirates` |
+| `notes` | codes after the row's link | `RC, VAR`, `XRC`, `ERR` |
+| `note_detail` | the row's `<figcaption>` | `VAR: Factory Set version: ...` |
+| `title` | the row link, unaltered | |
+| `url`, `set_id`, `card_id`, `item_id` | the row's links | |
+| `quantity`, `price`, `status` | the row's cells | |
+
+### How a title is pulled apart
+
+`1986 Topps Traded - Limited Edition (Tiffany) #11T Barry Bonds` becomes year
+`1986`, set `1986 Topps Traded`, subset `Limited Edition (Tiffany)`, number
+`11T`, player `Barry Bonds`. TCDB writes subsets as `<master> - <subset>`, and
+set names only ever hyphenate without spaces (`O-Pee-Chee`), so a spaced ` - `
+splits them safely.
+
+The card number is one token, extended only where TCDB really does spread it:
+
+- an alpha code takes the digits after it — `#PP 3`;
+- a `/` joins two numbers on a shared card — `#131 / 292`, whose player is
+  likewise `Barry Bonds / Neil Allen`;
+- digits take a code that abbreviates the subset — `#2 DS` under
+  *Diamond Standouts*.
+
+That last rule is what separates `#2 DS Barry Bonds` from
+`#4 NL Batting Average Leaders` under subset *Gold*: `NL` abbreviates nothing
+in `Gold`, so it stays with the player, where TCDB puts the card's description
+for league-leader cards. Unnumbered cards keep TCDB's own `NNO`.
+
+Checked against all 4,018 rows of the live want list: every one yields a year,
+a number and a player.
+
+### `--with-team` costs a page per card
+
+Team is the one field not in the want-list row; it comes from the card page's
+heading. `--with-team` therefore loads one page per card — fine for a few
+hundred, slow for thousands — so pair it with `--limit` to try it out.
+
+### Where the want list actually lives
+
+It is **not** a page of its own. It is your collection view filtered to want
+status:
+
+```
+ViewCollectionMode.cfm?Member=<you>&CollectionID=1&Type=<sport>&Filter=W
+```
+
+`Filter` is the `All | Haves | Wants | For Sale/Trade | In-Transaction` row on
+the collection page: `W` is the want list, `G` is what you have. Rows come 100
+to a page; later pages take `&PageIndex=N&Records=<total>`, and the total is
+printed above the table as "4,018 record(s)".
+
+Do not confuse it with **`Wantlists.cfm?Type=Baseball`**, which is *other
+members'* want lists — a different page with a different shape.
+
+The `--member` default comes from the `/Profile.cfm/<name>` link in the nav,
+so nothing is tied to one account. `--all-categories` sweeps all 16 sports;
+each empty one still costs a page load, so name the sport when you know it.
+
+One row per card, keyed by `item_id` (TCDB's id for that row of your
+collection), so re-running gives a stable set to diff against.
+
 ## Code layout
 
 | Path | Role |
@@ -158,8 +249,10 @@ Cards go into the collection the card page opens on (your first collection).
 | `shoebox/models/tcdb.py` | `AdvancedSearchQuery` (one attribute per form field, validation, `to_url()`), `TcdbSearchResult`, `TcdbSearchPage`, `CardSpec`, `TcdbCardPage`, `CollectionWidget`, `CollectionAddResult` |
 | `shoebox/clients/tcdb/search.py` | Pure HTML parsing: `parse_results`, `is_logged_in`, `is_challenge_page`. Unit-tested against `tests/fixtures/tcdb_view_results.html` |
 | `shoebox/clients/tcdb/card.py` | Pure helpers for adding: `parse_card_spec`, `match_card`, `parse_card_page`, `parse_collection_widget`. Unit-tested against `tests/fixtures/tcdb_view_card.html` |
-| `shoebox/clients/tcdb/browser.py` | `TcdbBrowser`: Chrome lifecycle, Cloudflare wait, `ensure_logged_in`, one method per site action (`advanced_search`, `open`, `add_to_collection`) |
+| `shoebox/clients/tcdb/collection.py` | Pure parsing for collection views: `wantlist_url`, `parse_wantlist_page`, `parse_member`. Unit-tested against `tests/fixtures/tcdb_wantlist.html` |
+| `shoebox/clients/tcdb/browser.py` | `TcdbBrowser`: Chrome lifecycle, Cloudflare wait, `ensure_logged_in`, one method per site action (`advanced_search`, `open`, `add_to_collection`, `wantlist_page`/`iter_wantlist`) |
 | `shoebox/pipelines/tcdb_search.py` | The interactive session; `parse_command` is pure and tested |
+| `shoebox/pipelines/tcdb_wantlist.py` | `tcdb-wantlist`: walks the want list's pages and writes CSV/JSONL |
 | `shoebox/pipelines/tcdb_add.py` | `tcdb-add`: reads card lines, resolves each to one card, adds it, prints a summary |
 | `shoebox/settings.py` → `TcdbSettings` | `profile_dir`, `login_timeout_s`, `search_defaults` |
 

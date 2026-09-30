@@ -282,6 +282,35 @@ def main() -> None:
     )
     p_tadd.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
 
+    # Export the TCDB want list (read-only; real browser, manual login)
+    p_twant = sub.add_parser(
+        "tcdb-wantlist",
+        help="Export your tcdb.com want list to CSV or JSONL",
+    )
+    p_twant.add_argument("--category", help="Sport/category (default Baseball or config)")
+    p_twant.add_argument(
+        "--all-categories",
+        action="store_true",
+        help="Every sport, not just one (most will be empty)",
+    )
+    p_twant.add_argument(
+        "--member", help="TCDB username (default: whoever the browser is signed in as)"
+    )
+    p_twant.add_argument("--out", "-o", help="Output file (default exports/<fmt>/tcdb_wantlist_*)")
+    p_twant.add_argument(
+        "--format", dest="fmt", choices=("csv", "jsonl"), default="csv", help="Output format"
+    )
+    p_twant.add_argument(
+        "--max-pages", type=int, help="Stop after N pages per category (100 cards a page)"
+    )
+    p_twant.add_argument("--limit", type=int, help="Stop after N cards in total")
+    p_twant.add_argument(
+        "--with-team",
+        action="store_true",
+        help="Also fetch each card's team (one extra page load per card, so slow)",
+    )
+    p_twant.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
+
     args = parser.parse_args()
 
     # Argument parsing (incl. --help) never touches config; do config-dependent
@@ -494,6 +523,23 @@ def main() -> None:
                 card_numbers=args.card_numbers,
                 login=not args.no_login,
                 max_rows=args.rows,
+                profile_dir=args.profile_dir,
+            )
+        )
+
+    if args.cmd == "tcdb-wantlist":
+        from shoebox.pipelines.tcdb_wantlist import run_tcdb_wantlist
+
+        raise SystemExit(
+            run_tcdb_wantlist(
+                member=args.member,
+                category=args.category,
+                all_categories=args.all_categories,
+                with_team=args.with_team,
+                limit=args.limit,
+                out=args.out,
+                fmt=args.fmt,
+                max_pages=args.max_pages,
                 profile_dir=args.profile_dir,
             )
         )

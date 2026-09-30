@@ -49,6 +49,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the job's service account replaces `configs/gcp.json`, since the GCS
   and BigQuery clients already fall back to Application Default Credentials.
   A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
+- `tcdb-wantlist`: exports your tcdb.com want list to CSV or JSONL
+  (`shoebox tcdb-wantlist`, `--all-categories`, `--format jsonl`). The want
+  list is the collection view filtered to want status
+  (`ViewCollectionMode.cfm?...&Filter=W`), not `Wantlists.cfm`, which is other
+  members' lists; the pager is followed 100 cards at a time. One row per card:
+  title, ViewCard link, set/card/item ids, quantity, price, category. The
+  signed-in username is read from the nav, so no account is hardcoded.
+  Read-only. New `clients/tcdb/collection.py` parser.
+- `tcdb-wantlist` also breaks each row's title into `set_year`, `set_name`
+  (master set, so `2026 Topps Chrome` even for a subset), `subset_name`
+  (`Base` when there is none), `card_number` and `player`, and reads the row's
+  note codes (`RC`, `VAR`, `XRC`, `ERR`) with the `<figcaption>` explaining
+  them. Card numbers keep the shapes TCDB really uses -- `NNO`, `PP 3`,
+  `GAA-BB`, `131 / 292`, and `2 DS` where the code abbreviates the subset --
+  while a description after the number (`#4 NL Batting Average Leaders`) stays
+  with the player; checked against all 4,018 rows of the live list. `--limit N`
+  caps the run, and `--with-team` adds each card's team at the cost of one page
+  load per card.
 - `tcdb-add`: adds cards to your tcdb.com collection from their TCDB titles
   (`shoebox tcdb-add "2009 Bowman Chrome - X-Fractors #171 Matt Cain"`, or
   `--file` with one per line) or ViewCard links. Each title is found with an
