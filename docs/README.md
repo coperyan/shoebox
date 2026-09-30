@@ -13,7 +13,7 @@ for notifications, price approvals, and remote command execution.
 | [cli.md](cli.md) | Every `shoebox` CLI command, its flags, and what it runs |
 | [pipelines.md](pipelines.md) | Detailed walkthrough of each pipeline and service |
 | [search.md](search.md) | The saved eBay search feature end to end: setup, YAML, filters, tuning, scheduling, state, troubleshooting |
-| [tcdb.md](tcdb.md) | Trading Card Database automation: the interactive advanced search, manual-login model, config, and how to add more TCDB actions |
+| [tcdb.md](tcdb.md) | Trading Card Database automation: the interactive advanced search, adding cards to your collection (`tcdb-add`), manual-login model, config, and how to add more TCDB actions |
 | [scheduling.md](scheduling.md) | The Windows scheduled tasks: `scripts/tasks.yaml`, generating and registering them, troubleshooting |
 | [deployment.md](deployment.md) | Running the daily sync pipelines as Cloud Run jobs: `deploy/jobs.yaml`, the deploy script, secrets, Cloud Build, cutover from Windows |
 | [metadata.md](metadata.md) | Field-by-field definitions of the checklist & parallel metadata |

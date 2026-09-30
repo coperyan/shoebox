@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!-- Trimmed from a real https://www.tcdb.com/ViewCard.cfm/sid/24459/cid/2840262/2009-Bowman-Chrome-X-Fractors-171-Matt-Cain
+     response (logged in; username replaced with "someuser"). Head meta, logged-in nav, card header,
+     the empty #colDiv the page fills from ViewCard_ajax.cfm, and the add wiring are kept. -->
+<html lang="en">
+<head>
+<title>2009 Bowman Chrome - X-Fractors #171 Matt Cain | Trading Card Database</title>
+<meta property="og:url" content="https://www.tcdb.com/ViewCard.cfm/sid/24459/cid/2840262/2009-Bowman-Chrome-X-Fractors-171-Matt-Cain" />
+<meta property="og:title" content="2009 Bowman Chrome - X-Fractors #171 Matt Cain" />
+<link rel="canonical" href="https://www.tcdb.com/ViewCard.cfm/sid/24459/cid/2840262/2009-Bowman-Chrome-X-Fractors-171-Matt-Cain">
+</head>
+<body>
+<nav class="navbar navbar-expand-lg navbar-dark">
+      <ul class="navbar-nav ml-auto">
+      <li class="nav-item dropdown">
+        <a class="nav-link dropdown-toggle active" href="#" id="navbarDropdown" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+          <i class="fa fa-user"></i> <i class="fa fa-envelope"></i> someuser
+        </a>
+        <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="navbarDropdown">
+            <a href="/Collections.cfm/someuser" class="dropdown-item">Collection</a>
+            <a href="/CollectionManager.cfm" class="dropdown-item">Collection (New)</a>
+            <a href="/LogOff.cfm" class="dropdown-item">Logout</a>
+        </ul>
+      </li>
+      </ul>
+</nav>
+<table width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td valign="top"><h4 class="site">#171  - <a href="/Person.cfm/pid/877/Matt-Cain" style="text-decoration:none">Matt Cain</a>
+<font size="2"><em>SN250</em> </font>
+ - <a href="/Team.cfm/tid/24/San-Francisco-Giants" style="text-decoration:none">San Francisco Giants</a> </h4>
+ </td></tr></table>
+<div class="toast-container position-fixed top-0 end-0 p-3">
+  <div id="flashToast" class="toast translucent-success border-0" role="alert" aria-live="assertive" aria-atomic="true">
+    <div class="d-flex"><div class="toast-body"><i class="fa-solid fa-circle-check"></i> Card added.</div></div>
+  </div>
+</div>
+<div id="colDiv"></div>
+<script>
+let firstCollectionLoad = true;
+document.addEventListener("DOMContentLoaded", () => {
+  hideLoader();
+  loadCollection("1");
+});
+
+function loadCollection(collectionId) {
+  const url = new URL("/ViewCard_ajax.cfm", window.location.origin);
+  url.searchParams.append("CollectionID", collectionId);
+  url.searchParams.append("CardID", "2840262");
+  url.searchParams.append("SetID", "24459");
+  url.searchParams.append("CardNum", "171");
+  url.searchParams.append("Player", "Matt+Cain");
+  url.searchParams.append("Note", "SN250");
+  url.searchParams.append("Type", "Baseball");
+  url.searchParams.append("SubsetOf", "9556");
+  url.searchParams.append("Base", "P");
+  /* ... fetch(url) -> colDiv.innerHTML = html; wireCardControls(); ... */
+}
+
+function wireCardControls() {
+  /* ... */
+  wireActionButton(colDiv, "#quickAddBtn", "/CollectionAddO_ajax.cfm", 'Added.');
+  wireActionButton(colDiv, ".addAnotherBtn", "/CollectionAddIncrement_ajax.cfm", 'Added.');
+  wireActionButton(colDiv, ".removeBtn", "/CollectionRemove_ajax.cfm", 'Removed.');
+  /* ... */
+}
+</script>
+</body>
+</html>
