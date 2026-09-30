@@ -390,8 +390,10 @@ Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-add).
 ### `tcdb-wantlist`
 Exports your tcdb.com want list to CSV or JSONL. The want list is your
 collection filtered to want status, so this walks every page of it (100 cards
-a page) and writes one row per card: title, ViewCard link, set/card/item ids,
-quantity, price and category. Read-only — nothing on TCDB is changed.
+a page) and writes one row per card: set year, master set, subset, card
+number, player, notes, title, ViewCard link, set/card/item ids, quantity,
+price and category — plus team with `--with-team`, which costs a page load per
+card. Read-only — nothing on TCDB is changed.
 Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-wantlist).
 
 | Flag | Effect |
@@ -402,6 +404,8 @@ Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-wantlist).
 | `--out`, `-o PATH` | Output file (default `exports/<fmt>/tcdb_wantlist_<stamp>.<fmt>`) |
 | `--format {csv,jsonl}` | Output format (default csv) |
 | `--max-pages N` | Stop after N pages per category |
+| `--limit N` | Stop after N cards in total |
+| `--with-team` | Also fetch each card's team (one page load per card) |
 | `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
 
 ## Not exposed via the CLI

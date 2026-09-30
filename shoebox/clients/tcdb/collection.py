@@ -31,6 +31,152 @@ FILTER_WANT = "W"
 FILTER_HAVE = "G"
 
 
+# A row title is "{year} {set} #{number} {player}", e.g.
+# "1986 Topps Traded - Limited Edition (Tiffany) #11T Barry Bonds".
+_TITLE_RE = re.compile(r"^(?P<year>\d{4}(?:-\d{2}(?:\d{2})?)?)\s+(?P<set>.+?)\s+#(?P<rest>.+)$")
+
+# TCDB writes a subset/parallel as "<master> - <subset>". Set names use hyphens
+# without spaces ("O-Pee-Chee"), so a spaced " - " is unambiguous.
+_SUBSET_SEP = " - "
+
+BASE_SUBSET = "Base"
+
+
+def split_set_name(year: str, set_part: str) -> tuple[str, str]:
+    """Master set name (with year) and subset name.
+
+    ``2026 Topps Chrome - 1991 Topps Anniversary`` -> ``2026 Topps Chrome`` and
+    ``1991 Topps Anniversary``. A set with no subset gets ``Base``.
+    """
+    master, sep, subset = set_part.partition(_SUBSET_SEP)
+    full_master = f"{year} {master.strip()}".strip()
+    return full_master, (subset.strip() if sep else BASE_SUBSET)
+
+
+def _is_number_token(token: str) -> bool:
+    """Whether a token after the "#" belongs to the card number, not the player.
+
+    Numbers carry a digit ("171", "U-14", "11T") or are an all-caps code:
+    short ("NNO" for unnumbered, "HAMTC", the "PP" of "PP 3") or hyphenated
+    ("GAA-BB", "IG-BBO"). Player names always have lowercase, and initials
+    like "R.J." are excluded by the dot.
+    """
+    if any(ch.isdigit() for ch in token):
+        return True
+    if not token.isupper() or "." in token:
+        return False
+    return "-" in token or 2 <= len(token) <= 6
+
+
+# Words skipped when abbreviating a subset name to its initials.
+_INITIAL_STOPWORDS = frozenset({"a", "an", "and", "of", "the"})
+
+
+def _abbreviates_subset(code: str, subset: str) -> bool:
+    """Whether an all-caps code is the subset's initials, so part of the number.
+
+    TCDB numbers a subset card "#2 DS" under "Diamond Standouts". The same shape
+    with an unrelated code -- "#4 NL Batting Average Leaders" under subset
+    "Gold" -- is a description of the card, and stays with the player.
+    """
+    if len(code) < 2 or not subset or subset == BASE_SUBSET:
+        return False
+    words = re.findall(r"[A-Za-z']+", subset)
+    initials = "".join(w[0] for w in words if w.lower() not in _INITIAL_STOPWORDS).upper()
+    return bool(initials) and initials.startswith(code.upper())
+
+
+def split_number_and_player(rest: str, subset: str = "") -> tuple[str, str]:
+    """Split "U-14 Barry Bonds" into its card number and player.
+
+    The number is one token, extended only two ways:
+
+    - an alpha-only code takes the digits after it ("PP 3"), and digits take a
+      code that abbreviates the subset ("#2 DS" under "Diamond Standouts");
+    - a "/" joins two numbers on a shared card ("24-A / 24-B", "131 / 292",
+      which carry a player each: "Barry Bonds / Neil Allen").
+
+    Taking no more than that keeps league-leader cards intact, where what
+    follows the number is a description rather than a name: "#106 NL ERA
+    Leaders (...)" is number "106".
+    """
+    tokens = rest.split()
+    if not tokens or not _is_number_token(tokens[0]):
+        return "", rest.strip()
+
+    taken = 1
+    if (
+        not any(ch.isdigit() for ch in tokens[0])
+        and taken < len(tokens)
+        and tokens[taken].isdigit()
+    ):
+        taken += 1
+    elif (
+        taken < len(tokens)
+        and tokens[taken].isupper()
+        and _abbreviates_subset(tokens[taken], subset)
+    ):
+        taken += 1
+    while taken + 1 < len(tokens) and tokens[taken] == "/" and _is_number_token(tokens[taken + 1]):
+        taken += 2
+
+    return " ".join(tokens[:taken]), " ".join(tokens[taken:]).strip()
+
+
+def parse_title_fields(title: str) -> dict[str, str]:
+    """Pull year, set, subset, card number and player out of a TCDB row title.
+
+    Returns blanks rather than raising: a title TCDB writes unusually should
+    cost one row's detail, not the export.
+    """
+    blank = {
+        "set_year": "",
+        "set_name": "",
+        "subset_name": "",
+        "card_number": "",
+        "player": "",
+    }
+    m = _TITLE_RE.match(" ".join((title or "").split()))
+    if not m:
+        return blank
+    set_name, subset_name = split_set_name(m.group("year"), m.group("set"))
+    card_number, player = split_number_and_player(m.group("rest"), subset_name)
+    return {
+        "set_year": m.group("year"),
+        "set_name": set_name,
+        "subset_name": subset_name,
+        "card_number": card_number,
+        "player": player,
+    }
+
+
+def parse_card_team(html: str) -> str:
+    """Team from a ViewCard.cfm page's heading (``h4.site`` -> ``Team.cfm`` link)."""
+    soup = BeautifulSoup(html, "html.parser")
+    link = soup.select_one('h4.site a[href*="Team.cfm"]') or soup.select_one('a[href*="Team.cfm"]')
+    return " ".join(link.get_text(" ", strip=True).split()) if link else ""
+
+
+def _row_notes(title_cell) -> tuple[str, str]:
+    """Note codes and their explanation from a row's title cell.
+
+    TCDB puts the codes as bare text after the card link ("RC, VAR") and the
+    long form in a ``<figcaption>`` under it.
+    """
+    detail = " ".join(
+        f.get_text(" ", strip=True) for f in title_cell.find_all("figcaption")
+    ).strip()
+    parts = []
+    for child in title_cell.children:
+        name = getattr(child, "name", None)
+        if name in ("a", "figcaption", "br"):
+            continue
+        text = child.get_text(" ", strip=True) if name else str(child).strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts).strip(" ,"), detail
+
+
 def wantlist_url(
     member: str,
     *,
@@ -104,10 +250,15 @@ def parse_wantlist_page(
         if title_a is None:
             continue
 
+        title = " ".join(title_a.get_text(" ", strip=True).split())
+        notes, note_detail = _row_notes(title_a.find_parent("td"))
         card = WantlistCard(
-            title=" ".join(title_a.get_text(" ", strip=True).split()),
+            title=title,
             url=urljoin(base_url, title_a["href"]),
             category=category,
+            notes=notes,
+            note_detail=note_detail,
+            **parse_title_fields(title),
         )
 
         edit_a = tr.select_one('a[href*="CollectionEdit.cfm"]')

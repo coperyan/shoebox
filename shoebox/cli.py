@@ -303,6 +303,12 @@ def main() -> None:
     p_twant.add_argument(
         "--max-pages", type=int, help="Stop after N pages per category (100 cards a page)"
     )
+    p_twant.add_argument("--limit", type=int, help="Stop after N cards in total")
+    p_twant.add_argument(
+        "--with-team",
+        action="store_true",
+        help="Also fetch each card's team (one extra page load per card, so slow)",
+    )
     p_twant.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
 
     args = parser.parse_args()
@@ -529,6 +535,8 @@ def main() -> None:
                 member=args.member,
                 category=args.category,
                 all_categories=args.all_categories,
+                with_team=args.with_team,
+                limit=args.limit,
                 out=args.out,
                 fmt=args.fmt,
                 max_pages=args.max_pages,

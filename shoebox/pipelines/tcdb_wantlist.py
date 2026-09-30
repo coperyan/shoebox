@@ -29,6 +29,14 @@ logger = logging.getLogger(__name__)
 
 FIELDS = (
     "category",
+    "set_year",
+    "set_name",
+    "subset_name",
+    "card_number",
+    "player",
+    "team",
+    "notes",
+    "note_detail",
     "title",
     "url",
     "set_id",
@@ -80,6 +88,8 @@ def run_tcdb_wantlist(
     member: str | None = None,
     category: str | None = None,
     all_categories: bool = False,
+    with_team: bool = False,
+    limit: int | None = None,
     out: str | Path | None = None,
     fmt: str = "csv",
     max_pages: int | None = None,
@@ -138,12 +148,29 @@ def run_tcdb_wantlist(
                             f"  {cat}: page {page.page_index}/{page.total_pages or '?'} "
                             f"({len(cards) - before:,} of {page.total_records:,})"
                         )
+                    # Stop mid-category too, so --limit really does cost one page.
+                    if limit is not None and len(cards) >= limit:
+                        del cards[limit:]
+                        break
             except Exception as e:  # one sport failing should not lose the rest
                 logger.exception("TCDB want list failed for %s", cat)
                 console.print(f"[red]  {cat}: {e}[/red]")
             n = len(cards) - before
             if n or not all_categories:
                 counts[cat] = n
+            if limit is not None and len(cards) >= limit:
+                break
+
+        if with_team and cards:
+            # One page load per card, so this is opt-in and worth a progress line.
+            console.print(f"Fetching teams for {len(cards):,} card(s)...")
+            for i, card in enumerate(cards, 1):
+                try:
+                    card.team = browser.card_team(card.url)
+                except Exception as e:  # one bad card should not lose the export
+                    logger.warning("team lookup failed for %s: %s", card.url, e)
+                if i % 25 == 0 or i == len(cards):
+                    console.print(f"  teams: {i:,}/{len(cards):,}")
 
     if not cards:
         console.print("[yellow]No want-list cards found.[/yellow]")

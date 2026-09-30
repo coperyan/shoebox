@@ -256,6 +256,20 @@ class WantlistCard(Model):
 
     title: str
     url: str
+    # Pulled apart from the title: "1986 Topps Traded - Limited Edition (Tiffany)
+    # #11T Barry Bonds" -> 1986 / "1986 Topps Traded" / "Limited Edition
+    # (Tiffany)" / "11T" / "Barry Bonds". A set with no subset gets "Base".
+    set_year: str = ""
+    set_name: str = ""
+    subset_name: str = ""
+    card_number: str = ""
+    player: str = ""
+    # Filled only when the export is asked for teams: it costs a page per card.
+    team: str = ""
+    # TCDB's short codes on the row, e.g. "RC", "VAR", "SN50", "XRC".
+    notes: str = ""
+    # The <figcaption> spelling out a code, when the row carries one.
+    note_detail: str = ""
     set_id: int | None = None
     card_id: int | None = None
     # TCDB's id for this row of the collection, needed to edit or remove it.

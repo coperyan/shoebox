@@ -14,9 +14,14 @@ from pathlib import Path
 import pytest
 
 from shoebox.clients.tcdb.collection import (
+    BASE_SUBSET,
     ROWS_PER_PAGE,
+    parse_card_team,
     parse_member,
+    parse_title_fields,
     parse_wantlist_page,
+    split_number_and_player,
+    split_set_name,
     wantlist_url,
 )
 from shoebox.models.tcdb import WantlistCard, WantlistPage
@@ -60,7 +65,7 @@ class TestWantlistUrl:
 
 class TestParseWantlistPage:
     def test_reads_every_row(self, page):
-        assert len(page.cards) == 3
+        assert len(page.cards) == 5
 
     def test_reads_the_record_count(self, page):
         assert page.total_records == 4018
@@ -88,11 +93,11 @@ class TestParseWantlistPage:
         assert page.cards[0].price_text == "$3.50"
 
     def test_blank_price_stays_none(self, page):
-        assert page.cards[1].price is None
-        assert page.cards[1].price_text == ""
+        blank = [c for c in page.cards if c.price is None]
+        assert blank and blank[0].price_text == ""
 
     def test_keeps_multi_player_titles_whole(self, page):
-        assert page.cards[1].title == "1987 O-Pee-Chee Stickers #131 / 292 Barry Bonds / Neil Allen"
+        assert page.cards[4].title == "1987 O-Pee-Chee Stickers #131 / 292 Barry Bonds / Neil Allen"
 
     def test_stamps_the_category_on_every_card(self, page):
         assert {c.category for c in page.cards} == {"Baseball"}
@@ -172,3 +177,150 @@ class TestWriteWantlist:
     def test_default_path_is_stamped_and_foldered_by_format(self, tmp_path):
         p = default_out_path(tmp_path, "jsonl", stamp="20260929_120000")
         assert p == tmp_path / "jsonl" / "tcdb_wantlist_20260929_120000.jsonl"
+
+
+class TestSplitSetName:
+    def test_subset_is_split_off_the_master_set(self):
+        assert split_set_name("2026", "Topps Chrome - 1991 Topps Anniversary") == (
+            "2026 Topps Chrome",
+            "1991 Topps Anniversary",
+        )
+
+    def test_master_set_carries_the_year(self):
+        assert split_set_name("1986", "Fleer Update") == ("1986 Fleer Update", BASE_SUBSET)
+
+    def test_hyphens_inside_a_name_are_not_a_split(self):
+        # "O-Pee-Chee" has no spaces around its hyphens
+        assert split_set_name("1987", "O-Pee-Chee Stickers")[1] == BASE_SUBSET
+
+    def test_only_the_first_separator_splits(self):
+        master, subset = split_set_name("1987", "Topps - 1987 All-Star Set - Glossy")
+        assert master == "1987 Topps"
+        assert subset == "1987 All-Star Set - Glossy"
+
+
+class TestSplitNumberAndPlayer:
+    @pytest.mark.parametrize(
+        "rest,number,player",
+        [
+            ("171 Matt Cain", "171", "Matt Cain"),
+            ("U-14 Barry Bonds", "U-14", "Barry Bonds"),
+            ("11T Barry Bonds", "11T", "Barry Bonds"),
+            ("3397106020 Barry Bonds", "3397106020", "Barry Bonds"),
+            # unnumbered cards
+            ("NNO Barry Bonds", "NNO", "Barry Bonds"),
+            # all-caps codes, short and hyphenated
+            ("GAA-BB Barry Bonds", "GAA-BB", "Barry Bonds"),
+            ("HAMTC Matt Cain", "HAMTC", "Matt Cain"),
+            # an alpha code takes the digits after it
+            ("PP 3 Barry Bonds", "PP 3", "Barry Bonds"),
+            # shared cards keep both numbers and both players
+            ("131 / 292 Barry Bonds / Neil Allen", "131 / 292", "Barry Bonds / Neil Allen"),
+            ("24-A / 24-B Barry Bonds", "24-A / 24-B", "Barry Bonds"),
+            # a description after the number is not part of it
+            ("FC2002 2002 World Series", "FC2002", "2002 World Series"),
+            ("106 NL ERA Leaders (Chris Carpenter)", "106", "NL ERA Leaders (Chris Carpenter)"),
+            # initials are a player, not a number
+            ("320 R.J. Reynolds", "320", "R.J. Reynolds"),
+        ],
+    )
+    def test_splits(self, rest, number, player):
+        assert split_number_and_player(rest) == (number, player)
+
+    def test_a_code_abbreviating_the_subset_joins_the_number(self):
+        assert split_number_and_player("2 DS Barry Bonds", "Diamond Standouts") == (
+            "2 DS",
+            "Barry Bonds",
+        )
+
+    def test_stopwords_are_skipped_when_abbreviating(self):
+        assert split_number_and_player("3 PG Barry Bonds", "The Power Game")[0] == "3 PG"
+
+    def test_a_code_matching_a_prefix_of_the_initials_still_joins(self):
+        assert split_number_and_player("14 CS Barry Bonds", "Cheap Seat Treats")[0] == "14 CS"
+
+    def test_an_unrelated_code_stays_with_the_player(self):
+        # "NL" does not abbreviate "Gold": it describes the card
+        number, player = split_number_and_player("4 NL Batting Average Leaders", "Gold")
+        assert number == "4"
+        assert player == "NL Batting Average Leaders"
+
+    def test_no_number_at_all_is_not_an_error(self):
+        assert split_number_and_player("Barry Bonds") == ("", "Barry Bonds")
+
+
+class TestParseTitleFields:
+    def test_pulls_every_field_out_of_a_subset_title(self):
+        assert parse_title_fields(
+            "1986 Topps Traded - Limited Edition (Tiffany) #11T Barry Bonds"
+        ) == {
+            "set_year": "1986",
+            "set_name": "1986 Topps Traded",
+            "subset_name": "Limited Edition (Tiffany)",
+            "card_number": "11T",
+            "player": "Barry Bonds",
+        }
+
+    def test_season_spanning_years_are_read(self):
+        assert parse_title_fields("2009-10 Topps #1 A Player")["set_year"] == "2009-10"
+
+    def test_an_unreadable_title_gives_blanks_not_an_error(self):
+        assert parse_title_fields("not a card title") == {
+            "set_year": "",
+            "set_name": "",
+            "subset_name": "",
+            "card_number": "",
+            "player": "",
+        }
+
+
+class TestRowNotes:
+    def test_a_bare_code_is_read(self, page):
+        card = next(c for c in page.cards if c.card_number == "U-14")
+        assert card.notes == "XRC"
+        assert card.note_detail == ""
+
+    def test_several_codes_and_their_explanation(self, page):
+        card = next(c for c in page.cards if c.card_number == "361")
+        assert card.notes == "RC, VAR"
+        assert card.note_detail.startswith("VAR:")
+
+    def test_a_row_without_notes_is_blank(self, page):
+        card = next(c for c in page.cards if c.card_number == "28")
+        assert card.notes == ""
+        assert card.note_detail == ""
+
+    def test_notes_never_leak_into_the_title(self, page):
+        card = next(c for c in page.cards if c.card_number == "U-14")
+        assert card.title == "1986 Fleer Update #U-14 Barry Bonds"
+
+
+class TestParseCardTeam:
+    def test_reads_the_team_from_the_card_heading(self):
+        html = (
+            '<h4 class="site">#171 - <a href="/Person.cfm/pid/877/Matt-Cain">Matt Cain</a>'
+            ' - <a href="/Team.cfm/tid/24/San-Francisco-Giants">San Francisco Giants</a></h4>'
+        )
+        assert parse_card_team(html) == "San Francisco Giants"
+
+    def test_blank_when_the_page_names_no_team(self):
+        assert parse_card_team("<html><body>nothing</body></html>") == ""
+
+
+class TestRowsCarryDerivedFields:
+    def test_every_row_gets_its_title_pulled_apart(self, page):
+        card = next(c for c in page.cards if c.card_number == "11T")
+        assert (card.set_year, card.set_name, card.subset_name, card.player) == (
+            "1986",
+            "1986 Topps Traded",
+            "Limited Edition (Tiffany)",
+            "Barry Bonds",
+        )
+
+    def test_a_shared_card_keeps_both_numbers_and_players(self, page):
+        card = page.cards[4]
+        assert card.card_number == "131 / 292"
+        assert card.player == "Barry Bonds / Neil Allen"
+
+    def test_team_is_empty_until_asked_for(self, page):
+        assert all(c.team == "" for c in page.cards)

@@ -22,7 +22,12 @@ from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from shoebox.clients.tcdb.card import parse_card_page, parse_collection_widget
-from shoebox.clients.tcdb.collection import parse_member, parse_wantlist_page, wantlist_url
+from shoebox.clients.tcdb.collection import (
+    parse_card_team,
+    parse_member,
+    parse_wantlist_page,
+    wantlist_url,
+)
 from shoebox.clients.tcdb.search import is_challenge_page, is_logged_in, parse_results
 from shoebox.models.tcdb import (
     TCDB_BASE_URL,
@@ -267,6 +272,10 @@ class TcdbBrowser:
                 records=records,
             )
             yield page
+
+    def card_team(self, card_url: str) -> str:
+        """Team named on a card's page. One page load per card, so opt in."""
+        return parse_card_team(self.get(card_url))
 
     def add_to_collection(
         self,

@@ -171,8 +171,52 @@ Signed in as rcbbsf247
 Wrote exports/csv/tcdb_wantlist_20260929_201450.csv
 ```
 
-Columns (CSV and JSONL alike): `category`, `title`, `url`, `set_id`,
-`card_id`, `item_id`, `quantity`, `price`, `status`.
+Columns (CSV and JSONL alike):
+
+| Column | From | Example |
+|---|---|---|
+| `category` | the sport queried | `Baseball` |
+| `set_year` | the title | `1986` |
+| `set_name` | the title, master set with year | `1986 Topps Traded` |
+| `subset_name` | the title, `Base` when there is no subset | `Limited Edition (Tiffany)` |
+| `card_number` | the title | `11T`, `NNO`, `131 / 292` |
+| `player` | the title | `Barry Bonds / Neil Allen` |
+| `team` | the card page — **only with `--with-team`** | `Pittsburgh Pirates` |
+| `notes` | codes after the row's link | `RC, VAR`, `XRC`, `ERR` |
+| `note_detail` | the row's `<figcaption>` | `VAR: Factory Set version: ...` |
+| `title` | the row link, unaltered | |
+| `url`, `set_id`, `card_id`, `item_id` | the row's links | |
+| `quantity`, `price`, `status` | the row's cells | |
+
+### How a title is pulled apart
+
+`1986 Topps Traded - Limited Edition (Tiffany) #11T Barry Bonds` becomes year
+`1986`, set `1986 Topps Traded`, subset `Limited Edition (Tiffany)`, number
+`11T`, player `Barry Bonds`. TCDB writes subsets as `<master> - <subset>`, and
+set names only ever hyphenate without spaces (`O-Pee-Chee`), so a spaced ` - `
+splits them safely.
+
+The card number is one token, extended only where TCDB really does spread it:
+
+- an alpha code takes the digits after it — `#PP 3`;
+- a `/` joins two numbers on a shared card — `#131 / 292`, whose player is
+  likewise `Barry Bonds / Neil Allen`;
+- digits take a code that abbreviates the subset — `#2 DS` under
+  *Diamond Standouts*.
+
+That last rule is what separates `#2 DS Barry Bonds` from
+`#4 NL Batting Average Leaders` under subset *Gold*: `NL` abbreviates nothing
+in `Gold`, so it stays with the player, where TCDB puts the card's description
+for league-leader cards. Unnumbered cards keep TCDB's own `NNO`.
+
+Checked against all 4,018 rows of the live want list: every one yields a year,
+a number and a player.
+
+### `--with-team` costs a page per card
+
+Team is the one field not in the want-list row; it comes from the card page's
+heading. `--with-team` therefore loads one page per card — fine for a few
+hundred, slow for thousands — so pair it with `--limit` to try it out.
 
 ### Where the want list actually lives
 
