@@ -47,6 +47,12 @@ paths:
   # fails the run loudly. Requires searches_file to live inside a git clone
   # with an upstream and non-interactive auth (e.g. `gh auth setup-git`).
   searches_git_pull: false
+  # Where watch-searches keeps its seen-caches, run state and lock. Unset (the
+  # default) means exports/jsonl/searches/. A gs://bucket/prefix URI keeps them
+  # in GCS instead -- required by the Cloud Run job, and set to the same URI on
+  # a workstation so both hosts share one state and one lock. searches_file
+  # may likewise be a gs:// object. See docs/deployment.md, "Saved searches".
+  # searches_state_uri: gs://my-project-shoebox-searches/state
 
 ebay:
   # application/user/header name the entries to use in ebay_rest.json

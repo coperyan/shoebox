@@ -1,0 +1,38 @@
+# Keep the build context small and, more importantly, keep secrets and local
+# business data out of it. Everything the image needs is COPYed explicitly.
+
+.git/
+.github/
+.venv/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Real config files are mounted from a secret store at runtime, never baked in.
+configs/app.yaml
+configs/ebay_rest.json
+configs/gcp.json
+configs/ebay_legacy.json
+configs/searches.yaml
+
+# Local runtime state and business data.
+data/
+exports/
+logs/
+scans/
+set_images/
+tools/
+*.jsonl
+*.csv
+*.log
+
+# Not used by any containerised pipeline.
+docs/
+tests/
+scripts/tasks/
+deploy/
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md

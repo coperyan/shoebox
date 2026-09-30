@@ -141,8 +141,10 @@ Finds listings with interested buyers (Negotiation API) and posts each one to
 Slack (title, current price, photo) — `slack.offers_channel`, falling back to
 the pricing channel. Reply in a prompt's thread with an amount to send that
 24-hour offer immediately, or `skip`; unanswered prompts expire at the
-deadline and reappear next run. Blocks on Slack, so it is run manually (not
-scheduled, not in the slack-bot whitelist).
+deadline and reappear next run. Blocks on Slack, so it is not in the slack-bot
+whitelist. It runs from a checkout by hand, or as the `send-offers` Cloud Run
+job every 15 minutes during the day
+([deployment.md](deployment.md#send-offers)).
 
 | Flag | Effect |
 |---|---|

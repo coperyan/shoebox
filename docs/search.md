@@ -22,7 +22,7 @@ Three commands, one cron entry:
 
 | Command | Purpose | Side effects |
 |---|---|---|
-| `watch-searches` | Run due searches, alert Slack, record state | Slack, local state, GCS + BigQuery |
+| `watch-searches` | Run due searches, alert Slack, record state | Slack, state (local or GCS), GCS + BigQuery |
 | `preview-search` | Show every listing a search returns and which filter rejected each | **None** — read-only |
 | `search-aspects` | List eBay's structured attributes (aspects) you could filter on | **None** — read-only |
 
@@ -93,8 +93,9 @@ flush from `configs/bigquery/schemas/search_hits.json`.
 
 | Key | Meaning |
 |---|---|
-| `paths.searches_file` | Path to the searches YAML (default `configs/searches.yaml`) |
+| `paths.searches_file` | Path to the searches YAML (default `configs/searches.yaml`), or a `gs://` object |
 | `paths.exports_dir` | Parent of the state directory (`<exports_dir>/jsonl/searches/`) |
+| `paths.searches_state_uri` | `gs://bucket/prefix` to keep the state in GCS instead (the Cloud Run job) — see [State, dedup and seeding](#state-dedup-and-seeding) |
 | `slack.bot_token` | Bot token used to post |
 | `slack.search_channel` | Default destination for hits; falls back to `notify_channel` when unset |
 | `gcs.ebay_bucket` | Staging bucket for the hits JSONL |
@@ -350,6 +351,14 @@ On macOS, `cron` needs Full Disk Access granted to `/usr/sbin/cron`. The
 alternative is a `launchd` agent with `StartInterval 300`, a `WorkingDirectory`
 of the repo root, and `StandardOutPath` under `logs/`.
 
+**Google Cloud — a Cloud Run job:**
+
+`deploy/jobs.yaml` defines `watch-searches` on a 5-minute Cloud Scheduler
+cron. The state lives in GCS, and `searches.yaml` is deployed to GCS by every
+push to the private searches repo, after it validates. Setup, the cutover from
+a workstation, and day-to-day commands are in
+[deployment.md](deployment.md#saved-searches-watch-searches).
+
 **Windows — Task Scheduler:**
 
 The scheduled tasks on the Windows host are generated from
@@ -380,7 +389,9 @@ Overlapping runs are prevented by a non-blocking advisory lock on
 run posting at ~1 msg/sec can outlast the scheduler's period, so if the previous
 tick is still going the new one logs and exits 0. Task Scheduler's own "do not
 start a new instance" rule is a reasonable belt-and-braces addition, but the
-lock does not depend on it.
+lock does not depend on it. With the state in GCS the lock is a GCS object
+instead, shared by every host that names the same `searches_state_uri`. A
+lock left behind by a killed run is broken after 20 minutes.
 
 **API budget.** One due search costs one Browse call per run (up to 200 items).
 Ten searches at 15m ≈ 960 calls/day against a default Browse ceiling of ~5,000.
@@ -474,6 +485,15 @@ Everything lives under `<exports_dir>/jsonl/searches/`:
 | `<name>_seen.jsonl` | Persistent, append-only | The dedup cache: one `SeenEntry` per observation, later lines win. Compacted and pruned at end of run |
 | `search_hits_append.jsonl` | Cleared after a successful flush | Buffered BigQuery rows; survives a failed flush and retries next run |
 | `.lock` | Per run | Advisory lock guarding against overlapping scheduled invocations |
+
+**In GCS.** With `paths.searches_state_uri: gs://bucket/prefix`, the same four
+files live under that prefix. Each run downloads them to a scratch directory,
+runs exactly the code described here, and uploads what changed after each
+search. That moves the crash bound below from one duplicate to one search's
+batch. It is how the Cloud Run job works, and a workstation naming the same
+URI shares the state instead of keeping its own. `scripts/migrate_search_state_to_gcs.py`
+moves existing local state across; see
+[deployment.md](deployment.md#cutover).
 
 **Dedup** is item-id based and per search (`search_name` + `item_id`), and runs
 entirely off the local cache — never off BigQuery. That is why a GCS or BigQuery
@@ -603,7 +623,7 @@ ORDER BY alerts DESC;
 | `channel_not_found` / `not_in_channel` | Wrong ID, or the bot was never `/invite`d into that channel |
 | `unknown channel alias` | The alias isn't in the `channels:` block — the error lists the ones that are |
 | Nothing posts, log says "No searches due" | Intervals haven't elapsed. `--force` to override, `--list` to see the resolved intervals |
-| Nothing posts, and nothing is due either | Another run holds `.lock` ("Another watch-searches run holds the lock") — a previous tick is still posting |
+| Nothing posts, and nothing is due either | Another run holds `.lock` ("Another watch-searches run holds the lock") — a previous tick is still posting. In GCS, a lock from a killed run clears itself after 20 minutes |
 | Everything alerted at once | A seen-cache was deleted while `search_state.json` survived, or the search was renamed (the name is part of the dedup key) |
 | A whole backlog alerted after a config change | Expected — loosening a filter makes old listings newly matching. Use `--reseed <name>` after widening a search |
 | `preview-search` shows results but the watcher posts nothing | Those items are already in the seen-cache; preview ignores dedup entirely |
@@ -624,10 +644,12 @@ ORDER BY alerts DESC;
 | [shoebox/clients/ebay/browse.py](../shoebox/clients/ebay/browse.py) | Browse search + aspect refinements |
 | [shoebox/pipelines/watch_searches.py](../shoebox/pipelines/watch_searches.py) | The run loop: fetch → filter → diff → alert → commit |
 | [shoebox/clients/search_state.py](../shoebox/clients/search_state.py) | Seen-cache, run state, lock, hits append log → GCS → BigQuery |
+| [shoebox/clients/search_state_gcs.py](../shoebox/clients/search_state_gcs.py) | The same state mirrored to `gs://` for Cloud Run: GCS lock, download, per-search upload |
+| [scripts/validate_searches.py](../scripts/validate_searches.py) | Credential-free validation; what the searches-repo deploy build runs |
 | [shoebox/models/search_hit.py](../shoebox/models/search_hit.py) | `SeenEntry` (local dedup) and `SearchHit` (BigQuery row) |
 | [shoebox/utils/search_formatting.py](../shoebox/utils/search_formatting.py) | Slack message builders |
 | [shoebox/pipelines/preview_search.py](../shoebox/pipelines/preview_search.py) | `preview-search` and `search-aspects` |
 
 Tests: `tests/test_saved_search_config.py`, `test_search_filters.py`,
-`test_search_state.py`, `test_watch_searches_flow.py`,
+`test_search_state.py`, `test_search_state_gcs.py`, `test_watch_searches_flow.py`,
 `test_search_formatting.py`, `test_preview_search.py`.

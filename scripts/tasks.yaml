@@ -69,8 +69,10 @@ tasks:
       type: daily
       at: "04:00"
 
+  # Runs as a Cloud Run job now (deploy/jobs.yaml); kept here for fallback.
   - name: sync-watch-list
     run: sync-watch-list
+    enabled: false
     description: Sync watch list items (with item details) into GCS/BigQuery.
     trigger:
       type: daily
@@ -83,8 +85,12 @@ tasks:
       type: daily
       at: "05:00"
 
+  # Also a Cloud Run job (deploy/jobs.yaml). Disable this one at the cutover in
+  # docs/deployment.md ("Saved searches") -- the two must not both run with
+  # separate state, or listings alert twice.
   - name: watch-searches
     run: watch-searches
+    enabled: false
     description: Poll saved eBay searches and post new hits to Slack.
     trigger:
       type: logon

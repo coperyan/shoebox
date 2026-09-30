@@ -1,0 +1,104 @@
+# Build the shoebox image, push it to Artifact Registry, and roll it out to the
+# Cloud Run jobs defined in deploy/jobs.yaml.
+#
+# Wire this to a Cloud Build trigger on pushes to main with the substitution
+# _TAG = $SHORT_SHA (see docs/deployment.md), or run it by hand:
+#
+#   gcloud builds submit --config deploy/cloudbuild.yaml \
+#     --substitutions=_TAG=$(git rev-parse --short HEAD)
+#
+# The very first build, before the jobs exist, should skip the rollout:
+#
+#   gcloud builds submit --config deploy/cloudbuild.yaml \
+#     --substitutions=_TAG=$(git rev-parse --short HEAD),_DEPLOY_JOBS=false
+#
+# Only the jobs' images change here (--jobs-only). IAM bindings and schedules
+# are applied from a workstation with `python scripts/deploy_cloud_run.py`, so
+# the build identity never needs to set IAM policy or touch Cloud Scheduler.
+
+substitutions:
+  _REGION: us-central1
+  _REPOSITORY: shoebox
+  _IMAGE: shoebox
+  # SHORT_SHA is empty on `gcloud builds submit`, so the tag is its own
+  # substitution; the trigger sets it to $SHORT_SHA.
+  _TAG: manual
+  _DEPLOY_JOBS: "true"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+steps:
+  # Tests run in the image's own interpreter, so a dependency that resolves
+  # differently in the container than on a workstation fails here rather than
+  # at 3am in a scheduled job.
+  - id: test
+    name: python:3.11-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        # The saved-search tests drive a real git repo; the slim image has no git.
+        apt-get update -qq && apt-get install -y -qq --no-install-recommends git >/dev/null
+        pip install --quiet --upgrade pip
+        pip install --quiet -e ".[dev]"
+        ruff check .
+        ruff format --check .
+        pytest -q
+
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:${_TAG}
+      - --tag=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:latest
+      # Reuse the previous image's layers so a code-only change does not
+      # reinstall every dependency.
+      - --cache-from=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:latest
+      - .
+    waitFor: ["test"]
+
+  # `images:` below also pushes, but only after every step has finished; the
+  # rollout step needs the tag to exist first.
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - --all-tags
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}
+    waitFor: ["build"]
+
+  # Render the exact gcloud commands with the project's Python (PyYAML is a
+  # base dependency), then run them where gcloud lives. The rendered script
+  # lands in the build log, so every rollout is auditable after the fact.
+  - id: render-rollout
+    name: python:3.11-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ "${_DEPLOY_JOBS}" != "true" ]; then
+          echo 'echo "_DEPLOY_JOBS is not true; image built and pushed, jobs left alone"' > /workspace/rollout.sh
+          exit 0
+        fi
+        pip install --quiet pyyaml
+        python scripts/deploy_cloud_run.py --jobs-only --dry-run \
+          --project "${PROJECT_ID}" \
+          --image "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:${_TAG}" \
+          | tee /workspace/rollout.sh
+    waitFor: ["push"]
+
+  - id: rollout
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args: ["-euo", "pipefail", "/workspace/rollout.sh"]
+    waitFor: ["render-rollout"]
+
+images:
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:${_TAG}"
+  - "${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_REPOSITORY}/${_IMAGE}:latest"
+
+timeout: 1800s

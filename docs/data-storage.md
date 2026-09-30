@@ -77,6 +77,14 @@ by the shipped SQL views/queries:
 | `exports/jsonl/searches/<name>_seen.jsonl` | Persistent, append-only | Saved-search dedup cache; later lines win. Compacted and pruned (`prune_seen_after_days`) at end of run |
 | `exports/jsonl/searches/search_hits_append.jsonl` | Flushed after successful GCS+BQ sync | Buffered `search_hits` rows; survives a failed flush and retries next run |
 | `exports/jsonl/searches/.lock` | Per run | Advisory lock (`flock` / `msvcrt.locking`) guarding against overlapping scheduled invocations |
+
+With `paths.searches_state_uri: gs://bucket/prefix` set (the Cloud Run job),
+the four `searches/` entries above live under that prefix instead, with the
+same names: `search_state.json`, `<channel>_seen.jsonl`,
+`search_hits_append.jsonl`, and `.lock`, which becomes a GCS object created
+with `ifGenerationMatch=0`. Each run downloads them to a scratch directory and
+uploads the changed ones after every search. See
+[deployment.md](deployment.md#saved-searches-watch-searches).
 | `data/checklist.csv`, `data/parallels.csv` | Overwritten per sync | Normalized metadata extracts |
 | `data/Inputs (Param).xlsm` | User-maintained | Excel queue input |
 | `scans_dir/<scan_prefix><id><scan_extension>` | User-maintained | Source card scans (naming set by `scan_prefix`/`scan_number_padding`/`scan_extension`) |

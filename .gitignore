@@ -1,6 +1,8 @@
 # --- Secrets / real config (templates live in configs/*.example) ---
 configs/ebay_rest.json
 configs/app.yaml
+# Cloud copy of app.yaml uploaded to Secret Manager (see docs/deployment.md).
+configs/app.cloud.yaml
 configs/gcp.json
 configs/ebay_legacy.json
 # Saved eBay searches -- your buy criteria and price ceilings are private.

@@ -1,0 +1,64 @@
+# Deploy searches.yaml from the private searches repo to GCS on every push.
+#
+# The saved-search definitions (buy criteria, price ceilings, blocked sellers)
+# live in a separate private repo because this one is public. The Cloud Run
+# watch-searches job reads them from GCS (paths.searches_file: gs://...), so a
+# push has to put the new file there. This build does that, and validates it
+# first: a broken edit fails the commit's check and never reaches the job,
+# which keeps reading the last good copy.
+#
+# This file stays in the shoebox repo and is embedded into the trigger with
+# --inline-config, so nothing has to be committed to the private repo. Editing
+# it means re-creating the trigger. See docs/deployment.md, "Saved searches":
+#
+#   gcloud builds triggers create github --name=shoebox-searches \
+#     --repo-owner=coperyan --repo-name=SEARCHES_REPO --branch-pattern='^main$' \
+#     --included-files=searches.yaml \
+#     --inline-config=deploy/searches-cloudbuild.yaml \
+#     --substitutions=_DEST_URI=gs://PROJECT-shoebox-searches/config/searches.yaml \
+#     --service-account=projects/PROJECT/serviceAccounts/shoebox-builder@PROJECT.iam.gserviceaccount.com
+
+substitutions:
+  # Path of the file inside the private repo.
+  _SEARCHES_PATH: searches.yaml
+  # Where the Cloud Run job reads it: paths.searches_file in the cloud app.yaml.
+  # No default on purpose -- set it on the trigger.
+  _DEST_URI: ""
+  # The shoebox ref whose loader validates the file. main is what the Cloud Run
+  # image is built from, so both agree on the schema.
+  _SHOEBOX_REF: main
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  substitution_option: ALLOW_LOOSE
+
+steps:
+  # Validate with the watcher's own loader. Only pydantic and PyYAML are
+  # needed, not a full install, so this takes seconds.
+  - id: validate
+    name: python:3.11-slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        test -f "${_SEARCHES_PATH}" || { echo "No ${_SEARCHES_PATH} in this repo" >&2; exit 1; }
+        pip install --quiet --disable-pip-version-check pydantic pyyaml
+        python -c "import io, tarfile, urllib.request; tarfile.open(fileobj=io.BytesIO(urllib.request.urlopen('https://github.com/coperyan/shoebox/archive/${_SHOEBOX_REF}.tar.gz').read())).extractall('/tmp/shoebox', filter='data')"
+        python /tmp/shoebox/*/scripts/validate_searches.py "${_SEARCHES_PATH}"
+
+  - id: upload
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        case "${_DEST_URI}" in
+          gs://*/*) ;;
+          *) echo "_DEST_URI must be set on the trigger to gs://BUCKET/path/searches.yaml" >&2; exit 1 ;;
+        esac
+        gcloud storage cp "${_SEARCHES_PATH}" "${_DEST_URI}" --content-type=text/yaml
+    waitFor: ["validate"]
+
+timeout: 300s

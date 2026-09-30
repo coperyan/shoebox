@@ -25,6 +25,7 @@ named in `paths`.
 | `EBAY_REST_CONFIG_PATH` | Full path to `ebay_rest.json`, overriding `ebay.path` |
 | `SHOEBOX_TITLE_CROSSWALK` | Path to the team/title crosswalk (default `configs/title_crosswalk.yaml`) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC override, used when `gcp.service_account_json` doesn't exist |
+| `SHOEBOX_LOG_DIR` | Directory for the per-run log file (default `logs`). `-` or empty logs to the console only, which is what a container wants: the platform collects stdout and discards the filesystem. See [deployment.md](deployment.md) |
 
 ## Settings schema
 
@@ -72,7 +73,9 @@ All local working directories; created by `ensure_runtime_dirs()`.
 | `scan_extension` | `.jpg` | Scan file extension (leading dot optional) |
 | `set_images_dir` | (folder) | Hero/default images for variation listings |
 | `tools_dir` | `tools` | Master metadata workbook location |
-| `searches_file` | `configs/searches.yaml` | Saved eBay search definitions (a **file**, not a directory — not created by `ensure_dirs()`) |
+| `searches_file` | `configs/searches.yaml` | Saved eBay search definitions (a **file**, not a directory — not created by `ensure_dirs()`). May be a `gs://bucket/object` URI, re-read every run; that is how the Cloud Run job reads the copy a push to the searches repo deploys ([deployment.md](deployment.md#saved-searches-watch-searches)) |
+| `searches_git_pull` | `false` | `git pull --ff-only` next to `searches_file` before every `watch-searches` run. Ignored when `searches_file` is a `gs://` URI |
+| `searches_state_uri` | unset | Where `watch-searches` keeps its seen-caches, run state, lock and hits buffer. Unset: `<exports_dir>/jsonl/searches/`. A `gs://bucket/prefix` URI keeps them in GCS, which the Cloud Run job requires; every host naming the same URI shares one state and one lock |
 
 A bare scan number typed in the UI or listed in the queue workbook is resolved
 to `scans_dir/<scan_prefix><zero-padded number><scan_extension>` — e.g. with the

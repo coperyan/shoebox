@@ -16,7 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class GCPSettings(BaseModel):
@@ -76,6 +76,25 @@ class PathSettings(BaseModel):
     # take effect on the next run. Requires searches_file to live inside a
     # git clone with a configured upstream and non-interactive auth.
     searches_git_pull: bool = False
+
+    # Where watch-searches keeps its seen-caches, run state, lock and hits
+    # buffer. Unset (the default) means <exports_dir>/jsonl/searches/ on local
+    # disk. A gs://bucket/prefix URI keeps them in GCS instead, which is what
+    # lets the watcher run as a Cloud Run job: each execution starts on an
+    # empty filesystem. Every host whose app.yaml names the same URI shares one
+    # state and one lock -- see docs/deployment.md.
+    searches_state_uri: str | None = None
+
+    @field_validator("searches_state_uri")
+    @classmethod
+    def _state_uri_is_gs(cls, value: str | None) -> str | None:
+        # Only GCS is supported; a local override is what exports_dir is for.
+        # Caught here so a typo fails at startup, not as a mangled local path.
+        if value in (None, ""):
+            return None
+        if not value.startswith("gs://") or not value[len("gs://") :].split("/")[0]:
+            raise ValueError("searches_state_uri must look like gs://bucket/prefix")
+        return value
 
     def ensure_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)

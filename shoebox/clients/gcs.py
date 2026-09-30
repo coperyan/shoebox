@@ -10,6 +10,43 @@ from shoebox.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
+GS_SCHEME = "gs://"
+
+
+def is_gs_uri(value: object) -> bool:
+    return isinstance(value, str) and value.startswith(GS_SCHEME)
+
+
+def parse_gs_uri(uri: str) -> tuple[str, str]:
+    """``gs://bucket/some/path`` -> ``("bucket", "some/path")``.
+
+    The path may be empty (a bare bucket); surrounding slashes are dropped so
+    callers can join onto it without doubling them.
+    """
+    if not is_gs_uri(uri):
+        raise ValueError(f"not a gs:// URI: {uri!r}")
+    bucket, _, name = uri[len(GS_SCHEME) :].partition("/")
+    if not bucket:
+        raise ValueError(f"gs:// URI has no bucket: {uri!r}")
+    return bucket, name.strip("/")
+
+
+def read_gs_text(uri: str, *, client: GCSClient | None = None) -> str:
+    """Download one object as text. A missing object raises FileNotFoundError,
+    matching what a local path would do, so callers need no GCS-specific
+    error handling."""
+    from google.api_core.exceptions import NotFound
+
+    bucket, name = parse_gs_uri(uri)
+    if not name:
+        raise ValueError(f"gs:// URI names a bucket, not an object: {uri!r}")
+    client = client or GCSClient()
+    blob = client.client.bucket(bucket).blob(name)
+    try:
+        return blob.download_as_text(encoding="utf-8")
+    except NotFound as exc:
+        raise FileNotFoundError(f"Missing object: {uri}") from exc
+
 
 class GCSClient:
     """Thin wrapper around google.cloud.storage.Client.

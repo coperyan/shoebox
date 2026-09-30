@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
+  syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
+  paused until the cutover). New `paths.searches_state_uri: gs://bucket/prefix`
+  keeps the seen-caches, run state, hits buffer and lock in GCS
+  (`clients/search_state_gcs.py`). Each run takes a generation-matched lock
+  object, downloads the state to a scratch directory, runs the unchanged
+  watcher, and uploads what changed after each search. SIGTERM still saves and
+  releases, and a lock from a killed run goes stale after 20 minutes. Every
+  host naming the same URI shares one state and one lock, so the workstation
+  and the Slack bot's `watch-searches --reseed` stay consistent with the
+  cloud. `paths.searches_file` may now be a `gs://` object. It is deployed by
+  a new Cloud Build trigger on the private searches repo
+  (`deploy/searches-cloudbuild.yaml`), which validates with the new
+  `scripts/validate_searches.py` before copying, so a broken edit fails the
+  commit instead of the job. `scripts/migrate_search_state_to_gcs.py` moves
+  the workstation's state across with no reseed. In Cloud Run the watcher
+  refuses to start without durable state. See `docs/deployment.md`, "Saved
+  searches".
+- `sync-watch-list` is now a Cloud Run job too, at 04:30 daily like its
+  Windows task.
+- **Failure alerting** for the Cloud Run jobs. `deploy/alerts/job-failed.yaml`
+  is a Cloud Monitoring policy on failed job executions, grouped per job, that
+  fires on the first failure and carries the log-reading and re-run commands
+  for that pipeline in its notification body. Because the jobs never retry, a
+  failed run is final, and it would otherwise show up only as a "Completed"
+  message that never arrived. `scripts/create_alert_channel.py` points the
+  alerts at the Slack channel the pipelines already use, reusing the existing
+  bot token rather than installing a second Slack app. See `docs/deployment.md`.
+- **Cloud Run deployment** for the four daily syncs (`sync-orders`,
+  `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`),
+  so they no longer depend on a workstation being awake. `Dockerfile` builds
+  one image whose entry point is the `shoebox` CLI; `deploy/jobs.yaml`
+  declares each Cloud Run job and its Cloud Scheduler cron (the cloud
+  counterpart of `scripts/tasks.yaml`); `scripts/deploy_cloud_run.py` renders
+  it into `gcloud` commands (`--list`, `--dry-run`, `--only`, `--jobs-only`);
+  `deploy/cloudbuild.yaml` builds, pushes and rolls the image out on every
+  push to `main`. The gitignored config files are mounted from Secret Manager
+  and the job's service account replaces `configs/gcp.json`, since the GCS
+  and BigQuery clients already fall back to Application Default Credentials.
+  A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
 - `tcdb-add`: adds cards to your tcdb.com collection from their TCDB titles
   (`shoebox tcdb-add "2009 Bowman Chrome - X-Fractors #171 Matt Cain"`, or
   `--file` with one per line) or ViewCard links. Each title is found with an
@@ -32,6 +72,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `shoebox/clients/tcdb/` package and `models/tcdb.py`, laid out so further
   TCDB actions are one parser plus one browser method each (see
   `docs/tcdb.md`).
+
+### Changed
+
+- `setup_logging()` honours `SHOEBOX_LOG_DIR`; `-` or empty logs to the console
+  only, for hosts that collect stdout and discard the filesystem. Unset
+  behaves as before (`logs/<timestamp>.log`).
 
 ### Fixed
 
@@ -133,6 +179,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `--diagnose` (per-scope endpoint probe), and `--verify`.
 - The `sell.stores` OAuth scope in `configs/ebay_rest.example.json` and the
   scope/re-mint documentation in `docs/setup.md`.
+- `send-offers` is now a Cloud Run job. It runs interactively every 15
+  minutes from 08:00 to 21:45 Pacific, with a 10-minute reply window and a
+  14-minute timeout, so runs never overlap. It needs only the eBay APIs and
+  Slack. See `docs/deployment.md`, "send-offers".
 
 ### Changed
 
