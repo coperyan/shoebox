@@ -387,6 +387,23 @@ Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-add).
 | `--allow-duplicates` | Add another copy of cards you already have |
 | `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
 
+### `tcdb-wantlist`
+Exports your tcdb.com want list to CSV or JSONL. The want list is your
+collection filtered to want status, so this walks every page of it (100 cards
+a page) and writes one row per card: title, ViewCard link, set/card/item ids,
+quantity, price and category. Read-only — nothing on TCDB is changed.
+Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-wantlist).
+
+| Flag | Effect |
+|---|---|
+| `--category` | Sport/category (default `tcdb.search_defaults.category`, else Baseball) |
+| `--all-categories` | Every sport, not just one (most will be empty) |
+| `--member NAME` | TCDB username (default: whoever the browser is signed in as) |
+| `--out`, `-o PATH` | Output file (default `exports/<fmt>/tcdb_wantlist_<stamp>.<fmt>`) |
+| `--format {csv,jsonl}` | Output format (default csv) |
+| `--max-pages N` | Stop after N pages per category |
+| `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
+
 ## Not exposed via the CLI
 
 - **`services/orders_awaiting_shipment.display_orders`** defaults differ when

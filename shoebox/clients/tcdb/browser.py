@@ -18,16 +18,18 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from shoebox.clients.tcdb.card import parse_card_page, parse_collection_widget
+from shoebox.clients.tcdb.collection import parse_member, parse_wantlist_page, wantlist_url
 from shoebox.clients.tcdb.search import is_challenge_page, is_logged_in, parse_results
 from shoebox.models.tcdb import (
     TCDB_BASE_URL,
     AdvancedSearchQuery,
     CollectionAddResult,
     TcdbSearchPage,
+    WantlistPage,
 )
 
 logger = logging.getLogger(__name__)
@@ -192,6 +194,79 @@ class TcdbBrowser:
         page = parse_results(html, query_url=url, base_url=self.base_url)
         logger.info("TCDB returned %s result(s)", page.total_results)
         return page
+
+    def current_member(self) -> str | None:
+        """Username of the signed-in account, read from the nav's profile link.
+
+        Every collection URL needs it, and hardcoding it would tie the tool to
+        one account.
+        """
+        return parse_member(self.page_source)
+
+    def wantlist_page(
+        self,
+        member: str,
+        *,
+        category: str = "Baseball",
+        collection_id: int = 1,
+        page_index: int = 1,
+        records: int | None = None,
+    ) -> WantlistPage:
+        """One page (100 rows) of a member's want list."""
+        url = wantlist_url(
+            member,
+            category=category,
+            collection_id=collection_id,
+            page_index=page_index,
+            records=records,
+            base_url=self.base_url,
+        )
+        html = self.get(url)
+        page = parse_wantlist_page(
+            html,
+            query_url=url,
+            category=category,
+            page_index=page_index,
+            base_url=self.base_url,
+        )
+        logger.info(
+            "TCDB want list %s page %s/%s: %s row(s)",
+            category,
+            page_index,
+            page.total_pages or "?",
+            len(page.cards),
+        )
+        return page
+
+    def iter_wantlist(
+        self,
+        member: str,
+        *,
+        category: str = "Baseball",
+        collection_id: int = 1,
+        max_pages: int | None = None,
+    ) -> Iterator[WantlistPage]:
+        """Yield every page of a want list, following the pager.
+
+        Stops at ``max_pages``, at the last page TCDB reports, or as soon as a
+        page comes back empty (so a wrong page count cannot spin forever).
+        """
+        page = self.wantlist_page(member, category=category, collection_id=collection_id)
+        yield page
+        records = page.total_records
+        index = 1
+        while page.has_more and page.cards:
+            if max_pages is not None and index >= max_pages:
+                break
+            index += 1
+            page = self.wantlist_page(
+                member,
+                category=category,
+                collection_id=collection_id,
+                page_index=index,
+                records=records,
+            )
+            yield page
 
     def add_to_collection(
         self,

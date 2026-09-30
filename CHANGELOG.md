@@ -49,6 +49,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the job's service account replaces `configs/gcp.json`, since the GCS
   and BigQuery clients already fall back to Application Default Credentials.
   A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
+- `tcdb-wantlist`: exports your tcdb.com want list to CSV or JSONL
+  (`shoebox tcdb-wantlist`, `--all-categories`, `--format jsonl`). The want
+  list is the collection view filtered to want status
+  (`ViewCollectionMode.cfm?...&Filter=W`), not `Wantlists.cfm`, which is other
+  members' lists; the pager is followed 100 cards at a time. One row per card:
+  title, ViewCard link, set/card/item ids, quantity, price, category. The
+  signed-in username is read from the nav, so no account is hardcoded.
+  Read-only. New `clients/tcdb/collection.py` parser.
 - `tcdb-add`: adds cards to your tcdb.com collection from their TCDB titles
   (`shoebox tcdb-add "2009 Bowman Chrome - X-Fractors #171 Matt Cain"`, or
   `--file` with one per line) or ViewCard links. Each title is found with an
