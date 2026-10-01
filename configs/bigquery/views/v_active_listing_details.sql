@@ -38,7 +38,21 @@ WITH active_listings AS (
     JSON_VALUE(ld.condition_descriptors,'$."Professional Grader"') AS grader,
     JSON_VALUE(ld.condition_descriptors,'$."Grade"') AS grade,
     JSON_VALUE(ld.condition_descriptors,'$."Certification Number"') AS cert_number,
-    JSON_VALUE(ld.condition_descriptors,'$."Card Condition"') AS card_condition
+    JSON_VALUE(ld.condition_descriptors,'$."Card Condition"') AS card_condition,
+    ld.best_offer_enabled,
+    ld.best_offer_count,
+    ld.store_category_id,
+    ld.store_category2_id,
+    ld.shipping_profile_id,
+    ld.shipping_profile_name,
+    ld.return_profile_name,
+    ld.payment_profile_name,
+    ld.package_type,
+    ld.package_length_in,
+    ld.package_width_in,
+    ld.package_depth_in,
+    ld.package_weight_oz,
+    ld.shipping_irregular
   FROM
     `ebay.active_listings` l
       LEFT JOIN `ebay.active_listing_details` ld

@@ -90,13 +90,93 @@
     "mode": "NULLABLE"
   },
   {
+    "name": "file_date",
+    "type": "TIMESTAMP",
+    "mode": "NULLABLE"
+  },
+  {
     "name": "condition_descriptors",
     "type": "JSON",
     "mode": "NULLABLE"
   },
   {
-    "name": "file_date",
-    "type": "TIMESTAMP",
+    "name": "best_offer_enabled",
+    "type": "BOOLEAN",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "best_offer_count",
+    "type": "INTEGER",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "store_category_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "store_category2_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "shipping_profile_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "shipping_profile_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "return_profile_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "return_profile_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "payment_profile_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "payment_profile_name",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "package_type",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "package_length_in",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "package_width_in",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "package_depth_in",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "package_weight_oz",
+    "type": "NUMERIC",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "shipping_irregular",
+    "type": "BOOLEAN",
     "mode": "NULLABLE"
   }
 ]

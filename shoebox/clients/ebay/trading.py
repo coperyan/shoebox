@@ -170,6 +170,53 @@ def _money_to_parts(m: Any) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _xml_bool(s: Any) -> bool | None:
+    """'true'/'false' -> bool; anything else (missing) -> None."""
+    if s in ("true", "false"):
+        return s == "true"
+    return None
+
+
+def _xml_int(s: Any) -> int | None:
+    try:
+        return int(s)
+    except (TypeError, ValueError):
+        return None
+
+
+def _measure(node: Any, unit: str) -> float | None:
+    """
+    Read an xmltodict measure node, e.g. {"@unit": "inches", "#text": "1.00"}.
+
+    Returns None rather than a wrong number if eBay reports another unit.
+    """
+    if not isinstance(node, dict) or node.get("@unit") != unit:
+        return None
+    try:
+        return float(node["#text"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def parse_package_details(node: Any) -> dict[str, Any]:
+    """
+    Flatten GetItem ``ShippingPackageDetails`` to inches and total ounces.
+
+    eBay splits weight into WeightMajor (lbs) and WeightMinor (oz).
+    """
+    lbs = _measure(dig(node, ["WeightMajor"]), "lbs")
+    oz = _measure(dig(node, ["WeightMinor"]), "oz")
+    weight = None if lbs is None and oz is None else (lbs or 0) * 16 + (oz or 0)
+    return {
+        "package_type": dig(node, ["ShippingPackage"]),
+        "package_length_in": _measure(dig(node, ["PackageLength"]), "inches"),
+        "package_width_in": _measure(dig(node, ["PackageWidth"]), "inches"),
+        "package_depth_in": _measure(dig(node, ["PackageDepth"]), "inches"),
+        "package_weight_oz": weight,
+        "shipping_irregular": _xml_bool(dig(node, ["ShippingIrregular"])),
+    }
+
+
 def parse_condition_descriptors(node: Any) -> dict[str, str]:
     """
     Decode a GetItem ``ConditionDescriptors`` node to readable name -> value.
@@ -337,6 +384,7 @@ class TradingClient:
                 <ItemID>{item_id}</ItemID>
                 <DetailLevel>ReturnAll</DetailLevel>
                 <IncludeItemSpecifics>true</IncludeItemSpecifics>
+                <IncludeWatchCount>true</IncludeWatchCount>
                 </GetItemRequest>"""
 
         payload = self._trading_call(
@@ -383,6 +431,30 @@ class TradingClient:
             "end_time": dig(item, ["ListingDetails", "EndTime"]),
             "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),
             "item_specifics": specifics,
+            "watchers": item.get("WatchCount"),
+            "best_offer_enabled": _xml_bool(dig(item, ["BestOfferDetails", "BestOfferEnabled"])),
+            "best_offer_count": _xml_int(dig(item, ["BestOfferDetails", "BestOfferCount"])),
+            "store_category_id": dig(item, ["Storefront", "StoreCategoryID"]),
+            "store_category2_id": dig(item, ["Storefront", "StoreCategory2ID"]),
+            "shipping_profile_id": dig(
+                item, ["SellerProfiles", "SellerShippingProfile", "ShippingProfileID"]
+            ),
+            "shipping_profile_name": dig(
+                item, ["SellerProfiles", "SellerShippingProfile", "ShippingProfileName"]
+            ),
+            "return_profile_id": dig(
+                item, ["SellerProfiles", "SellerReturnProfile", "ReturnProfileID"]
+            ),
+            "return_profile_name": dig(
+                item, ["SellerProfiles", "SellerReturnProfile", "ReturnProfileName"]
+            ),
+            "payment_profile_id": dig(
+                item, ["SellerProfiles", "SellerPaymentProfile", "PaymentProfileID"]
+            ),
+            "payment_profile_name": dig(
+                item, ["SellerProfiles", "SellerPaymentProfile", "PaymentProfileName"]
+            ),
+            **parse_package_details(item.get("ShippingPackageDetails")),
         }
 
         # Optional: picture URLs

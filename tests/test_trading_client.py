@@ -92,6 +92,94 @@ class TestConditionDescriptors:
         assert details["condition_descriptors"]["Professional Grader"] == "PSA"
 
 
+class TestGetItemDetailsListingFields:
+    # Trimmed from GetItem for 318877239783.
+    ITEM = {
+        "WatchCount": "13",
+        "BestOfferDetails": {"BestOfferCount": "2", "BestOfferEnabled": "true"},
+        "Storefront": {"StoreCategoryID": "54175279012", "StoreCategory2ID": "54329969012"},
+        "SellerProfiles": {
+            "SellerShippingProfile": {
+                "ShippingProfileID": "244492000024",
+                "ShippingProfileName": "USPS_BMWT",
+            },
+            "SellerReturnProfile": {
+                "ReturnProfileID": "244492001024",
+                "ReturnProfileName": "No Return Accepted (244492001024)",
+            },
+            "SellerPaymentProfile": {
+                "PaymentProfileID": "244492002024",
+                "PaymentProfileName": "eBay Managed Payments (244492002024)",
+            },
+        },
+        "ShippingPackageDetails": {
+            "PackageDepth": {"@unit": "inches", "#text": "1.00"},
+            "PackageLength": {"@unit": "inches", "#text": "11.00"},
+            "PackageWidth": {"@unit": "inches", "#text": "6.00"},
+            "ShippingIrregular": "false",
+            "ShippingPackage": "PackageThickEnvelope",
+            "WeightMajor": {"@unit": "lbs", "#text": "1"},
+            "WeightMinor": {"@unit": "oz", "#text": "3"},
+        },
+    }
+
+    def _details(self, monkeypatch, item):
+        client = _client(monkeypatch)
+        bodies = []
+
+        def fake_call(_, *, body, **kw):
+            bodies.append(body)
+            return {"Item": item}
+
+        monkeypatch.setattr(TradingClient, "_trading_call", fake_call)
+        return client.get_item_details("318877239783"), bodies[0]
+
+    def test_listing_fields_are_flattened_and_typed(self, monkeypatch):
+        d, _ = self._details(monkeypatch, self.ITEM)
+        assert d["watchers"] == "13"
+        assert d["best_offer_enabled"] is True
+        assert d["best_offer_count"] == 2
+        assert d["store_category_id"] == "54175279012"
+        assert d["store_category2_id"] == "54329969012"
+        assert d["shipping_profile_id"] == "244492000024"
+        assert d["shipping_profile_name"] == "USPS_BMWT"
+        assert d["return_profile_name"] == "No Return Accepted (244492001024)"
+        assert d["payment_profile_name"] == "eBay Managed Payments (244492002024)"
+        assert d["package_type"] == "PackageThickEnvelope"
+        assert (d["package_length_in"], d["package_width_in"], d["package_depth_in"]) == (
+            11.0,
+            6.0,
+            1.0,
+        )
+        assert d["package_weight_oz"] == 19.0  # 1 lb 3 oz
+        assert d["shipping_irregular"] is False
+
+    def test_watch_count_is_requested(self, monkeypatch):
+        # eBay leaves WatchCount out of GetItem unless asked for it.
+        _, body = self._details(monkeypatch, self.ITEM)
+        assert "<IncludeWatchCount>true</IncludeWatchCount>" in body
+
+    def test_missing_blocks_come_back_as_none(self, monkeypatch):
+        d, _ = self._details(monkeypatch, {})
+        for key in (
+            "watchers",
+            "best_offer_enabled",
+            "best_offer_count",
+            "store_category_id",
+            "shipping_profile_name",
+            "package_type",
+            "package_length_in",
+            "package_weight_oz",
+            "shipping_irregular",
+        ):
+            assert d[key] is None, key
+
+    def test_a_non_english_unit_is_dropped_not_misread(self, monkeypatch):
+        item = {"ShippingPackageDetails": {"PackageLength": {"@unit": "cm", "#text": "28"}}}
+        d, _ = self._details(monkeypatch, item)
+        assert d["package_length_in"] is None
+
+
 class TestGetItemDetailsBulk:
     def test_results_keep_the_requested_order(self, monkeypatch):
         client = _client(monkeypatch)
