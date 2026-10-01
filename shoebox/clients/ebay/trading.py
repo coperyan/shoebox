@@ -22,6 +22,77 @@ EBAY_NS = "urn:ebay:apis:eBLBaseComponents"
 # interpolated into the request XML, so it is checked against this list.
 MY_EBAY_SELLING_LISTS = ("ActiveList", "ScheduledList", "SoldList", "UnsoldList")
 
+# GetItem reports a card's grading as numeric ConditionDescriptors, not item
+# specifics. Names and values below are eBay's own, from the Sell Metadata API
+# (getItemConditionPolicies, EBAY_US, category 261328), with grader names cut
+# to the abbreviation in their parentheses ("... Authenticator (PSA)" -> "PSA").
+_CONDITION_DESCRIPTOR_NAMES = {
+    "27501": "Professional Grader",
+    "27502": "Grade",
+    "27503": "Certification Number",  # free text, sent as AdditionalInfo
+    "40001": "Card Condition",
+}
+_CONDITION_DESCRIPTOR_VALUES = {
+    # Professional Grader
+    "275010": "PSA",
+    "275011": "BCCG",
+    "275012": "BVG",
+    "275013": "BGS",
+    "275014": "CSG",
+    "275015": "CGC",
+    "275016": "SGC",
+    "275017": "KSA",
+    "275018": "GMA",
+    "275019": "HGA",
+    "2750110": "ISA",
+    "2750112": "GSG",
+    "2750113": "PGS",
+    "2750114": "MNT",
+    "2750115": "TAG",
+    "2750116": "Rare",
+    "2750117": "RCG",
+    "2750119": "Ace",
+    "2750120": "CGA",
+    "2750121": "TCG",
+    "2750123": "Other",
+    "2750124": "AGS",
+    "2750125": "DSG",
+    "2750126": "Majesty Grading Company",
+    "2750127": "GRAAD",
+    "2750128": "Arena Club",
+    "2750129": "AiGrading",
+    # Grade
+    "275020": "10",
+    "275021": "9.5",
+    "275022": "9",
+    "275023": "8.5",
+    "275024": "8",
+    "275025": "7.5",
+    "275026": "7",
+    "275027": "6.5",
+    "275028": "6",
+    "275029": "5.5",
+    "2750210": "5",
+    "2750211": "4.5",
+    "2750212": "4",
+    "2750213": "3.5",
+    "2750214": "3",
+    "2750215": "2.5",
+    "2750216": "2",
+    "2750217": "1.5",
+    "2750218": "1",
+    "2750219": "Authentic",
+    "2750220": "Authentic Altered",
+    "2750221": "Authentic - Trimmed",
+    "2750222": "Authentic - Colored",
+    "2750223": "Sample",
+    # Card Condition (ungraded)
+    "400010": "Near mint or better",
+    "400011": "Excellent",
+    "400012": "Very good",
+    "400013": "Poor",
+}
+
 
 def _xml_escape(value: str) -> str:
     """
@@ -97,6 +168,28 @@ def _money_to_parts(m: Any) -> tuple[str | None, str | None]:
     if isinstance(m, str):
         return m, None
     return None, None
+
+
+def parse_condition_descriptors(node: Any) -> dict[str, str]:
+    """
+    Decode a GetItem ``ConditionDescriptors`` node to readable name -> value.
+
+    e.g. [{"Name": "27501", "Value": "275010"}, {"Name": "27503", "AdditionalInfo": "123"}]
+      -> {"Professional Grader": "PSA", "Certification Number": "123"}
+
+    A code missing from the tables (eBay adds graders) is kept as the raw code
+    rather than dropped, so the row still says *something* was there.
+    """
+    out: dict[str, str] = {}
+    for d in ensure_list(dig(node, ["ConditionDescriptor"], None)):
+        if not isinstance(d, dict) or not d.get("Name"):
+            continue
+        name = _CONDITION_DESCRIPTOR_NAMES.get(d["Name"], d["Name"])
+        if d.get("Value"):
+            out[name] = _CONDITION_DESCRIPTOR_VALUES.get(d["Value"], d["Value"])
+        elif d.get("AdditionalInfo"):
+            out[name] = d["AdditionalInfo"].strip()
+    return out
 
 
 class TradingClient:
@@ -285,6 +378,7 @@ class TradingClient:
             "category_name": dig(item, ["PrimaryCategory", "CategoryName"]),
             "condition_id": item.get("ConditionID"),
             "condition_display_name": item.get("ConditionDisplayName"),
+            "condition_descriptors": parse_condition_descriptors(item.get("ConditionDescriptors")),
             "start_time": dig(item, ["ListingDetails", "StartTime"]),
             "end_time": dig(item, ["ListingDetails", "EndTime"]),
             "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),

@@ -90,6 +90,11 @@
     "mode": "NULLABLE"
   },
   {
+    "name": "condition_descriptors",
+    "type": "JSON",
+    "mode": "NULLABLE"
+  },
+  {
     "name": "file_date",
     "type": "TIMESTAMP",
     "mode": "NULLABLE"

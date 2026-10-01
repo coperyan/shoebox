@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from shoebox.clients.ebay.trading import TradingClient
+from shoebox.clients.ebay.trading import TradingClient, parse_condition_descriptors
 
 
 def _client(monkeypatch) -> TradingClient:
@@ -48,6 +48,48 @@ class TestSession:
         client = _client(monkeypatch)
         adapter = client._session.get_adapter("https://api.ebay.com/ws/api.dll")
         assert adapter.max_retries.total == 0
+
+
+class TestConditionDescriptors:
+    # Shape as GetItem returned it for 318877239783, a PSA 9.
+    GRADED = {
+        "ConditionDescriptor": [
+            {"Name": "27501", "Value": "275010"},
+            {"Name": "27502", "Value": "275022"},
+            {"Name": "27503", "AdditionalInfo": "102165114"},
+        ]
+    }
+
+    def test_graded_card_decodes_to_grader_grade_and_cert(self):
+        assert parse_condition_descriptors(self.GRADED) == {
+            "Professional Grader": "PSA",
+            "Grade": "9",
+            "Certification Number": "102165114",
+        }
+
+    def test_a_single_descriptor_arrives_as_a_dict_not_a_list(self):
+        # xmltodict collapses a one-element list; ungraded cards carry just one.
+        node = {"ConditionDescriptor": {"Name": "40001", "Value": "400010"}}
+        assert parse_condition_descriptors(node) == {"Card Condition": "Near mint or better"}
+
+    def test_unknown_codes_are_kept_raw_not_dropped(self):
+        node = {"ConditionDescriptor": [{"Name": "27501", "Value": "2750199"}]}
+        assert parse_condition_descriptors(node) == {"Professional Grader": "2750199"}
+
+    def test_no_node_is_an_empty_dict(self):
+        assert parse_condition_descriptors(None) == {}
+
+    def test_get_item_details_carries_the_decoded_descriptors(self, monkeypatch):
+        client = _client(monkeypatch)
+        item = {
+            "ConditionID": "2750",
+            "ConditionDisplayName": "Graded",
+            "ConditionDescriptors": self.GRADED,
+        }
+        monkeypatch.setattr(TradingClient, "_trading_call", lambda _, **kw: {"Item": item})
+        details = client.get_item_details("318877239783")
+        assert details["condition_id"] == "2750"
+        assert details["condition_descriptors"]["Professional Grader"] == "PSA"
 
 
 class TestGetItemDetailsBulk:
