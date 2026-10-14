@@ -193,11 +193,7 @@ class TestRelistKeepsEveryPicture:
     def test_three_pictures_land_in_three_objects(self, monkeypatch):
         from shoebox.pipelines import relist_listings
 
-        monkeypatch.setattr(
-            relist_listings.requests,
-            "get",
-            lambda url: SimpleNamespace(content=url.encode()),
-        )
+        monkeypatch.setattr("requests.get", lambda url: SimpleNamespace(content=url.encode()))
         gcs = FakeGCS()
         settings = SimpleNamespace(gcs=SimpleNamespace(image_bucket="bucket"))
 
@@ -302,7 +298,7 @@ class TestAddCombinedImages:
     def test_limit_counts_updates_not_listings_checked(self, monkeypatch):
         from shoebox.pipelines import add_combined_images as mod
 
-        outcomes = {"A": "skipped", "B": "skipped", "C": "updated", "D": "updated", "E": "updated"}
+        outcomes = {"A": "skipped", "B": "skipped", "C": "updated", "D": "restored", "E": "updated"}
         seen = []
 
         def fake_add(sku, item_id, **kwargs):
@@ -315,7 +311,7 @@ class TestAddCombinedImages:
         applied = mod.apply_combined_images(plan, ebay=object(), gcs=object(), limit=2)
 
         assert seen == ["A", "B", "C", "D"]
-        assert applied["status"].tolist() == ["skipped", "skipped", "updated", "updated"]
+        assert applied["status"].tolist() == ["skipped", "skipped", "updated", "restored"]
 
     def _ebay(self, pictures, inventory_urls):
         trading = SimpleNamespace(get_item_details=lambda item_id: {"picture_urls": pictures})
@@ -386,6 +382,94 @@ class TestAddCombinedImages:
             assert status == "skipped"
             assert ebay.inventory.upserts == []
         assert fetched == []
+
+    def test_restores_a_missing_back_from_gcs(self, monkeypatch):
+        from shoebox.pipelines import add_combined_images as mod
+
+        fetched = self._fake_http(monkeypatch)
+        ebay = self._ebay(["https://i.ebayimg.com/f/$_1.PNG"], ["gcs/front"])
+        gcs = FakeGCS()
+        stored_back = "https://storage.googleapis.com/bucket/images/Topps/back__SCAN_2.png"
+
+        status = mod.add_combined_image(
+            "SKU1", "111", ebay=ebay, gcs=gcs, settings=self._settings(), back_url=stored_back
+        )
+
+        assert status == "restored"
+        gcs_base = "https://storage.googleapis.com/bucket/other/SKU1"
+        assert fetched == ["https://i.ebayimg.com/f/$_57.PNG", f"{gcs_base}_front.png", stored_back]
+        # Only the front is re-hosted: the relist copy of the back is untouched.
+        assert sorted(gcs.objects) == ["other/SKU1_combined.jpg", "other/SKU1_front.png"]
+        ((_, body),) = ebay.inventory.upserts
+        assert body["product"]["imageUrls"] == [
+            f"{gcs_base}_front.png",
+            stored_back,
+            f"{gcs_base}_combined.jpg",
+        ]
+
+    def test_one_picture_listing_without_a_stored_back_is_left_alone(self, monkeypatch):
+        from shoebox.pipelines import add_combined_images as mod
+
+        self._fake_http(monkeypatch)
+        ebay = self._ebay(["f"], ["f"])
+        status = mod.add_combined_image(
+            "SKU1", "111", ebay=ebay, gcs=FakeGCS(), settings=self._settings(), back_url=None
+        )
+        assert status == "skipped"
+        assert ebay.inventory.upserts == []
+
+    def test_plan_with_stored_backs_marks_restores(self):
+        from shoebox.pipelines.add_combined_images import build_image_plan
+
+        df = pd.DataFrame(
+            [
+                {"item_id": 1, "sku": "A", "title": "Card A", "picture_urls": ["f", "b"]},
+                {"item_id": 2, "sku": "B", "title": "Card B", "picture_urls": ["f"]},
+                {"item_id": 3, "sku": "C", "title": "Card C", "picture_urls": ["f"]},
+            ]
+        )
+
+        plan = build_image_plan(df, {"B": "https://gcs/B_back.png"})
+
+        assert plan["action"].tolist() == ["combine", "restore_back", ""]
+        assert plan["skip_reason"].tolist() == ["", "", "no_stored_back"]
+        assert plan["back_url"].tolist() == ["", "https://gcs/B_back.png", ""]
+
+    def test_stored_backs_prefer_the_creation_scan_and_must_exist(self):
+        from shoebox.pipelines.add_combined_images import find_stored_backs
+
+        base = "https://storage.googleapis.com/bucket/"
+        created = pd.DataFrame(
+            [
+                {"sku": "A", "back_url": f"{base}images/A/back__SCAN_2.png"},
+                {"sku": "B", "back_url": f"{base}images/B/back__SCAN_4.png"},  # deleted
+                {"sku": "C", "back_url": None},
+            ]
+        )
+        names = [
+            "images/A/back__SCAN_2.png",
+            "other/A_back.png",
+            "other/B_back.png",
+            "other/C_back.png",
+        ]
+        bq = SimpleNamespace(run_query=lambda sql, params: created)
+        gcs = SimpleNamespace(
+            client=SimpleNamespace(
+                list_blobs=lambda bucket: [SimpleNamespace(name=n) for n in names]
+            )
+        )
+        settings = SimpleNamespace(
+            gcs=SimpleNamespace(image_bucket="bucket"),
+            bigquery=SimpleNamespace(ebay_dataset="ebay"),
+        )
+
+        backs = find_stored_backs(["A", "B", "C", "D"], bq=bq, gcs=gcs, settings=settings)
+
+        assert backs == {
+            "A": f"{base}images/A/back__SCAN_2.png",
+            "B": f"{base}other/B_back.png",
+            "C": f"{base}other/C_back.png",
+        }
 
     def test_apply_records_failures_and_continues(self, monkeypatch):
         from shoebox.pipelines import add_combined_images as mod

@@ -146,6 +146,11 @@ def main() -> None:
         "--apply", action="store_true", help="Push the new pictures to eBay (default: preview only)"
     )
     p_combined.add_argument("--limit", type=int, help="Cap how many listings are updated")
+    p_combined.add_argument(
+        "--restore-backs",
+        action="store_true",
+        help="Also restore the back on one-picture listings from the copy stored in GCS",
+    )
 
     # Plan the store category tree for live listings
     p_cats = sub.add_parser(
@@ -440,6 +445,7 @@ def main() -> None:
             input_path=Path(args.input) if args.input else None,
             apply=args.apply,
             limit=args.limit,
+            restore_backs=args.restore_backs,
         )
         return
 

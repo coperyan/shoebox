@@ -116,6 +116,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`enhance-listing-titles` deleted back pictures.** An inventory retitle
+  replaces the whole item, and it sent back the item's own `imageUrls`.
+  eBay's `getInventoryItem` often returns only the front, so every retitled
+  listing lost its back: all 302 listings created with two pictures that now
+  show one had been retitled. Retitles now send the live listing's pictures
+  (`GetItem`, re-hosted in GCS like relist, in the new
+  `services/listing_pictures.py`). An inventory retitle without an item ID
+  now refuses instead of writing. `inventory_item_body_with_title` is
+  removed. `add-combined-images --restore-backs` puts the backs back from
+  GCS (1,175 of the 1,181 affected listings have a stored back).
 - `relist-listings` names re-hosted pictures by position (`front`, `back`,
   `combined`). It used to call everything after picture 1 `back`, so a third
   picture overwrote the back in GCS and the relisted listing showed the

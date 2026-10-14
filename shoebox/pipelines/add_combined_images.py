@@ -3,16 +3,22 @@
 New listings get this picture from ``create-listings``. This backfills it on
 the existing ones: for every single-card listing with exactly two pictures
 (front, back), the two are copied full-size into GCS, combined side by side,
-and the listing's pictures are set to front, back, combined. The front stays picture 1, so search thumbnails and
-the send-offers Slack prompts don't change.
+and the listing's pictures are set to front, back, combined. The front stays
+picture 1, so search thumbnails and the send-offers Slack prompts don't change.
 
-    shoebox add-combined-images                       # preview from BigQuery
-    shoebox add-combined-images --input pull.csv      # preview a local export
-    shoebox add-combined-images --apply --limit 5     # update the first 5
+With ``--restore-backs``, listings that lost their back picture (old title
+round-trips sent eBay the front only) get it back too: the back is found in
+GCS -- the scan ``create-listings`` uploaded, else the copy an earlier relist
+made -- and the listing is set to front, restored back, combined.
+
+    shoebox add-combined-images                                   # preview
+    shoebox add-combined-images --restore-backs                   # preview, with restores
+    shoebox add-combined-images --restore-backs --apply --limit 5 # update the first 5
 
 Nothing is sent to eBay without ``--apply``. Re-running is safe: every
-listing's live picture count is checked right before writing, and anything
-without exactly two pictures is skipped, so none gets a second composite.
+listing's live picture count is checked right before writing, and only a
+listing with two pictures (or one, with a stored back) is changed, so none
+gets a second composite.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
+from shoebox.clients.bigquery import BigQueryClient
 from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.gcs import GCSClient
 from shoebox.pipelines.enhance_listing_titles import (
@@ -33,7 +40,7 @@ from shoebox.pipelines.enhance_listing_titles import (
     load_listings,
     load_listings_from_bigquery,
 )
-from shoebox.pipelines.relist_listings import ebay_image_to_gcs
+from shoebox.services.listing_pictures import ebay_image_to_gcs, live_picture_urls
 from shoebox.settings import Settings, get_settings
 from shoebox.transforms.listing_builder import inventory_item_body_with_images
 from shoebox.utils.images import combine_front_back
@@ -46,6 +53,12 @@ logger = logging.getLogger(__name__)
 _VARIATION_TITLE_MARKER = "complete your set"
 
 _DOWNLOAD_TIMEOUT_S = 30
+
+# Back picture each SKU was created with; lives in configs/bigquery/queries/.
+_BACKS_SQL = "listing_back_images.sql"
+
+# Statuses that count as a change on eBay (and against --limit).
+_CHANGED = ("updated", "restored")
 
 
 def _picture_urls(value: object) -> list[str]:
@@ -67,12 +80,46 @@ def _picture_urls(value: object) -> list[str]:
         return []  # NaN and other scalars
 
 
-def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
-    """One report row per listing, saying whether it gets a combined picture.
+def find_stored_backs(
+    skus: list[str],
+    *,
+    bq: BigQueryClient | None = None,
+    gcs: GCSClient | None = None,
+    settings: Settings | None = None,
+) -> dict[str, str]:
+    """Map each SKU to a back picture still in GCS.
 
-    Without a ``picture_urls`` column (v_active_listing_details doesn't carry
-    one) the count is left blank and checked against the live item at apply
-    time instead.
+    Prefers the scan ``create-listings`` uploaded (logged in ebay_listings);
+    falls back to ``other/<sku>_back.png``, the copy relist makes. Either one
+    only counts if the object still exists.
+    """
+    settings = settings or get_settings()
+    bq = bq or BigQueryClient(settings)
+    gcs = gcs or GCSClient()
+    bucket = settings.gcs.image_bucket
+    prefix = f"https://storage.googleapis.com/{bucket}/"
+
+    created = bq.run_query(sql=_BACKS_SQL, params={"dataset": settings.bigquery.ebay_dataset})
+    created_backs = {r.sku: r.back_url for r in created.itertuples() if isinstance(r.back_url, str)}
+    stored = {blob.name for blob in gcs.client.list_blobs(bucket)}
+
+    backs: dict[str, str] = {}
+    for sku in skus:
+        url = created_backs.get(sku)
+        if url and url.startswith(prefix) and url[len(prefix) :] in stored:
+            backs[sku] = url
+        elif f"other/{sku}_back.png" in stored:
+            backs[sku] = f"{prefix}other/{sku}_back.png"
+    return backs
+
+
+def build_image_plan(df: pd.DataFrame, stored_backs: dict[str, str] | None = None) -> pd.DataFrame:
+    """One report row per listing, saying what it gets.
+
+    ``action`` is ``combine`` for a two-picture listing and ``restore_back``
+    for a one-picture listing with a back in ``stored_backs`` (only passed
+    with --restore-backs). Without a ``picture_urls`` column the count is left
+    blank and the live check at apply time decides.
     """
     has_pictures = "picture_urls" in df.columns
     records = []
@@ -81,8 +128,9 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
         sku = _clean_str(row.get("sku"))
         item_id = _clean_str(row.get("item_id")).removesuffix(".0")
         pictures = _picture_urls(row.get("picture_urls")) if has_pictures else None
+        back_url = (stored_backs or {}).get(sku, "")
 
-        skip_reason = ""
+        action, skip_reason = "combine", ""
         if _VARIATION_TITLE_MARKER in title.lower():
             skip_reason = "variation_listing"
         elif not sku:
@@ -92,6 +140,11 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
         elif not item_id:
             # The live picture check is by item ID.
             skip_reason = "no_item_id"
+        elif pictures is not None and len(pictures) == 1 and stored_backs is not None:
+            if back_url:
+                action = "restore_back"
+            else:
+                skip_reason = "no_stored_back"
         elif pictures is not None and len(pictures) != 2:
             skip_reason = f"has_{len(pictures)}_pictures"
 
@@ -102,6 +155,8 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
                 "title": title,
                 "picture_count": len(pictures) if pictures is not None else None,
                 "eligible": not skip_reason,
+                "action": "" if skip_reason else action,
+                "back_url": back_url,
                 "skip_reason": skip_reason,
             }
         )
@@ -121,25 +176,31 @@ def add_combined_image(
     ebay: EbayClient,
     gcs: GCSClient,
     settings: Settings,
+    back_url: str | None = None,
 ) -> str:
     """Give one listing three pictures: front, back, and the composite.
 
-    The live listing's pictures (Trading GetItem) are the source of truth.
-    The inventory item's ``imageUrls`` can't be trusted here: eBay often
-    reports only the front there for a listing that shows two pictures, and
-    writing that list back would drop the back. So the pictures are re-hosted
-    the way ``relist-listings`` does it (full-size copies in GCS) and all
-    three go back on the item.
+    The live listing's pictures (Trading GetItem) are the source of truth;
+    see services/listing_pictures.py for why the inventory item's are not.
+    They are re-hosted the way ``relist-listings`` does it (full-size copies
+    in GCS) and all three go back on the item.
 
-    Returns "updated", or "skipped" when the listing no longer has exactly
-    two pictures (the report source can be a day stale).
+    A two-picture listing returns "updated". A one-picture listing with a
+    ``back_url`` (a back stored in GCS) gets that back restored and returns
+    "restored". Anything else is left alone and returns "skipped" -- the
+    report source can be a day stale.
     """
-    pictures = ebay.trading.get_item_details(item_id=item_id).get("picture_urls") or []
-    if len(pictures) != 2:
+    pictures = live_picture_urls(ebay, item_id)
+    if len(pictures) == 2:
+        front_url, back_url = ebay_image_to_gcs(pictures, sku, gcs, settings)
+        status = "updated"
+    elif len(pictures) == 1 and back_url:
+        (front_url,) = ebay_image_to_gcs(pictures, sku, gcs, settings)
+        status = "restored"
+    else:
         logger.info("item_id=%s has %d picture(s) on eBay; skipping", item_id, len(pictures))
         return "skipped"
 
-    front_url, back_url = ebay_image_to_gcs(pictures, sku, gcs, settings)
     combined = combine_front_back(_download(front_url), _download(back_url))
     blob = gcs.client.bucket(settings.gcs.image_bucket).blob(f"other/{sku}_combined.jpg")
     blob.upload_from_string(combined, content_type="image/jpeg")
@@ -148,8 +209,8 @@ def add_combined_image(
     ebay.inventory.upsert_inventory_item(
         sku, inventory_item_body_with_images(item, [front_url, back_url, blob.public_url])
     )
-    logger.info("Added combined picture to sku=%s", sku)
-    return "updated"
+    logger.info("%s sku=%s: front, back, combined", status.capitalize(), sku)
+    return status
 
 
 def apply_combined_images(
@@ -161,8 +222,8 @@ def apply_combined_images(
 ) -> pd.DataFrame:
     """Update the eligible listings one at a time; a failure doesn't stop the run.
 
-    ``limit`` caps listings actually updated, not listings looked at: a
-    candidate whose live picture count isn't two is skipped and doesn't count.
+    ``limit`` caps listings actually changed (updated or restored), not
+    listings looked at: a candidate skipped by the live check doesn't count.
     """
     ebay = ebay or EbayClient()
     gcs = gcs or GCSClient()
@@ -174,12 +235,19 @@ def apply_combined_images(
     errors: list[str] = []
     total = len(targets)
     for idx, (_, row) in enumerate(targets.iterrows(), 1):
-        if limit is not None and statuses.count("updated") >= limit:
+        if limit is not None and sum(statuses.count(s) for s in _CHANGED) >= limit:
             break
         sku = row["sku"]
         try:
             statuses.append(
-                add_combined_image(sku, row["item_id"], ebay=ebay, gcs=gcs, settings=settings)
+                add_combined_image(
+                    sku,
+                    row["item_id"],
+                    ebay=ebay,
+                    gcs=gcs,
+                    settings=settings,
+                    back_url=row.get("back_url") or None,
+                )
             )
             errors.append("")
         except Exception as e:
@@ -205,6 +273,7 @@ def add_combined_images(
     input_path: Path | None = None,
     apply: bool = False,
     limit: int | None = None,
+    restore_backs: bool = False,
 ) -> pd.DataFrame:
     settings = get_settings()
 
@@ -216,11 +285,19 @@ def add_combined_images(
         source = f"BigQuery {settings.bigquery.ebay_dataset}.v_active_listing_details"
     logger.info("Loaded %d listing(s) from %s", len(df), source)
 
-    plan = build_image_plan(df)
+    stored_backs = None
+    if restore_backs:
+        skus = [s for s in df["sku"].map(_clean_str) if s] if "sku" in df.columns else []
+        stored_backs = find_stored_backs(skus, settings=settings)
+        logger.info("Found a stored back picture for %d SKU(s)", len(stored_backs))
+
+    plan = build_image_plan(df, stored_backs)
     report_path = write_report(plan, Path(settings.paths.exports_dir))
-    eligible = int(plan["eligible"].sum()) if not plan.empty else 0
+    actions = (
+        plan.loc[plan["eligible"], "action"].value_counts().to_dict() if not plan.empty else {}
+    )
     skipped = plan.loc[~plan["eligible"], "skip_reason"].value_counts().to_dict()
-    logger.info("%d listing(s) eligible for a combined picture; skipped: %s", eligible, skipped)
+    logger.info("Eligible: %s; skipped: %s", actions, skipped)
     if not plan.empty and plan["picture_count"].isna().any():
         logger.info("No picture_urls in the source; picture counts are checked on eBay per listing")
     logger.info("Report written to %s", report_path)
@@ -231,14 +308,17 @@ def add_combined_images(
 
     applied = apply_combined_images(plan, limit=limit)
     counts = applied["status"].value_counts().to_dict() if not applied.empty else {}
-    updated, failed = counts.get("updated", 0), counts.get("failed", 0)
+    updated, restored = counts.get("updated", 0), counts.get("restored", 0)
+    failed = counts.get("failed", 0)
 
     applied.to_csv(report_path.with_name(report_path.stem + "_applied.csv"), index=False)
-    notify_best_effort(
-        settings.slack.notify_channel,
-        f"Added a combined picture to {updated} listing(s){f', {failed} failed' if failed else ''}.",
-    )
-    logger.info("Updated %d listing(s); %s", updated, counts)
+    message = f"Added a combined picture to {updated + restored} listing(s)"
+    if restored:
+        message += f", restoring the back on {restored}"
+    if failed:
+        message += f"; {failed} failed"
+    notify_best_effort(settings.slack.notify_channel, message + ".")
+    logger.info("Done: %s", counts)
     return applied
 
 
@@ -247,6 +327,9 @@ def main() -> None:
     parser.add_argument("--input", help="Listings export (.jsonl or .csv)")
     parser.add_argument("--apply", action="store_true", help="Push the changes to eBay")
     parser.add_argument("--limit", type=int, help="Cap how many listings are updated")
+    parser.add_argument(
+        "--restore-backs", action="store_true", help="Also restore missing backs from GCS"
+    )
     args = parser.parse_args()
 
     setup_logging()
@@ -255,6 +338,7 @@ def main() -> None:
         input_path=Path(args.input) if args.input else None,
         apply=args.apply,
         limit=args.limit,
+        restore_backs=args.restore_backs,
     )
 
 

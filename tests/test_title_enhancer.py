@@ -324,9 +324,9 @@ class TestApplyPath:
         )
 
     def test_body_changes_only_the_title(self):
-        from shoebox.transforms.listing_builder import inventory_item_body_with_title
+        from shoebox.transforms.listing_builder import round_trip_inventory_item_body
 
-        body = inventory_item_body_with_title(self._item(), "New title")
+        body = round_trip_inventory_item_body(self._item(), title="New title")
 
         assert body["product"]["title"] == "New title"
         # Everything else round-trips untouched.
@@ -337,14 +337,16 @@ class TestApplyPath:
         assert body["packageWeightAndSize"]["packageType"] == "LETTER"
 
     def test_aspects_are_sent_as_arrays(self):
-        from shoebox.transforms.listing_builder import inventory_item_body_with_title
+        from shoebox.transforms.listing_builder import round_trip_inventory_item_body
 
-        aspects = inventory_item_body_with_title(self._item(), "New title")["product"]["aspects"]
+        aspects = round_trip_inventory_item_body(self._item(), title="New title")["product"][
+            "aspects"
+        ]
         assert aspects == {"Team": ["Chicago Cubs"], "Card Number": ["12"]}
 
     def test_incomplete_packaging_falls_back_to_the_standard_package(self):
         from shoebox.models.ebay.inventory_item import InventoryItem
-        from shoebox.transforms.listing_builder import inventory_item_body_with_title
+        from shoebox.transforms.listing_builder import round_trip_inventory_item_body
 
         # eBay rejects an update carrying a weightless package (errorId 25020).
         item = InventoryItem.from_api(
@@ -354,7 +356,7 @@ class TestApplyPath:
                 "product": {"title": "Old", "aspects": {}},
             }
         )
-        weight = inventory_item_body_with_title(item, "New")["packageWeightAndSize"]["weight"]
+        weight = round_trip_inventory_item_body(item, title="New")["packageWeightAndSize"]["weight"]
         assert weight["value"] == 1
         assert weight["unit"] == "OUNCE"
 
@@ -445,20 +447,36 @@ class TestApplyPath:
 class TestUpdateRouting:
     """ListingService.update_title picks its API by what identifies the listing."""
 
-    def _client(self, *, inventory_raises=None):
+    def _client(self, monkeypatch, *, inventory_raises=None):
         from shoebox.models.ebay.inventory_item import InventoryItem
+        from shoebox.services import listings as listings_mod
         from shoebox.services.listings import ListingService
 
-        calls = {"inventory": [], "trading": []}
+        calls = {"inventory": [], "trading": [], "images": []}
+
+        # The live listing shows front and back; the item only lists the front.
+        monkeypatch.setattr(
+            listings_mod,
+            "rehost_live_pictures",
+            lambda ebay, *, item_id, sku, gcs, settings: [f"gcs/{sku}_front", f"gcs/{sku}_back"],
+        )
 
         class FakeInventory:
             def get_inventory_item(self, sku):
                 return InventoryItem.from_api(
-                    {"sku": sku, "product": {"title": "Old title", "aspects": {}}}
+                    {
+                        "sku": sku,
+                        "product": {
+                            "title": "Old title",
+                            "aspects": {},
+                            "image_urls": [f"gcs/{sku}_front"],
+                        },
+                    }
                 )
 
             def upsert_inventory_item(self, sku, body):
                 calls["inventory"].append((sku, body["product"]["title"]))
+                calls["images"].append(body["product"]["imageUrls"])
                 if inventory_raises:
                     raise inventory_raises
 
@@ -471,40 +489,50 @@ class TestUpdateRouting:
             inventory = FakeInventory()
             trading = FakeLegacy()
 
-        client = ListingService(FakeEbay())
+        client = ListingService(FakeEbay(), gcs=object())
         return client, calls
 
-    def test_sku_goes_through_the_inventory_api(self):
-        client, calls = self._client()
+    def test_sku_goes_through_the_inventory_api(self, monkeypatch):
+        client, calls = self._client(monkeypatch)
         out = client.update_title(sku="SKU1", item_id="1", new_title="New title")
         assert calls["inventory"] == [("SKU1", "New title")]
         assert calls["trading"] == []
         assert out["method"] == "inventory"
 
-    def test_no_sku_goes_through_trading(self):
-        client, calls = self._client()
+    def test_inventory_retitle_keeps_the_live_pictures(self, monkeypatch):
+        # Sending the item's own imageUrls back (front only) is what stripped
+        # the back picture from retitled listings.
+        client, calls = self._client(monkeypatch)
+        client.update_title(sku="SKU1", item_id="1", new_title="New title")
+        assert calls["images"] == [["gcs/SKU1_front", "gcs/SKU1_back"]]
+
+    def test_no_sku_goes_through_trading(self, monkeypatch):
+        client, calls = self._client(monkeypatch)
         out = client.update_title(item_id="318590003811", new_title="New title")
         assert calls["inventory"] == []
         assert calls["trading"] == [("318590003811", "New title")]
         assert out["method"] == "trading"
 
-    def test_inventory_failure_falls_back_to_trading(self):
-        client, calls = self._client(inventory_raises=RuntimeError("errorId 25020"))
+    def test_inventory_failure_falls_back_to_trading(self, monkeypatch):
+        client, calls = self._client(monkeypatch, inventory_raises=RuntimeError("errorId 25020"))
         out = client.update_title(sku="SKU1", item_id="99", new_title="New title")
         assert calls["trading"] == [("99", "New title")]
         assert out["method"] == "trading_fallback"
 
-    def test_inventory_failure_without_an_item_id_raises(self):
+    def test_inventory_retitle_without_an_item_id_refuses(self, monkeypatch):
         import pytest
 
-        client, _ = self._client(inventory_raises=RuntimeError("boom"))
-        with pytest.raises(RuntimeError):
+        # Without the item ID there is no way to read the live pictures, and
+        # writing the item without them would strip the back.
+        client, calls = self._client(monkeypatch)
+        with pytest.raises(ValueError):
             client.update_title(sku="SKU1", new_title="New title")
+        assert calls["inventory"] == []
 
-    def test_neither_identifier_is_an_error(self):
+    def test_neither_identifier_is_an_error(self, monkeypatch):
         import pytest
 
-        client, _ = self._client()
+        client, _ = self._client(monkeypatch)
         with pytest.raises(ValueError):
             client.update_title(new_title="New title")
 

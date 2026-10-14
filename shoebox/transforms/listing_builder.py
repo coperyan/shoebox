@@ -460,11 +460,6 @@ def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
     )
 
 
-def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[str, Any]:
-    """Round-trip an existing inventory item with only ``product.title`` changed."""
-    return round_trip_inventory_item_body(item, title=new_title)
-
-
 def inventory_item_body_with_images(item: InventoryItem, image_urls: list[str]) -> dict[str, Any]:
     """Round-trip an existing inventory item with only ``product.imageUrls`` changed."""
     return round_trip_inventory_item_body(item, image_urls=image_urls)
@@ -479,10 +474,14 @@ def round_trip_inventory_item_body(
     """Round-trip an existing inventory item, replacing only what is passed.
 
     Unlike :func:`rebuild_inventory_item_body`, this preserves the item's own
-    description, images, condition, and packaging rather than rebuilding them
-    from settings -- a title or picture edit must not quietly rewrite the rest
-    of a live listing. Values eBay omits fall back to the standard single-card
+    description, condition, and packaging rather than rebuilding them from
+    settings -- a title or picture edit must not quietly rewrite the rest of a
+    live listing. Values eBay omits fall back to the standard single-card
     payload.
+
+    Pass ``image_urls`` from the live listing (services/listing_pictures.py).
+    Left out, the item's own ``imageUrls`` are sent back, and eBay often
+    returns only the front there: the listing would lose its back picture.
     """
     product = item.product
     if product is None:

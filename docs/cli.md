@@ -130,7 +130,9 @@ eBay APIs. Listings **with a SKU** (created through the Sell Inventory API) go
 through `createOrReplaceInventoryItem`; listings **without one** — listed via
 the Trading API or eBay's own form — are invisible to the inventory API and go
 through Trading `ReviseFixedPriceItem` by item ID. If the inventory route
-fails, Trading is tried as a fallback. Either way the listing keeps its item ID,
+fails, Trading is tried as a fallback. The inventory route sends the live
+listing's pictures (re-hosted in GCS) with the new title, because the item is
+replaced whole. Either way the listing keeps its item ID,
 watchers, and search standing — no withdraw/republish. The report's
 `update_method` column shows the intended route, `applied_method` the one that
 did the work. Variation ("Complete Your Set") listings are skipped.
@@ -160,6 +162,12 @@ Skipped: variation listings, listings without a SKU or item ID, and anything
 without exactly two pictures. The live count is re-checked right before
 writing, so re-runs are safe: no listing gets a second composite. `--limit`
 counts listings updated, not listings checked.
+With `--restore-backs` it also repairs listings that lost their back
+picture. For each listing that shows only the front, it looks in GCS for the
+back: first the scan `create-listings` uploaded, then the copy an earlier
+relist made. If it finds one, the listing gets front, restored back,
+combined. Listings with no stored back are reported as `no_stored_back`.
+
 **Nothing is sent to eBay without `--apply`.**
 
 | Flag | Effect |
@@ -167,6 +175,7 @@ counts listings updated, not listings checked.
 | `--input PATH` | Read a local `.jsonl`/`.csv` export instead of the BigQuery view |
 | `--apply` | Push the new pictures to eBay (default: preview only) |
 | `--limit N` | Cap how many listings are updated in one run |
+| `--restore-backs` | Also restore missing backs from the copies stored in GCS |
 
 ### `send-offers`
 Finds listings with interested buyers (Negotiation API) and posts each one to
