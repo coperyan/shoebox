@@ -21,6 +21,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+from shoebox.clients.chromedriver import fix_apple_silicon
 from shoebox.clients.tcdb.card import parse_card_page, parse_collection_widget
 from shoebox.clients.tcdb.collection import (
     parse_card_team,
@@ -80,6 +81,7 @@ class TcdbBrowser:
         import chrome_version
         import undetected_chromedriver as uc
 
+        fix_apple_silicon()
         self.profile_dir.mkdir(parents=True, exist_ok=True)
         chrome_v = chrome_version.get_chrome_version()
         self.driver = uc.Chrome(

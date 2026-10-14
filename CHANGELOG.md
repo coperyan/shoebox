@@ -99,6 +99,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Chrome on Apple Silicon.** TCDB commands, the 130point price scraper and
+  the Topps release scraper now start Chrome on an arm64 Mac that has no
+  Rosetta. undetected-chromedriver 3.5.5 downloaded the Intel chromedriver
+  (`Bad CPU type in executable`). Its in-place patch also broke the arm64
+  driver's code signature, so macOS killed it (`Status code was: -9`).
+  `clients/chromedriver.py` now downloads `mac-arm64` and ad-hoc re-signs the
+  driver after uc patches it. It does nothing on other platforms. See
+  `docs/tcdb.md`, "Apple Silicon Macs".
 - `watch-searches` no longer rejects a listing whose aspect value arrives
   comma-joined. `getItem` returns a multi-valued aspect as one string —
   `Features: "Insert, Serial Numbered, Parallel/Variety"` — rather than one

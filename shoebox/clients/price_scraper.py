@@ -14,6 +14,8 @@ from bs4 import BeautifulSoup
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 
+from shoebox.clients.chromedriver import fix_apple_silicon
+
 logger = logging.getLogger(__name__)
 
 parallel_terms = [
@@ -125,6 +127,7 @@ class PriceScraper:
         import chrome_version
         import undetected_chromedriver as uc
 
+        fix_apple_silicon()
         chrome_v = chrome_version.get_chrome_version()
         self.driver = uc.Chrome(
             headless=self.headless,
