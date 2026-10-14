@@ -74,6 +74,31 @@ def sync_results_to_bq(
     return object_name
 
 
+def _upload_combined_image(q: ListingQueueRow, img_client: ImageLogClient) -> str | None:
+    """Upload a front+back composite for a two-scan row; return its URL.
+
+    Best-effort: the listing goes ahead with just the scans if this fails.
+    """
+    if not (q.image_front and q.image_back):
+        return None
+    try:
+        return img_client.upload_combined_image(
+            front=Path(q.image_front),
+            back=Path(q.image_back),
+            set_name=q.set_name,
+            subset_name=q.subset_name,
+            card_number=q.card_number,
+            parallel_variety=q.parallel_variety,
+        ).public_url
+    except Exception:
+        logger.warning(
+            "Could not build the combined image for %s; listing without it",
+            q.card_number,
+            exc_info=True,
+        )
+        return None
+
+
 def _create_one_listing(
     q: ListingQueueRow,
     *,
@@ -143,7 +168,9 @@ def _create_one_listing(
         logger.info("Editing price from %s to %s..", old_price, new_price)
         time.sleep(1)
 
-    # Upload images
+    # Upload images. The combined front+back picture has to be built first:
+    # uploading a scan deletes the local original.
+    combined_url = _upload_combined_image(q, img_client)
     image_urls: list[str] = []
 
     if q.image_front:
@@ -168,6 +195,10 @@ def _create_one_listing(
                 side="back",
             ).public_url
         )
+    # Third, after the scans: the front stays picture 1, which is the search
+    # thumbnail and the image send-offers shows in Slack.
+    if combined_url:
+        image_urls.append(combined_url)
 
     draft = build_draft(row=q, image_urls=image_urls, sku=sku, schedule=schedule)
 

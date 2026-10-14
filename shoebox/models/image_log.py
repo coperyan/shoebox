@@ -9,7 +9,7 @@ from .common import Model, utc_now
 
 
 class ImageLogEntry(Model):
-    """One uploaded image (front/back/etc.) persisted to BigQuery via JSONL.
+    """One uploaded image (front/back/combined/etc.) persisted to BigQuery via JSONL.
 
     We log *listing metadata* rather than an opaque card_id.
 
@@ -29,7 +29,7 @@ class ImageLogEntry(Model):
     subset_name: str = Field(..., description="Checklist subset name")
     parallel_variety: str | None = Field(default=None, description="Parallel/variety (nullable)")
     card_number: str = Field(..., description="Card number")
-    side: str | None = Field(default=None, description="front|back|other")
+    side: str | None = Field(default=None, description="front|back|combined|other")
 
     # local source
     local_path: str = Field(..., description="Original local file path")

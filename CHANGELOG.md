@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Combined front+back picture.** `create-listings` now uploads a third
+  picture, front and back side by side (`utils/images.combine_front_back`,
+  ported from `combine_images.py`), for every row with both scans. It goes
+  after the scans, so the front stays picture 1, which is the search
+  thumbnail and the image in the send-offers Slack prompts. It is built before
+  the scans upload, because uploading deletes the originals, and named after
+  the two scans so a re-run hits the upload cache. A failure here logs a
+  warning and the listing goes ahead with two pictures.
+  `create-variation-listings` does the same per card. New
+  `add-combined-images` backfills live listings: preview by default, then
+  `--apply [--limit N]` appends the composite to each single-card listing
+  that has exactly two pictures, round-tripping the inventory item so nothing
+  else on the listing changes. Pillow is now a declared dependency (it was
+  already installed through Streamlit).
+
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
   paused until the cutover). New `paths.searches_state_uri: gs://bucket/prefix`
@@ -98,6 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaves as before (`logs/<timestamp>.log`).
 
 ### Fixed
+
+- `relist-listings` names re-hosted pictures by position (`front`, `back`,
+  `combined`). It used to call everything after picture 1 `back`, so a third
+  picture overwrote the back in GCS and the relisted listing showed the
+  composite twice and lost the back.
 
 - `watch-searches` no longer rejects a listing whose aspect value arrives
   comma-joined. `getItem` returns a multi-valued aspect as one string —

@@ -80,7 +80,12 @@ Per queue row:
    to accept, or reply a number to override (tolerant parsing — `$4.99` etc.).
    If scraping fails, the prompt proposes the original queue price instead.
 2. **Images** — front/back scans upload through `ImageLogClient` (dedup cache;
-   see [data-storage.md](data-storage.md)), producing public GCS URLs.
+   see [data-storage.md](data-storage.md)), producing public GCS URLs. When a
+   row has both, `ImageLogClient.upload_combined_image` first builds and
+   uploads a side-by-side composite (side `combined`). It has to go first
+   because uploading a scan deletes the local original. The composite is
+   named after the two scans, so a re-run is served from the cache. It is
+   listed third: picture order is front, back, combined.
 3. **Payload** — `transforms/listing_builder.build_draft` assembles the title
    (80-char limit with progressive element-stripping), HTML description,
    full item-specifics dict, store category, condition, package, and policy
@@ -130,7 +135,9 @@ which is what lets relist flows find existing inventory items and offers.
 - Candidate set: active non-variation listings ≥ 90 days old, price > $2,
   ≥ 100 impressions, no watchers; processed high-price-first. `--schedule`
   spreads new start dates over 1–20 days.
-- Images are copied from the live listing to GCS (`$_57` high-res variant).
+- Images are copied from the live listing to GCS (`$_57` high-res variant),
+  named by position: `front`, `back`, `combined`, then `img4`… A picture
+  never shares another picture's object name.
 - Pricing: listings > $1.99 optionally get a scraped comp price, then a
   **Slack approval** (Approve button / threaded override). Timeout or an
   unparseable reply **skips the listing** — it stays live untouched. Cheap
@@ -203,6 +210,20 @@ following a partial one only picks up what is actually left.
   listing. The one exception is packaging with no usable weight, which eBay
   rejects outright (errorId 25020); those fall back to the standard
   single-card package.
+
+### `pipelines/add_combined_images.py` (CLI: `add-combined-images`)
+
+- Same listing source and preview/`--apply` contract as
+  `enhance-listing-titles`. The plan marks each listing eligible or gives a
+  `skip_reason` (`variation_listing`, `no_sku`, `has_<n>_pictures`).
+- Per eligible SKU: GET the inventory item and check that it *still* has
+  exactly two `imageUrls` (the view can be a day stale). Then download both,
+  `combine_front_back`, upload to `other/<sku>_combined.jpg`, and PUT the
+  item back via `inventory_item_body_with_images`. That function and
+  `inventory_item_body_with_title` both wrap `round_trip_inventory_item_body`,
+  so the description, condition, and packaging are preserved.
+- A failure on one listing is recorded in the `_applied.csv` report and the
+  sweep continues.
 
 ### `pipelines/send_offers.py`
 

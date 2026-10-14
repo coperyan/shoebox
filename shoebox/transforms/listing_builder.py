@@ -461,16 +461,32 @@ def rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict:
 
 
 def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[str, Any]:
-    """Round-trip an existing inventory item with only ``product.title`` changed.
+    """Round-trip an existing inventory item with only ``product.title`` changed."""
+    return round_trip_inventory_item_body(item, title=new_title)
+
+
+def inventory_item_body_with_images(item: InventoryItem, image_urls: list[str]) -> dict[str, Any]:
+    """Round-trip an existing inventory item with only ``product.imageUrls`` changed."""
+    return round_trip_inventory_item_body(item, image_urls=image_urls)
+
+
+def round_trip_inventory_item_body(
+    item: InventoryItem,
+    *,
+    title: str | None = None,
+    image_urls: list[str] | None = None,
+) -> dict[str, Any]:
+    """Round-trip an existing inventory item, replacing only what is passed.
 
     Unlike :func:`rebuild_inventory_item_body`, this preserves the item's own
     description, images, condition, and packaging rather than rebuilding them
-    from settings -- a title edit must not quietly rewrite the rest of a live
-    listing. Values eBay omits fall back to the standard single-card payload.
+    from settings -- a title or picture edit must not quietly rewrite the rest
+    of a live listing. Values eBay omits fall back to the standard single-card
+    payload.
     """
     product = item.product
     if product is None:
-        raise ValueError(f"Inventory item {item.sku} has no product to retitle")
+        raise ValueError(f"Inventory item {item.sku} has no product to update")
 
     quantity = 1
     if item.availability and item.availability.ship_to_location_availability:
@@ -479,14 +495,14 @@ def inventory_item_body_with_title(item: InventoryItem, new_title: str) -> dict[
     body = base_inventory_item_payload(
         quantity=quantity,
         product={
-            "title": new_title,
+            "title": title if title is not None else product.title,
             "description": product.description,
             # eBay accepts aspects only as arrays; the model normalizes
             # single-value aspects down to plain strings on the way in.
             "aspects": {
                 k: (v if isinstance(v, list) else [v]) for k, v in product.aspects.items() if v
             },
-            "imageUrls": list(product.image_urls),
+            "imageUrls": list(image_urls if image_urls is not None else product.image_urls),
         },
     )
 

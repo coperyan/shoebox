@@ -30,6 +30,9 @@ _ZERO_VIEW_PRICE_LADDER: list[tuple[float, float]] = [
 # Promoted-listings ad rate (percent) applied when refreshing a promoted listing.
 _RELIST_PROMOTE_RATE = 7
 
+# GCS names for a listing's pictures, by position.
+_PICTURE_SIDES = ("front", "back", "combined")
+
 
 def get_active_listings(ebay_api: EbayClient) -> pd.DataFrame:
     active_listings = ebay_api.trading.get_active_listings()
@@ -86,8 +89,10 @@ def ebay_image_to_gcs(
     picture_urls = [p.replace("$_1", "$_57") for p in picture_urls]
     bucket = gcs_client.client.bucket(settings.gcs.image_bucket)
     gcs_urls = []
-    for url in picture_urls:
-        side = "front" if url == picture_urls[0] else "back"
+    for i, url in enumerate(picture_urls):
+        # Name by position: listings can carry a third (combined) picture, and
+        # sharing the "back" name would overwrite the back with it.
+        side = _PICTURE_SIDES[i] if i < len(_PICTURE_SIDES) else f"img{i + 1}"
         resp = requests.get(url)
         tmp_img = resp.content
         blob_path = f"other/{sku}_{side}.png"

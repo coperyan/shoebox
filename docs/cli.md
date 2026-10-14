@@ -55,6 +55,11 @@ locally.
 
 Offers are created **unpublished** unless `--publish` is passed.
 
+Rows with both a front and a back scan get a third picture: the two side by
+side at matched heights (capped at 3200px wide). The front stays picture 1, so
+the search thumbnail doesn't change. If the composite can't be built, the
+listing goes ahead with the two scans.
+
 ### `create-variation-listings`
 Builds multi-variation ("You Pick") listings from an inventory workbook. Each
 `Subset ID` group in the sheet becomes one listing whose variations are the
@@ -134,6 +139,27 @@ did the work. Variation ("Complete Your Set") listings are skipped.
 |---|---|
 | `--input PATH` | Read a local `.jsonl`/`.csv` export instead of the BigQuery view |
 | `--apply` | Push the new titles to eBay (default: preview only) |
+| `--limit N` | Cap how many listings are updated in one run |
+
+### `add-combined-images`
+Backfills the combined front+back picture on listings already live. Every
+single-card listing with exactly two pictures has them downloaded, combined
+side by side, uploaded to GCS (`other/<sku>_combined.jpg`), and appended as
+picture 3. The change goes through `createOrReplaceInventoryItem` with the
+rest of the item round-tripped untouched, so the listing keeps its item ID,
+watchers, and sales history.
+
+Reads the same source as `enhance-listing-titles` (the BigQuery view by
+default, or `--input`) and writes `exports/csv/combined_images_<timestamp>.csv`.
+Skipped: variation listings, SKU-less listings, and anything without exactly
+two pictures. That last rule makes re-runs safe: the live item is re-checked
+before writing, so no listing gets a second composite.
+**Nothing is sent to eBay without `--apply`.**
+
+| Flag | Effect |
+|---|---|
+| `--input PATH` | Read a local `.jsonl`/`.csv` export instead of the BigQuery view |
+| `--apply` | Push the new pictures to eBay (default: preview only) |
 | `--limit N` | Cap how many listings are updated in one run |
 
 ### `send-offers`
