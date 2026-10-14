@@ -215,18 +215,18 @@ following a partial one only picks up what is actually left.
 
 - Same listing source and preview/`--apply` contract as
   `enhance-listing-titles`. The plan marks each listing eligible or gives a
-  `skip_reason` (`variation_listing`, `no_sku`, `has_<n>_pictures`). The
-  view has no `picture_urls`, so with the default source the picture count is
-  blank and the live check below decides. `--limit` caps updates, not
-  listings checked.
-- Per eligible SKU: GET the inventory item and check that it *still* has
-  exactly two `imageUrls` (the view can be a day stale). Then download both,
-  `combine_front_back`, upload to `other/<sku>_combined.jpg`, and PUT the
-  item back via `inventory_item_body_with_images`. That function and
-  `inventory_item_body_with_title` both wrap `round_trip_inventory_item_body`,
-  so the description, condition, and packaging are preserved.
+  `skip_reason` (`variation_listing`, `no_sku`, `no_item_id`,
+  `has_<n>_pictures`), using the view's `picture_urls`.
+- Per eligible listing: Trading `GetItem`, and stop unless it *still* shows
+  exactly two pictures (the view can be a day stale). Re-host both with
+  `relist_listings.ebay_image_to_gcs`, combine the GCS copies, upload
+  `other/<sku>_combined.jpg`, then PUT the item via
+  `inventory_item_body_with_images` with all three URLs.
+- Pictures come from `GetItem`, not the inventory item. eBay's
+  `getInventoryItem` often returns only the front for a two-picture listing,
+  and round-tripping that list would strip the back.
 - A failure on one listing is recorded in the `_applied.csv` report and the
-  sweep continues.
+  sweep continues. `--limit` caps updates, not listings checked.
 
 ### `pipelines/send_offers.py`
 

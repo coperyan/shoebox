@@ -19,9 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   warning and the listing goes ahead with two pictures.
   `create-variation-listings` does the same per card. New
   `add-combined-images` backfills live listings: preview by default, then
-  `--apply [--limit N]` appends the composite to each single-card listing
-  that has exactly two pictures, round-tripping the inventory item so nothing
-  else on the listing changes. Pillow is now a declared dependency (it was
+  `--apply [--limit N]`. For each single-card listing with exactly two
+  pictures, it re-hosts the live pictures in GCS the way relist does, then
+  sets front, back, and combined on the inventory item, round-tripping
+  everything else. The pictures come from `GetItem` because eBay's inventory
+  item often lists only the front. Pillow is now a declared dependency (it was
   already installed through Streamlit).
 
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily

@@ -305,65 +305,92 @@ class TestAddCombinedImages:
         outcomes = {"A": "skipped", "B": "skipped", "C": "updated", "D": "updated", "E": "updated"}
         seen = []
 
-        def fake_add(sku, **kwargs):
+        def fake_add(sku, item_id, **kwargs):
             seen.append(sku)
             return outcomes[sku]
 
         monkeypatch.setattr(mod, "add_combined_image", fake_add)
-        plan = pd.DataFrame([{"sku": s, "eligible": True} for s in outcomes])
+        plan = pd.DataFrame([{"sku": s, "item_id": s, "eligible": True} for s in outcomes])
 
         applied = mod.apply_combined_images(plan, ebay=object(), gcs=object(), limit=2)
 
         assert seen == ["A", "B", "C", "D"]
         assert applied["status"].tolist() == ["skipped", "skipped", "updated", "updated"]
 
-    def test_appends_composite_and_leaves_the_rest_of_the_item(self, monkeypatch):
+    def _ebay(self, pictures, inventory_urls):
+        trading = SimpleNamespace(get_item_details=lambda item_id: {"picture_urls": pictures})
+        return SimpleNamespace(trading=trading, inventory=FakeInventory(inventory_urls))
+
+    def _fake_http(self, monkeypatch):
+        fetched = []
+
+        def get(url, timeout=None):
+            fetched.append(url)
+            return SimpleNamespace(content=_jpeg(None, (10, 14)), raise_for_status=lambda: None)
+
+        monkeypatch.setattr("requests.get", get)
+        return fetched
+
+    def _settings(self):
+        return SimpleNamespace(gcs=SimpleNamespace(image_bucket="bucket"))
+
+    def test_rehosts_live_pictures_and_sets_all_three(self, monkeypatch):
         from shoebox.pipelines import add_combined_images as mod
 
-        downloaded = []
-
-        def fake_download(url):
-            downloaded.append(url)
-            return _jpeg(None, (10, 14))
-
-        monkeypatch.setattr(mod, "_download", fake_download)
-        inventory, gcs = FakeInventory(["https://x/front.jpg", "https://x/back.jpg"]), FakeGCS()
+        fetched = self._fake_http(monkeypatch)
+        # eBay shows two pictures, but the inventory item only lists the front;
+        # writing that list back would drop the back.
+        ebay = self._ebay(
+            ["https://i.ebayimg.com/f/$_1.PNG", "https://i.ebayimg.com/b/$_1.PNG"],
+            ["https://storage.googleapis.com/bucket/images/front__SCAN_1.png"],
+        )
+        gcs = FakeGCS()
 
         status = mod.add_combined_image(
-            "SKU1", ebay=SimpleNamespace(inventory=inventory), gcs=gcs, bucket="bucket"
+            "SKU1", "111", ebay=ebay, gcs=gcs, settings=self._settings()
         )
 
         assert status == "updated"
-        assert downloaded == ["https://x/front.jpg", "https://x/back.jpg"]
-        assert list(gcs.objects) == ["other/SKU1_combined.jpg"]
-        ((sku, body),) = inventory.upserts
+        gcs_base = "https://storage.googleapis.com/bucket/other/SKU1"
+        assert fetched == [
+            "https://i.ebayimg.com/f/$_57.PNG",
+            "https://i.ebayimg.com/b/$_57.PNG",
+            f"{gcs_base}_front.png",
+            f"{gcs_base}_back.png",
+        ]
+        assert sorted(gcs.objects) == [
+            "other/SKU1_back.png",
+            "other/SKU1_combined.jpg",
+            "other/SKU1_front.png",
+        ]
+        ((sku, body),) = ebay.inventory.upserts
         assert sku == "SKU1"
         assert body["product"]["imageUrls"] == [
-            "https://x/front.jpg",
-            "https://x/back.jpg",
-            "https://storage.googleapis.com/bucket/other/SKU1_combined.jpg",
+            f"{gcs_base}_front.png",
+            f"{gcs_base}_back.png",
+            f"{gcs_base}_combined.jpg",
         ]
         assert body["product"]["title"] == "2025 Topps Barry Bonds #12"
         assert body["product"]["description"] == "<div>Set: 2025 Topps</div>"
         assert body["condition"] == "USED_VERY_GOOD"
 
-    def test_rerun_does_not_add_a_second_composite(self, monkeypatch):
+    def test_listings_without_exactly_two_live_pictures_are_left_alone(self, monkeypatch):
         from shoebox.pipelines import add_combined_images as mod
 
-        monkeypatch.setattr(mod, "_download", lambda url: (_ for _ in ()).throw(AssertionError))
-        inventory = FakeInventory(["f", "b", "combined"])
-
-        status = mod.add_combined_image(
-            "SKU1", ebay=SimpleNamespace(inventory=inventory), gcs=FakeGCS(), bucket="bucket"
-        )
-
-        assert status == "skipped"
-        assert inventory.upserts == []
+        fetched = self._fake_http(monkeypatch)
+        for pictures in (["f"], ["f", "b", "combined"]):
+            ebay = self._ebay(pictures, ["f"])
+            status = mod.add_combined_image(
+                "SKU1", "111", ebay=ebay, gcs=FakeGCS(), settings=self._settings()
+            )
+            assert status == "skipped"
+            assert ebay.inventory.upserts == []
+        assert fetched == []
 
     def test_apply_records_failures_and_continues(self, monkeypatch):
         from shoebox.pipelines import add_combined_images as mod
 
-        def fake_add(sku, **kwargs):
+        def fake_add(sku, item_id, **kwargs):
             if sku == "BAD":
                 raise RuntimeError("boom")
             return "updated"
@@ -371,10 +398,10 @@ class TestAddCombinedImages:
         monkeypatch.setattr(mod, "add_combined_image", fake_add)
         plan = pd.DataFrame(
             [
-                {"sku": "A", "eligible": True},
-                {"sku": "BAD", "eligible": True},
-                {"sku": "C", "eligible": False},
-                {"sku": "D", "eligible": True},
+                {"sku": "A", "item_id": "1", "eligible": True},
+                {"sku": "BAD", "item_id": "2", "eligible": True},
+                {"sku": "C", "item_id": "3", "eligible": False},
+                {"sku": "D", "item_id": "4", "eligible": True},
             ]
         )
 

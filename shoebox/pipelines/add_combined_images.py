@@ -2,8 +2,8 @@
 
 New listings get this picture from ``create-listings``. This backfills it on
 the existing ones: for every single-card listing with exactly two pictures
-(front, back), the two are downloaded, combined side by side, uploaded to GCS,
-and appended as picture 3. The front stays picture 1, so search thumbnails and
+(front, back), the two are copied full-size into GCS, combined side by side,
+and the listing's pictures are set to front, back, combined. The front stays picture 1, so search thumbnails and
 the send-offers Slack prompts don't change.
 
     shoebox add-combined-images                       # preview from BigQuery
@@ -33,7 +33,8 @@ from shoebox.pipelines.enhance_listing_titles import (
     load_listings,
     load_listings_from_bigquery,
 )
-from shoebox.settings import get_settings
+from shoebox.pipelines.relist_listings import ebay_image_to_gcs
+from shoebox.settings import Settings, get_settings
 from shoebox.transforms.listing_builder import inventory_item_body_with_images
 from shoebox.utils.images import combine_front_back
 from shoebox.utils.logging_setup import setup_logging
@@ -88,6 +89,9 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
             # The inventory item is what gets updated; SKU-less listings
             # (created outside the Inventory API) have none.
             skip_reason = "no_sku"
+        elif not item_id:
+            # The live picture check is by item ID.
+            skip_reason = "no_item_id"
         elif pictures is not None and len(pictures) != 2:
             skip_reason = f"has_{len(pictures)}_pictures"
 
@@ -104,41 +108,45 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame.from_records(records)
 
 
-def _full_size(url: str) -> str:
-    # eBay-hosted picture URLs ending in $_1 are thumbnails; $_57 is full size.
-    return url.replace("$_1", "$_57")
-
-
 def _download(url: str) -> bytes:
-    resp = requests.get(_full_size(url), timeout=_DOWNLOAD_TIMEOUT_S)
+    resp = requests.get(url, timeout=_DOWNLOAD_TIMEOUT_S)
     resp.raise_for_status()
     return resp.content
 
 
 def add_combined_image(
     sku: str,
+    item_id: str,
     *,
     ebay: EbayClient,
     gcs: GCSClient,
-    bucket: str,
+    settings: Settings,
 ) -> str:
-    """Append a front+back composite to one listing's pictures.
+    """Give one listing three pictures: front, back, and the composite.
 
-    Returns "updated", or "skipped" when the live inventory item no longer has
-    exactly two pictures (the report source can be a day stale).
+    The live listing's pictures (Trading GetItem) are the source of truth.
+    The inventory item's ``imageUrls`` can't be trusted here: eBay often
+    reports only the front there for a listing that shows two pictures, and
+    writing that list back would drop the back. So the pictures are re-hosted
+    the way ``relist-listings`` does it (full-size copies in GCS) and all
+    three go back on the item.
+
+    Returns "updated", or "skipped" when the listing no longer has exactly
+    two pictures (the report source can be a day stale).
     """
-    item = ebay.inventory.get_inventory_item(sku)
-    current = list(item.product.image_urls) if item.product else []
-    if len(current) != 2:
-        logger.info("sku=%s has %d picture(s) on eBay; skipping", sku, len(current))
+    pictures = ebay.trading.get_item_details(item_id=item_id).get("picture_urls") or []
+    if len(pictures) != 2:
+        logger.info("item_id=%s has %d picture(s) on eBay; skipping", item_id, len(pictures))
         return "skipped"
 
-    combined = combine_front_back(_download(current[0]), _download(current[1]))
-    blob = gcs.client.bucket(bucket).blob(f"other/{sku}_combined.jpg")
+    front_url, back_url = ebay_image_to_gcs(pictures, sku, gcs, settings)
+    combined = combine_front_back(_download(front_url), _download(back_url))
+    blob = gcs.client.bucket(settings.gcs.image_bucket).blob(f"other/{sku}_combined.jpg")
     blob.upload_from_string(combined, content_type="image/jpeg")
 
+    item = ebay.inventory.get_inventory_item(sku)
     ebay.inventory.upsert_inventory_item(
-        sku, inventory_item_body_with_images(item, [*current, blob.public_url])
+        sku, inventory_item_body_with_images(item, [front_url, back_url, blob.public_url])
     )
     logger.info("Added combined picture to sku=%s", sku)
     return "updated"
@@ -153,13 +161,12 @@ def apply_combined_images(
 ) -> pd.DataFrame:
     """Update the eligible listings one at a time; a failure doesn't stop the run.
 
-    ``limit`` caps listings actually updated, not listings looked at: when the
-    plan couldn't count pictures, many of the first candidates may turn out
-    to have more or fewer than two and be skipped.
+    ``limit`` caps listings actually updated, not listings looked at: a
+    candidate whose live picture count isn't two is skipped and doesn't count.
     """
     ebay = ebay or EbayClient()
     gcs = gcs or GCSClient()
-    bucket = get_settings().gcs.image_bucket
+    settings = get_settings()
 
     targets = plan[plan["eligible"]]
 
@@ -171,7 +178,9 @@ def apply_combined_images(
             break
         sku = row["sku"]
         try:
-            statuses.append(add_combined_image(sku, ebay=ebay, gcs=gcs, bucket=bucket))
+            statuses.append(
+                add_combined_image(sku, row["item_id"], ebay=ebay, gcs=gcs, settings=settings)
+            )
             errors.append("")
         except Exception as e:
             logger.warning("Failed to add combined picture to sku=%s: %s", sku, e)

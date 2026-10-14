@@ -1,3 +1,4 @@
+CREATE OR REPLACE VIEW `ebay.v_active_listing_details` AS 
 WITH active_listings AS (
   SELECT
     l.item_id,
@@ -27,7 +28,31 @@ WITH active_listings AS (
       JSON_VALUE(item_specifics,'$."Parallel/Variety"[0]') IN ('Base','[Base]') THEN NULL 
         ELSE JSON_VALUE(item_specifics,'$."Parallel/Variety"[0]') END AS parallel_variety,
     JSON_VALUE(item_specifics,'$."Card Number"[0]') AS card_number,
-    JSON_VALUE(item_specifics,'$."Print Run"[0]') AS print_run
+    JSON_VALUE(item_specifics,'$."Print Run"[0]') AS print_run,
+    JSON_VALUE(item_specifics,'$."Autographed"[0]') AS autographed,
+    ld.condition_id,
+    ld.condition_display_name,
+    ld.condition_id = '2750' AS is_graded,
+    ld.condition_descriptors,
+    JSON_VALUE(ld.condition_descriptors,'$."Professional Grader"') AS grader,
+    JSON_VALUE(ld.condition_descriptors,'$."Grade"') AS grade,
+    JSON_VALUE(ld.condition_descriptors,'$."Certification Number"') AS cert_number,
+    JSON_VALUE(ld.condition_descriptors,'$."Card Condition"') AS card_condition,
+    ld.best_offer_enabled,
+    ld.best_offer_count,
+    ld.store_category_id,
+    ld.store_category2_id,
+    ld.shipping_profile_id,
+    ld.shipping_profile_name,
+    ld.return_profile_name,
+    ld.payment_profile_name,
+    ld.package_type,
+    ld.package_length_in,
+    ld.package_width_in,
+    ld.package_depth_in,
+    ld.package_weight_oz,
+    ld.shipping_irregular,
+    ld.picture_urls
   FROM
     `ebay.active_listings` l
       LEFT JOIN `ebay.active_listing_details` ld

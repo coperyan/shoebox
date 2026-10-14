@@ -143,19 +143,23 @@ did the work. Variation ("Complete Your Set") listings are skipped.
 
 ### `add-combined-images`
 Backfills the combined front+back picture on listings already live. Every
-single-card listing with exactly two pictures has them downloaded, combined
-side by side, uploaded to GCS (`other/<sku>_combined.jpg`), and appended as
-picture 3. The change goes through `createOrReplaceInventoryItem` with the
-rest of the item round-tripped untouched, so the listing keeps its item ID,
-watchers, and sales history.
+single-card listing with exactly two pictures gets front, back, and combined.
+The two live pictures (Trading `GetItem`, full-size `$_57`) are re-hosted in
+GCS the same way `relist-listings` does it. The composite goes to
+`other/<sku>_combined.jpg`, and all three are written to the inventory item
+with the rest of the item round-tripped untouched. The listing keeps its
+item ID, watchers, and sales history.
+
+The pictures come from the live listing rather than the inventory item's
+`imageUrls`, which often lists only the front for a listing that shows two.
+Writing that list back would drop the back.
 
 Reads the same source as `enhance-listing-titles` (the BigQuery view by
 default, or `--input`) and writes `exports/csv/combined_images_<timestamp>.csv`.
-Skipped: variation listings, SKU-less listings, and anything without exactly
-two pictures. The BigQuery view has no `picture_urls` column, so the picture
-count is read from the live inventory item right before writing. That check
-also makes re-runs safe: no listing gets a second composite. `--limit` counts
-listings updated, not listings checked.
+Skipped: variation listings, listings without a SKU or item ID, and anything
+without exactly two pictures. The live count is re-checked right before
+writing, so re-runs are safe: no listing gets a second composite. `--limit`
+counts listings updated, not listings checked.
 **Nothing is sent to eBay without `--apply`.**
 
 | Flag | Effect |
