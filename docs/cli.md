@@ -152,8 +152,10 @@ watchers, and sales history.
 Reads the same source as `enhance-listing-titles` (the BigQuery view by
 default, or `--input`) and writes `exports/csv/combined_images_<timestamp>.csv`.
 Skipped: variation listings, SKU-less listings, and anything without exactly
-two pictures. That last rule makes re-runs safe: the live item is re-checked
-before writing, so no listing gets a second composite.
+two pictures. The BigQuery view has no `picture_urls` column, so the picture
+count is read from the live inventory item right before writing. That check
+also makes re-runs safe: no listing gets a second composite. `--limit` counts
+listings updated, not listings checked.
 **Nothing is sent to eBay without `--apply`.**
 
 | Flag | Effect |

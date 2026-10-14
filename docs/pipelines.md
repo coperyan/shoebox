@@ -215,7 +215,10 @@ following a partial one only picks up what is actually left.
 
 - Same listing source and preview/`--apply` contract as
   `enhance-listing-titles`. The plan marks each listing eligible or gives a
-  `skip_reason` (`variation_listing`, `no_sku`, `has_<n>_pictures`).
+  `skip_reason` (`variation_listing`, `no_sku`, `has_<n>_pictures`). The
+  view has no `picture_urls`, so with the default source the picture count is
+  blank and the live check below decides. `--limit` caps updates, not
+  listings checked.
 - Per eligible SKU: GET the inventory item and check that it *still* has
   exactly two `imageUrls` (the view can be a day stale). Then download both,
   `combine_front_back`, upload to `other/<sku>_combined.jpg`, and PUT the

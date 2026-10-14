@@ -282,6 +282,41 @@ class TestAddCombinedImages:
         ]
         assert plan["item_id"].iloc[0] == "1"
 
+    def test_without_picture_urls_column_the_count_is_left_to_the_live_check(self):
+        from shoebox.pipelines.add_combined_images import build_image_plan
+
+        # v_active_listing_details has no picture_urls column.
+        df = pd.DataFrame(
+            [
+                {"item_id": 1, "sku": "A", "title": "Card A"},
+                {"item_id": 2, "sku": None, "title": "Card B"},
+            ]
+        )
+
+        plan = build_image_plan(df)
+
+        assert plan["eligible"].tolist() == [True, False]
+        assert plan["skip_reason"].tolist() == ["", "no_sku"]
+        assert plan["picture_count"].isna().all()
+
+    def test_limit_counts_updates_not_listings_checked(self, monkeypatch):
+        from shoebox.pipelines import add_combined_images as mod
+
+        outcomes = {"A": "skipped", "B": "skipped", "C": "updated", "D": "updated", "E": "updated"}
+        seen = []
+
+        def fake_add(sku, **kwargs):
+            seen.append(sku)
+            return outcomes[sku]
+
+        monkeypatch.setattr(mod, "add_combined_image", fake_add)
+        plan = pd.DataFrame([{"sku": s, "eligible": True} for s in outcomes])
+
+        applied = mod.apply_combined_images(plan, ebay=object(), gcs=object(), limit=2)
+
+        assert seen == ["A", "B", "C", "D"]
+        assert applied["status"].tolist() == ["skipped", "skipped", "updated", "updated"]
+
     def test_appends_composite_and_leaves_the_rest_of_the_item(self, monkeypatch):
         from shoebox.pipelines import add_combined_images as mod
 

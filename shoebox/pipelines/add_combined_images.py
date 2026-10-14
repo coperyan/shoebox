@@ -10,9 +10,9 @@ the send-offers Slack prompts don't change.
     shoebox add-combined-images --input pull.csv      # preview a local export
     shoebox add-combined-images --apply --limit 5     # update the first 5
 
-Nothing is sent to eBay without ``--apply``. Re-running is safe: a listing
-that no longer has exactly two pictures is skipped, so none gets a second
-composite.
+Nothing is sent to eBay without ``--apply``. Re-running is safe: every
+listing's live picture count is checked right before writing, and anything
+without exactly two pictures is skipped, so none gets a second composite.
 """
 
 from __future__ import annotations
@@ -67,13 +67,19 @@ def _picture_urls(value: object) -> list[str]:
 
 
 def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
-    """One report row per listing, saying whether it gets a combined picture."""
+    """One report row per listing, saying whether it gets a combined picture.
+
+    Without a ``picture_urls`` column (v_active_listing_details doesn't carry
+    one) the count is left blank and checked against the live item at apply
+    time instead.
+    """
+    has_pictures = "picture_urls" in df.columns
     records = []
     for _, row in df.iterrows():
         title = _clean_str(row.get("title"))
         sku = _clean_str(row.get("sku"))
         item_id = _clean_str(row.get("item_id")).removesuffix(".0")
-        pictures = _picture_urls(row.get("picture_urls"))
+        pictures = _picture_urls(row.get("picture_urls")) if has_pictures else None
 
         skip_reason = ""
         if _VARIATION_TITLE_MARKER in title.lower():
@@ -82,7 +88,7 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
             # The inventory item is what gets updated; SKU-less listings
             # (created outside the Inventory API) have none.
             skip_reason = "no_sku"
-        elif len(pictures) != 2:
+        elif pictures is not None and len(pictures) != 2:
             skip_reason = f"has_{len(pictures)}_pictures"
 
         records.append(
@@ -90,7 +96,7 @@ def build_image_plan(df: pd.DataFrame) -> pd.DataFrame:
                 "item_id": item_id,
                 "sku": sku,
                 "title": title,
-                "picture_count": len(pictures),
+                "picture_count": len(pictures) if pictures is not None else None,
                 "eligible": not skip_reason,
                 "skip_reason": skip_reason,
             }
@@ -145,19 +151,24 @@ def apply_combined_images(
     gcs: GCSClient | None = None,
     limit: int | None = None,
 ) -> pd.DataFrame:
-    """Update the eligible listings one at a time; a failure doesn't stop the run."""
+    """Update the eligible listings one at a time; a failure doesn't stop the run.
+
+    ``limit`` caps listings actually updated, not listings looked at: when the
+    plan couldn't count pictures, many of the first candidates may turn out
+    to have more or fewer than two and be skipped.
+    """
     ebay = ebay or EbayClient()
     gcs = gcs or GCSClient()
     bucket = get_settings().gcs.image_bucket
 
-    targets = plan[plan["eligible"]].copy()
-    if limit is not None:
-        targets = targets.head(limit)
+    targets = plan[plan["eligible"]]
 
     statuses: list[str] = []
     errors: list[str] = []
     total = len(targets)
     for idx, (_, row) in enumerate(targets.iterrows(), 1):
+        if limit is not None and statuses.count("updated") >= limit:
+            break
         sku = row["sku"]
         try:
             statuses.append(add_combined_image(sku, ebay=ebay, gcs=gcs, bucket=bucket))
@@ -169,7 +180,7 @@ def apply_combined_images(
         if idx % 25 == 0 or idx == total:
             logger.info("Processed %d of %d listing(s)", idx, total)
 
-    return targets.assign(status=statuses, error=errors)
+    return targets.head(len(statuses)).assign(status=statuses, error=errors)
 
 
 def write_report(plan: pd.DataFrame, exports_dir: Path) -> Path:
@@ -201,6 +212,8 @@ def add_combined_images(
     eligible = int(plan["eligible"].sum()) if not plan.empty else 0
     skipped = plan.loc[~plan["eligible"], "skip_reason"].value_counts().to_dict()
     logger.info("%d listing(s) eligible for a combined picture; skipped: %s", eligible, skipped)
+    if not plan.empty and plan["picture_count"].isna().any():
+        logger.info("No picture_urls in the source; picture counts are checked on eBay per listing")
     logger.info("Report written to %s", report_path)
 
     if not apply:
