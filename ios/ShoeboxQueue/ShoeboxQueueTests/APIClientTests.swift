@@ -56,7 +56,7 @@ final class APIClientTests: XCTestCase {
 
     func testURLJoiningToleratesSlashes() throws {
         let base = try XCTUnwrap(URL(string: "https://example.run.app/"))
-        XCTAssertEqual(APIClient.url(base: base, path: "/healthz").absoluteString, "https://example.run.app/healthz")
+        XCTAssertEqual(APIClient.url(base: base, path: "/health").absoluteString, "https://example.run.app/health")
         XCTAssertEqual(APIClient.url(base: base, path: "queue/draft").absoluteString, "https://example.run.app/queue/draft")
     }
 
@@ -132,7 +132,7 @@ final class APIClientTests: XCTestCase {
                 return try StubURLProtocol.reply(request, status: 200, body: runsFixture)
             case ("GET", "/queue/listings/20261015T120000Z-a1b2c3d4"):
                 return try StubURLProtocol.reply(request, status: 200, body: runFixture)
-            case ("GET", "/healthz"):
+            case ("GET", "/health"):
                 return try StubURLProtocol.reply(request, status: 200, body: healthBody)
             case ("GET", "/metadata"):
                 return try StubURLProtocol.reply(request, status: 200, body: metadataFixture)
@@ -171,7 +171,7 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(
             StubURLProtocol.recorded.map { $0.url?.path ?? "" },
             [
-                "/healthz", "/metadata", "/queue/preview", "/queue", "/queue/draft", "/queue", "/images",
+                "/health", "/metadata", "/queue/preview", "/queue", "/queue/draft", "/queue", "/images",
                 "/queue/listings", "/queue/listings", "/queue/listings/20261015T120000Z-a1b2c3d4",
             ]
         )

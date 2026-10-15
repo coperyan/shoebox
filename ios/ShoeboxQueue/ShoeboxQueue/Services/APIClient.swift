@@ -183,7 +183,7 @@ final class APIClient: QueueAPI {
     // MARK: QueueAPI
 
     func health() async throws -> HealthResponse {
-        let request = buildRequest(path: "healthz", method: "GET")
+        let request = buildRequest(path: "health", method: "GET")
         let (data, response) = try await perform(request)
         try Self.ensureSuccess(response, data: data)
         return try decode(HealthResponse.self, from: data)

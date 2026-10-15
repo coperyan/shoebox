@@ -48,7 +48,7 @@ Open the **Settings** tab:
   hosts is allowed by the app's ATS exception; everything else must be `https`.
 - **API key**: the value of `SHOEBOX_API_KEY` (the `shoebox-api-key` secret in Secret Manager). It is
   stored in the Keychain, not in UserDefaults.
-- **Save**, then **Test connection** (calls `GET /healthz`, which needs no key), then
+- **Save**, then **Test connection** (calls `GET /health`, which needs no key), then
   **Refresh metadata** (calls `GET /metadata` with the key; a 401 here means the key is wrong).
 
 Metadata is cached on disk (`metadata.json` + `metadata.meta.json`) with its ETag, so the app opens

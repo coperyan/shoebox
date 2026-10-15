@@ -145,6 +145,11 @@ def create_app(
     Cloud Run job client and the run-record store built on that GCS client."""
     settings = settings or get_settings()
     api_key = api_key if api_key is not None else os.environ.get(API_KEY_ENV, "")
+    # A secret created with `openssl rand -hex 32 | gcloud secrets create --data-file=-`
+    # carries a trailing newline, and Cloud Run hands it to the env var verbatim
+    # while a shell's $(...) strips it from the client side. Keys never contain
+    # whitespace, so drop it here rather than make every operator remember `tr -d`.
+    api_key = api_key.strip()
     if not api_key:
         raise RuntimeError(f"{API_KEY_ENV} is not set; the API refuses to start without a key")
     if not settings.paths.queue_uri:
@@ -215,7 +220,11 @@ def create_app(
     app.state.ctx = ctx
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-    @app.get("/healthz", response_model=HealthResponse)
+    # /health is the one to use from outside: on a run.app URL the Google front
+    # end answers /healthz itself with its own 404 before the container sees it.
+    # /healthz stays for local runs and anything already pointed at it.
+    @app.get("/health", response_model=HealthResponse)
+    @app.get("/healthz", response_model=HealthResponse, include_in_schema=False)
     def healthz() -> HealthResponse:
         return HealthResponse(status="ok", version=_shoebox_version())
 

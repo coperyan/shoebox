@@ -161,7 +161,7 @@ One-time setup, after the [one-time setup](#one-time-setup) above:
 
 ```bash
 # 1. The API key. Treat it like a password; rotate by adding a version.
-openssl rand -hex 32 | gcloud secrets create shoebox-api-key --replication-policy=automatic --data-file=-
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create shoebox-api-key --replication-policy=automatic --data-file=-
 gcloud secrets add-iam-policy-binding shoebox-api-key \
   --member serviceAccount:$RUNNER --role roles/secretmanager.secretAccessor
 
@@ -176,7 +176,7 @@ gcloud storage buckets update gs://IMAGE_BUCKET --lifecycle-file=lifecycle.json 
 # 4. Deploy (first the service, then its public binding) and smoke-test.
 python scripts/deploy_cloud_run.py --only shoebox-api
 URL=$(gcloud run services describe shoebox-api --region us-central1 --format 'value(status.url)')
-curl -s $URL/healthz
+curl -s $URL/health
 curl -s -H "X-API-Key: $(gcloud secrets versions access latest --secret shoebox-api-key)" $URL/metadata | head -c 300
 ```
 
