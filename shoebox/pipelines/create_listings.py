@@ -20,7 +20,7 @@ from shoebox.services.listings import ListingService
 from shoebox.settings import Settings, ensure_runtime_dirs, get_settings
 from shoebox.transforms.listing_builder import build_draft
 from shoebox.utils.ad_campaign import get_ad_campaign
-from shoebox.utils.image_refs import materialize_image
+from shoebox.utils.image_refs import archive_scan, materialize_scan
 from shoebox.utils.jsonl import append_jsonl, read_jsonl
 from shoebox.utils.pricing import parse_price_reply, round_up_to_nine
 from shoebox.utils.sku import build_sku_50
@@ -215,34 +215,29 @@ def _create_one_listing(
     # Upload images. Each reference (local path, bare scan number, or a gs://
     # photo from the iOS app) is resolved to a local file once, up front. The
     # combined front+back picture is built from those files before the scans
-    # upload: uploading a scan deletes the local original.
-    front_path = materialize_image(q.image_front) if q.image_front else None
-    back_path = materialize_image(q.image_back) if q.image_back else None
+    # upload: uploading a scan deletes the local original, and a scan that
+    # was fetched from OneDrive is then moved into its Listed subfolder.
+    front = materialize_scan(q.image_front) if q.image_front else None
+    back = materialize_scan(q.image_back) if q.image_back else None
+    front_path = front.path if front else None
+    back_path = back.path if back else None
     combined_url = _upload_combined_image(q, img_client, front=front_path, back=back_path)
     image_urls: list[str] = []
 
-    if front_path is not None:
+    for side, image in (("front", front), ("back", back)):
+        if image is None:
+            continue
         image_urls.append(
             img_client.upload_image(
-                file_path=front_path,
+                file_path=image.path,
                 set_name=q.set_name,
                 subset_name=q.subset_name,
                 card_number=q.card_number,
                 parallel_variety=q.parallel_variety,
-                side="front",
+                side=side,
             ).public_url
         )
-    if back_path is not None:
-        image_urls.append(
-            img_client.upload_image(
-                file_path=back_path,
-                set_name=q.set_name,
-                subset_name=q.subset_name,
-                card_number=q.card_number,
-                parallel_variety=q.parallel_variety,
-                side="back",
-            ).public_url
-        )
+        archive_scan(image)
     # Third, after the scans: the front stays picture 1, which is the search
     # thumbnail and the image send-offers shows in Slack.
     if combined_url:

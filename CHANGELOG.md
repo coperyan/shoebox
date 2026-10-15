@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Listed scans leave the OneDrive scans folder.** When `create-listings`
+  fetches a scan from OneDrive (the Cloud Run job started from the iOS app),
+  it now moves that scan into `<scans_folder>/<onedrive.listed_subfolder>`
+  (`Listed` by default, created on first use) once the scan has been
+  uploaded -- the counterpart of the workstation deleting the local original,
+  so the scans folder only holds cards still to be listed. Best-effort: a
+  failed move is logged and the listing stands. Needs the `Files.ReadWrite`
+  Graph scope, now the `onedrive.scopes` default; add it to the Azure app
+  registration and sign in again (`scripts/onedrive_login.py --login --reset`,
+  then `--upload`). `utils/image_refs.materialize_scan` reports where each
+  image came from; `archive_scan` does the move; `OneDriveClient.move` is the
+  Graph call.
 - **App pickers and queue loading.** The iOS Set picker is sectioned by year
   (newest first) from a new per-set `set_year` in `GET /metadata`; subsets
   list `Base` first, then A–Z, in the API, the Streamlit UI and the app

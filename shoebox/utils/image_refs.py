@@ -14,14 +14,19 @@ A scan number whose file is not on disk is fetched from OneDrive when the
 has no sync folder), into the very path the workstation would use, so the
 image-log cache keys and GCS object names are identical on both hosts.
 
-``create-listings`` calls :func:`materialize_image` right before
+``create-listings`` calls :func:`materialize_scan` right before
 ``ImageLogClient.upload_image``, so the dedup cache, object naming, mirroring
-and image log behave identically for all three kinds.
+and image log behave identically for all three kinds. The upload deletes the
+local file; for a scan that came from OneDrive, :func:`archive_scan` then
+moves the OneDrive original into ``onedrive.listed_subfolder`` so that the
+scans folder, like ``scans_dir`` on the workstation, only holds unlisted cards.
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -29,7 +34,21 @@ from shoebox.clients.gcs import download_gs_file, is_gs_uri, parse_gs_uri
 from shoebox.settings import Settings, get_settings
 from shoebox.ui.helpers import handle_image_path
 
+logger = logging.getLogger(__name__)
+
 UPLOADS_SUBDIR = "app_uploads"
+
+ImageSource = Literal["local", "onedrive", "gs"]
+
+
+@dataclass(frozen=True)
+class MaterializedImage:
+    """A queue image as a local file, and where that file came from: already
+    on disk (``local``), fetched from OneDrive by scan name (``onedrive``) or
+    downloaded from the app's ``gs://`` upload (``gs``)."""
+
+    path: Path
+    source: ImageSource
 
 
 def classify_image_ref(ref: str | None) -> Literal["blank", "gs", "path"]:
@@ -54,14 +73,14 @@ def _default_onedrive(settings: Settings) -> Any:
     return client
 
 
-def materialize_image(
+def materialize_scan(
     ref: str,
     *,
     settings: Settings | None = None,
     download: Callable[[str, Path], Path] | None = None,
     onedrive: Any = None,
-) -> Path:
-    """Return a local file for ``ref`` (see module docstring).
+) -> MaterializedImage:
+    """Return a local file for ``ref`` and its source (see module docstring).
 
     Raises ValueError for a blank reference. A ``gs://`` object that does not
     exist raises FileNotFoundError from the download; the caller (the per-row
@@ -85,14 +104,61 @@ def materialize_image(
         dest = Path(settings.paths.scans_dir) / UPLOADS_SUBDIR / basename
         if not dest.exists():
             download(ref, dest)
-        return dest
+        return MaterializedImage(dest, "gs")
 
     local = Path(handle_image_path(ref))
     if local.exists():
-        return local
+        return MaterializedImage(local, "local")
     settings = settings or get_settings()
     if settings.onedrive.enabled:
         if onedrive is None:
             onedrive = _default_onedrive(settings)
         onedrive.download(local.name, local)
-    return local
+        return MaterializedImage(local, "onedrive")
+    return MaterializedImage(local, "local")
+
+
+def materialize_image(
+    ref: str,
+    *,
+    settings: Settings | None = None,
+    download: Callable[[str, Path], Path] | None = None,
+    onedrive: Any = None,
+) -> Path:
+    """:func:`materialize_scan` for callers that only want the file."""
+    return materialize_scan(ref, settings=settings, download=download, onedrive=onedrive).path
+
+
+def archive_scan(
+    image: MaterializedImage,
+    *,
+    settings: Settings | None = None,
+    onedrive: Any = None,
+) -> str | None:
+    """After the upload: move a scan that was fetched from OneDrive into
+    ``onedrive.listed_subfolder``; returns its new OneDrive path, or None when
+    there was nothing to move (a local file, an app photo, the feature off).
+
+    Best-effort, like the workstation's delete of the original: the listing
+    is already made, so a failure here is logged, never raised. A 403 means
+    the token predates the ``Files.ReadWrite`` scope.
+    """
+    if image.source != "onedrive":
+        return None
+    settings = settings or get_settings()
+    subfolder = settings.onedrive.listed_subfolder.strip("/")
+    if not subfolder or not settings.onedrive.enabled:
+        return None
+    if onedrive is None:
+        onedrive = _default_onedrive(settings)
+    try:
+        return onedrive.move(image.path.name, subfolder)
+    except Exception:
+        logger.warning(
+            "Could not move %s into OneDrive %s/%s; it stays in the scans folder",
+            image.path.name,
+            settings.onedrive.scans_folder,
+            subfolder,
+            exc_info=True,
+        )
+        return None

@@ -140,7 +140,8 @@ job the iOS app starts. Optional; nothing happens until `client_id` and
 | `client_id` | `""` | Application (client) ID of the Azure app registration (public client, personal accounts) |
 | `authority` | `https://login.microsoftonline.com/consumers` | `consumers` for a personal account; a tenant ID for work/school |
 | `scans_folder` | `""` | Folder under the OneDrive root holding the scans, e.g. `Pictures/Card Scans` |
-| `scopes` | `["Files.Read"]` | Delegated Graph scopes |
+| `scopes` | `["Files.ReadWrite"]` | Delegated Graph scopes; write access is what lets the job move listed scans. Changing scopes needs a fresh sign-in (`--login --reset`, then `--upload`) |
+| `listed_subfolder` | `Listed` | Subfolder of `scans_folder` a scan is moved into after it was fetched from OneDrive and uploaded (created on first use). `""` leaves scans in place |
 | `token_cache_path` | `configs/onedrive_token_cache.json` | MSAL token cache on the workstation (gitignored), written by `scripts/onedrive_login.py` |
 | `token_cache_uri` | unset | `gs://` object holding the cache for the cloud job; used whenever set and refreshed by the job (refresh tokens rotate) |
 

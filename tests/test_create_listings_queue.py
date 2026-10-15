@@ -200,6 +200,68 @@ def test_combined_image_uses_materialised_scan_number_and_gs_photo(tmp_path, mon
     assert not front.exists() and not back.exists()
 
 
+def test_onedrive_scan_is_archived_after_its_upload(tmp_path, monkeypatch):
+    """In the cloud the front is fetched from OneDrive; once uploaded it is moved
+    into the Listed subfolder. The back is already on disk and is left alone."""
+    scans = tmp_path / "scans"
+    _point_settings_at(tmp_path, monkeypatch, scans_dir=str(scans))
+    settings = get_settings()
+    settings.onedrive.client_id = "app"
+    settings.onedrive.scans_folder = "Scans"
+    scans.mkdir()
+    (scans / "SCAN_0124.jpg").write_bytes(b"back")
+
+    events = []
+
+    class FakeOneDrive:
+        def download(self, name, dest):
+            events.append(("download", name))
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"front")
+            return dest
+
+        def move(self, name, subfolder):
+            events.append(("move", name, subfolder))
+            return f"Scans/{subfolder}/{name}"
+
+    fake = FakeOneDrive()
+    monkeypatch.setattr("shoebox.utils.image_refs._default_onedrive", lambda s: fake)
+
+    class ImageLog(_FakeImageLog):
+        def upload_image(self, **kwargs):
+            events.append(("upload", kwargs["file_path"].name))
+            return super().upload_image(**kwargs)
+
+    row = ListingQueueRow(
+        set_year="2025",
+        set_name="Topps",
+        subset_name="Base",
+        subset_type="Base",
+        card_number="12",
+        player="P",
+        image_front="123",
+        image_back="124",
+    )
+    cl._create_one_listing(
+        row,
+        sku="SKU1",
+        quick_title="t",
+        listings=None,
+        img_client=ImageLog(),
+        price_scrape_client=None,
+        publish=False,
+        dry_run=True,
+        schedule=False,
+        scrape_prices=False,
+    )
+    assert events == [
+        ("download", "SCAN_0123.jpg"),
+        ("upload", "SCAN_0123.jpg"),
+        ("move", "SCAN_0123.jpg", "Listed"),
+        ("upload", "SCAN_0124.jpg"),
+    ]
+
+
 def test_missing_gs_photo_fails_the_row_before_anything_uploads(tmp_path, monkeypatch):
     _point_settings_at(tmp_path, monkeypatch, scans_dir=str(tmp_path / "scans"))
 

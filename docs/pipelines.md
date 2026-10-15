@@ -107,7 +107,7 @@ Per queue row:
    to accept, or reply a number to override (tolerant parsing — `$4.99` etc.).
    If scraping fails, the prompt proposes the original queue price instead.
 2. **Images** — each reference is first turned into a local file by
-   `utils/image_refs.materialize_image` (an existing path as-is, a bare scan
+   `utils/image_refs.materialize_scan` (an existing path as-is, a bare scan
    number via the configured naming convention — fetched from OneDrive into
    that path when it is not on disk and `onedrive.*` is configured —, a `gs://`
    photo from the iOS app downloaded to `scans_dir/app_uploads/`). When a row has both,
@@ -117,7 +117,10 @@ Per queue row:
    original. The composite is named after the two files, so a re-run is served
    from the cache. Then the front and back upload through `ImageLogClient`
    (dedup cache; see [data-storage.md](data-storage.md)), producing public
-   GCS URLs. Picture order is front, back, combined.
+   GCS URLs; a scan that was fetched from OneDrive is then moved into
+   `<scans_folder>/<onedrive.listed_subfolder>` (`archive_scan`, best-effort),
+   the cloud counterpart of the local delete. Picture order is front, back,
+   combined.
 3. **Payload** — `transforms/listing_builder.build_draft` assembles the title
    (80-char limit with progressive element-stripping), HTML description,
    full item-specifics dict, store category, condition, package, and policy

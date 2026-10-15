@@ -16,7 +16,12 @@ from shoebox.clients.onedrive import (
 )
 from shoebox.settings import Settings, get_settings
 from shoebox.utils import image_refs
-from shoebox.utils.image_refs import materialize_image
+from shoebox.utils.image_refs import (
+    MaterializedImage,
+    archive_scan,
+    materialize_image,
+    materialize_scan,
+)
 from tests.test_api import FakeGCS
 from tests.test_scan_path import _point_settings_at
 
@@ -72,14 +77,34 @@ class FakeResponse:
         yield self._body
 
 
+class FakeJSONResponse(FakeResponse):
+    def __init__(self, status, payload=None, text=""):
+        super().__init__(status, text=text or (json.dumps(payload) if payload else ""))
+        self.payload = payload or {}
+
+    def json(self):
+        return self.payload
+
+
 class FakeHTTP:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls = []
+        self.requests = []  # (method, url, json body)
 
-    def get(self, url, headers=None, **kwargs):
+    def _call(self, method, url, headers=None, json=None, **kwargs):
         self.calls.append((url, headers["Authorization"]))
+        self.requests.append((method, url, json))
         return self.responses.pop(0)
+
+    def get(self, url, **kwargs):
+        return self._call("get", url, **kwargs)
+
+    def post(self, url, **kwargs):
+        return self._call("post", url, **kwargs)
+
+    def patch(self, url, **kwargs):
+        return self._call("patch", url, **kwargs)
 
 
 # ---- token store ----
@@ -194,7 +219,156 @@ def test_refresh_failure_is_auth_error(tmp_path):
         client.access_token()
 
 
+# ---- move ----
+
+SCANS = "https://graph.microsoft.com/v1.0/me/drive/root:/Pictures/Card%20Scans"
+
+
+def test_move_into_existing_subfolder(tmp_path):
+    http = FakeHTTP(
+        [
+            FakeJSONResponse(200, {"id": "FOLDER1"}),
+            FakeJSONResponse(200, {"id": "ITEM", "name": "SCAN_0234.jpg"}),
+            FakeJSONResponse(200, {"id": "ITEM2"}),
+        ]
+    )
+    client = _client(tmp_path, http)
+    assert client.move("SCAN_0234.jpg", "Listed") == "Pictures/Card Scans/Listed/SCAN_0234.jpg"
+    assert http.requests[0] == ("get", f"{SCANS}/Listed", None)
+    method, url, body = http.requests[1]
+    assert (method, url) == ("patch", f"{SCANS}/SCAN_0234.jpg")
+    assert body == {
+        "parentReference": {"id": "FOLDER1"},
+        "name": "SCAN_0234.jpg",
+        "@microsoft.graph.conflictBehavior": "replace",
+    }
+    # The folder id is cached: a second move is one PATCH.
+    client.move("SCAN_0235.jpg", "Listed")
+    assert [m for m, _, _ in http.requests] == ["get", "patch", "patch"]
+
+
+def test_move_creates_missing_subfolder(tmp_path):
+    http = FakeHTTP(
+        [
+            FakeJSONResponse(404),
+            FakeJSONResponse(201, {"id": "NEW"}),
+            FakeJSONResponse(200, {"id": "ITEM"}),
+        ]
+    )
+    client = _client(tmp_path, http)
+    client.move("SCAN_0001.jpg", "Listed")
+    method, url, body = http.requests[1]
+    assert (method, url) == ("post", f"{SCANS}:/children")
+    assert body == {"name": "Listed", "folder": {}, "@microsoft.graph.conflictBehavior": "fail"}
+    assert http.requests[2][2]["parentReference"] == {"id": "NEW"}
+
+
+def test_move_missing_scan_is_file_not_found(tmp_path):
+    http = FakeHTTP([FakeJSONResponse(200, {"id": "F"}), FakeJSONResponse(404)])
+    client = _client(tmp_path, http)
+    with pytest.raises(FileNotFoundError, match="SCAN_0001.jpg"):
+        client.move("SCAN_0001.jpg", "Listed")
+
+
+def test_move_without_write_scope_names_the_fix(tmp_path):
+    http = FakeHTTP([FakeJSONResponse(403, text="accessDenied")])
+    client = _client(tmp_path, http)
+    with pytest.raises(OneDriveError, match="Files.ReadWrite"):
+        client.move("SCAN_0001.jpg", "Listed")
+
+
+def test_move_401_refreshes_once(tmp_path):
+    http = FakeHTTP(
+        [FakeJSONResponse(401), FakeJSONResponse(200, {"id": "F"}), FakeJSONResponse(200, {})]
+    )
+    app = FakeMsalApp()
+    client = _client(tmp_path, http, app)
+    client.move("SCAN_0001.jpg", "Listed")
+    assert [h for _, h in http.calls] == ["Bearer tok1", "Bearer tok2", "Bearer tok2"]
+
+
+# ---- archive_scan ----
+
+
+class RecordingOneDrive:
+    def __init__(self, fail=None):
+        self.moves = []
+        self.fail = fail
+
+    def move(self, name, subfolder):
+        if self.fail:
+            raise self.fail
+        self.moves.append((name, subfolder))
+        return f"Scans/{subfolder}/{name}"
+
+
+def _onedrive_settings(tmp_path, monkeypatch, **onedrive):
+    _point_settings_at(tmp_path, monkeypatch, scans_dir=str(tmp_path / "scans"))
+    settings = get_settings()
+    settings.onedrive.client_id = "app"
+    settings.onedrive.scans_folder = "Scans"
+    for key, value in onedrive.items():
+        setattr(settings.onedrive, key, value)
+    return settings
+
+
+def test_archive_moves_only_onedrive_sourced_scans(tmp_path, monkeypatch):
+    settings = _onedrive_settings(tmp_path, monkeypatch)
+    od = RecordingOneDrive()
+    scan = MaterializedImage(tmp_path / "scans" / "SCAN_0234.jpg", "onedrive")
+    assert archive_scan(scan, settings=settings, onedrive=od) == "Scans/Listed/SCAN_0234.jpg"
+    assert od.moves == [("SCAN_0234.jpg", "Listed")]
+
+    for source in ("local", "gs"):
+        assert (
+            archive_scan(MaterializedImage(scan.path, source), settings=settings, onedrive=od)
+            is None
+        )
+    assert len(od.moves) == 1
+
+
+def test_archive_off_when_subfolder_blank(tmp_path, monkeypatch):
+    settings = _onedrive_settings(tmp_path, monkeypatch, listed_subfolder="")
+    od = RecordingOneDrive()
+    scan = MaterializedImage(tmp_path / "scans" / "SCAN_0234.jpg", "onedrive")
+    assert archive_scan(scan, settings=settings, onedrive=od) is None
+    assert od.moves == []
+
+
+def test_archive_failure_is_logged_not_raised(tmp_path, monkeypatch, caplog):
+    settings = _onedrive_settings(tmp_path, monkeypatch)
+    od = RecordingOneDrive(fail=OneDriveError("HTTP 403"))
+    scan = MaterializedImage(tmp_path / "scans" / "SCAN_0234.jpg", "onedrive")
+    with caplog.at_level("WARNING"):
+        assert archive_scan(scan, settings=settings, onedrive=od) is None
+    assert "SCAN_0234.jpg" in caplog.text and "Listed" in caplog.text
+
+
 # ---- materialize_image fallback ----
+
+
+def test_materialize_scan_reports_source(tmp_path, monkeypatch):
+    settings = _onedrive_settings(tmp_path, monkeypatch)
+
+    class FakeOneDrive:
+        def download(self, name, dest):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(b"x")
+            return dest
+
+    fetched = materialize_scan("234", settings=settings, onedrive=FakeOneDrive())
+    assert fetched.source == "onedrive"
+    assert fetched.path == tmp_path / "scans" / "SCAN_0234.jpg"
+    # Now on disk: a local file, so a later archive_scan leaves OneDrive alone.
+    assert materialize_scan("234", settings=settings, onedrive=FakeOneDrive()).source == "local"
+
+    def fake_download(uri, dest):
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"")
+        return dest
+
+    gs = materialize_scan("gs://b/uploads/p.jpg", settings=settings, download=fake_download)
+    assert gs.source == "gs"
 
 
 def test_materialize_fetches_missing_scan_from_onedrive(tmp_path, monkeypatch):

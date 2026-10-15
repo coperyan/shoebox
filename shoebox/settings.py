@@ -238,8 +238,15 @@ class OneDriveSettings(BaseModel):
     authority: str = "https://login.microsoftonline.com/consumers"
     # Folder under the OneDrive root that holds the scans, e.g. "Pictures/Card Scans".
     scans_folder: str = ""
-    # Delegated Graph scopes; offline_access is added by MSAL.
-    scopes: list[str] = Field(default_factory=lambda: ["Files.Read"])
+    # Delegated Graph scopes; offline_access is added by MSAL. Files.ReadWrite
+    # (not just Files.Read) so the job can move a listed scan into
+    # ``listed_subfolder``; changing scopes means `onedrive_login.py --login --reset`.
+    scopes: list[str] = Field(default_factory=lambda: ["Files.ReadWrite"])
+    # Subfolder of scans_folder a scan is moved into once it has been fetched
+    # from OneDrive and uploaded -- the cloud counterpart of the workstation
+    # deleting the local original, so the scans folder only holds unlisted
+    # cards. Empty leaves scans where they are.
+    listed_subfolder: str = "Listed"
     # MSAL token cache. The local file is written by scripts/onedrive_login.py;
     # the gs:// object (written by --upload, then kept fresh by the job) is used
     # whenever it is set, and is what Cloud Run needs: refresh tokens rotate,
