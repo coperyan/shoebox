@@ -61,7 +61,12 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
   row and keeps set / subset / parallel / price for the next card (card # resets, quantity -> 1,
   images cleared). *Cancel / New* clears everything. Tap a row to edit it, swipe to delete, use
   *Edit* to reorder. The toolbar menu holds *Save as draft…*, *Drafts…*, *Save draft to server*,
-  *Load last submitted queue* and *Clear queue*.
+  *Load last submitted queue…* and *Clear queue*.
+- **Pickers** – the Set picker is sectioned by year (newest first; the year comes from the
+  metadata's `set_year`, else the set name's leading digits). Subsets list *Base* first, then
+  A–Z. Typing in the search field and pressing **Search** selects the best match (an exact match,
+  else the first option starting with the text, else the first containing it), so `12` + Search
+  picks card 12, not 112.
 - **Images** – either a bare **scan number** (stored verbatim; the workstation resolves it to
   `<scans_dir>/<scan_prefix><number><scan_extension>` exactly as today), or a **photo** from the
   library. Photos are downscaled to 2000 px / JPEG 0.85, saved locally and uploaded to
@@ -72,8 +77,10 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
   red `No checklist match` error. *Submit* is `PUT /queue`: it writes the JSONL only if every row
   enriches; otherwise the per-row errors are listed and nothing is written.
 - The working queue autosaves to `current.json` and is restored on launch. Named drafts live on the
-  phone; *Save draft to server* (`PUT /queue/draft`) and *Load last submitted queue* (`GET /queue`)
-  move the 8 raw fields through the API so you can continue on another device.
+  phone; *Save draft to server* (`PUT /queue/draft`) and *Load last submitted queue…* (`GET /queue`)
+  move the 8 raw fields through the API so you can continue on another device. Opening a named
+  draft or the server copy first shows a preview (where it came from, how many rows, the first 5)
+  with a *Replace queue* button; nothing changes until you confirm.
 
 ### Listing from the app
 

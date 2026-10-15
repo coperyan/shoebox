@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **App pickers and queue loading.** The iOS Set picker is sectioned by year
+  (newest first) from a new per-set `set_year` in `GET /metadata`; subsets
+  list `Base` first, then A–Z, in the API, the Streamlit UI and the app
+  (`subset_sort_key`); pressing Search in a picker selects the best match
+  (`PickerSearch`: exact, then prefix, then contains); and *Load last
+  submitted queue…* / opening a named draft show a preview of the first 5
+  rows before anything replaces the working queue (`QueuePreviewSheet`).
 - **iOS listing-queue app and its API.** A SwiftUI app (`ios/ShoeboxQueue`,
   built with XcodeGen) recreates the Streamlit queue builder on an iPhone:
   the same Set → Subset → Parallel → Card # cascade, autofill, quantity and

@@ -347,6 +347,61 @@ final class QueueViewModelTests: XCTestCase {
         XCTAssertNil(vm.editIndex)
     }
 
+    func testFetchLastSubmittedPreviewsWithoutTouchingTheQueue() async throws {
+        let vm = try makeHarness().viewModel
+        let fake = FakeAPI()
+        fake.lastQueue = QueueGetResponse(
+            kind: "draft",
+            submittedAt: "2026-10-15T12:00:00+00:00",
+            rows: [
+                QueueRowInput(
+                    setName: Fixtures.setName,
+                    subsetName: Fixtures.subsetName,
+                    parallelVariety: nil,
+                    cardNumber: "2",
+                    quantity: 1,
+                    price: 5,
+                    imageFront: "",
+                    imageBack: ""
+                ),
+            ],
+            counts: Counts(rows: 1, ok: 1, errors: 0),
+            queueUri: nil,
+            draftUri: nil
+        )
+        fillDraft(vm)
+        vm.saveDraft()
+        let before = vm.rows
+
+        let response = try await vm.fetchLastSubmitted(api: fake)
+        XCTAssertEqual(vm.rows, before, "a preview must not replace the queue")
+        let preview = vm.rows(from: response)
+        XCTAssertEqual(preview.count, 1)
+        XCTAssertEqual(preview[0].player, "Player Two", "the preview rows are autofilled")
+        XCTAssertEqual(vm.rows, before)
+
+        vm.replaceQueue(with: preview)
+        XCTAssertEqual(vm.rows.map { $0.cardNumber }, ["2"])
+        XCTAssertEqual(vm.draft.setName, "")
+        XCTAssertNil(vm.editIndex)
+    }
+
+    func testNamedDraftCanBePreviewedInFull() throws {
+        let vm = try makeHarness().viewModel
+        fillDraft(vm)
+        vm.saveDraft()
+        let named = try vm.saveAsDraft(name: "Preview me")
+        XCTAssertEqual(vm.namedDraft(id: named.id)?.rows.count, 1)
+        XCTAssertNil(vm.namedDraft(id: UUID()))
+        XCTAssertEqual(vm.autofilled(named.rows).first?.player, "Player One")
+    }
+
+    func testSetGroupsFollowTheIndex() throws {
+        let vm = try makeHarness().viewModel
+        XCTAssertEqual(vm.setGroups.map { $0.title }, ["2024", "2023"])
+        XCTAssertEqual(vm.setGroups.flatMap { $0.options }.sorted(), vm.setOptions.sorted())
+    }
+
     func testSaveDraftToServerSendsRawRows() async throws {
         let vm = try makeHarness().viewModel
         let fake = FakeAPI()

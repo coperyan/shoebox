@@ -233,6 +233,7 @@ def test_metadata_shape_and_etag(env):
     assert r.headers["ETag"] == f'W/"{body["version"]}"'
     s = body["sets"][0]
     assert s["set_name"] == "2024 Set"
+    assert s["set_year"] == "2024"
     assert [x["subset_name"] for x in s["subsets"]] == ["Base", "Stars"]
     base = s["subsets"][0]
     assert [c["card_number"] for c in base["cards"]] == ["1", "2"]

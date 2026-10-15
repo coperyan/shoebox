@@ -140,6 +140,17 @@ struct QueueRow: Codable, Hashable, Identifiable {
         "\(index + 1). \(setName) | \(subsetName) | \(parallelVariety) | \(cardNumber)"
     }
 
+    /// The second line of a queue row: quantity, price, player and both images.
+    var queueSubtitle: String {
+        var parts: [String] = ["qty \(quantity)", String(format: "$%.2f", price)]
+        if let player, !player.isEmpty {
+            parts.append(player)
+        }
+        parts.append("front: \(imageFront.queueSummary)")
+        parts.append("back: \(imageBack.queueSummary)")
+        return parts.joined(separator: " · ")
+    }
+
     func image(for side: ImageSide) -> ImageRef {
         switch side {
         case .front:
@@ -282,5 +293,19 @@ struct QueueRowInput: Codable, Hashable {
     /// Prices travel with two decimals, like the Streamlit `%.2f` field.
     static func roundedPrice(_ value: Double) -> Double {
         (value * 100).rounded() / 100
+    }
+}
+
+extension ImageRef {
+    /// "none", "scan 234", "photo" or "photo (pending)" for the queue list and previews.
+    var queueSummary: String {
+        switch kind {
+        case .none:
+            return "none"
+        case .scan:
+            return scanNumber.isEmpty ? "none" : "scan \(scanNumber)"
+        case .photo:
+            return isUploaded ? "photo" : "photo (pending)"
+        }
     }
 }

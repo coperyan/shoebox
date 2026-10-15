@@ -20,7 +20,7 @@ struct QueueListView: View {
                             Text(row.listLabel(index: index))
                                 .foregroundStyle(.primary)
                                 .lineLimit(2)
-                            Text(subtitle(for: row))
+                            Text(row.queueSubtitle)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -44,27 +44,6 @@ struct QueueListView: View {
             .onMove { source, destination in
                 queue.move(from: source, to: destination)
             }
-        }
-    }
-
-    private func subtitle(for row: QueueRow) -> String {
-        var parts: [String] = ["qty \(row.quantity)", String(format: "$%.2f", row.price)]
-        if let player = row.player, !player.isEmpty {
-            parts.append(player)
-        }
-        parts.append("front: \(describe(row.imageFront))")
-        parts.append("back: \(describe(row.imageBack))")
-        return parts.joined(separator: " · ")
-    }
-
-    private func describe(_ ref: ImageRef) -> String {
-        switch ref.kind {
-        case .none:
-            return "none"
-        case .scan:
-            return ref.scanNumber.isEmpty ? "none" : "scan \(ref.scanNumber)"
-        case .photo:
-            return ref.isUploaded ? "photo" : "photo (pending)"
         }
     }
 }

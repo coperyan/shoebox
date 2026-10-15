@@ -12,6 +12,8 @@ from shoebox.transforms.queue_indexes import (
     cardno_sort_key,
     json_scalar,
     metadata_version,
+    set_year_for,
+    subset_sort_key,
 )
 
 
@@ -38,6 +40,7 @@ def _frames():
             ("2024 Set", "Base", "Base", None, "", "Blank", None, None, None, "2024", "cx", "s1"),
             ("2024 Set", "Base", "Base", "2", "2", "Dup Two", "T", None, None, "2024", "c2b", "s1"),
             ("2024 Set", "Stars", "Insert", "A", "A", "P A", "T", "SP", None, "2024", "ca", "s2"),
+            ("2024 Set", "Autos", "Auto", "1", "1", "P Auto", "T", None, None, "2024", "au1", "s5"),
             ("2023 Set", "Base", "Base", "1", "1", "Old", "T", None, None, "2023", "o1", "s3"),
             (pd.NA, "Base", "Base", "1", "1", "NA set", "T", None, None, "2023", "na", "s4"),
         ],
@@ -85,7 +88,7 @@ def test_build_indexes_order_and_na_skipped():
     cdf, pdf = _frames()
     idx = build_indexes(cdf, pdf)
     assert idx["sets"] == ["2023 Set", "2024 Set"]
-    assert idx["subsets_by_set"]["2024 Set"] == ["Base", "Stars"]
+    assert idx["subsets_by_set"]["2024 Set"] == ["Base", "Autos", "Stars"], "Base first, then A-Z"
     assert idx["cardnos_by_set_subset"][("2024 Set", "Base")] == ["2", "10", "1A"]
     assert idx["parallels_by_set_subset"][("2024 Set", "Base")] == ["Blue", "Gold"]
     assert ("<NA>", "Base") not in idx["cardnos_by_set_subset"]
@@ -94,9 +97,11 @@ def test_build_indexes_order_and_na_skipped():
 def test_metadata_payload_shape():
     cdf, pdf = _frames()
     payload = build_metadata_payload(cdf, pdf)
-    assert payload["counts"] == {"checklist_rows": 8, "parallel_rows": 3, "sets": 2}
+    assert payload["counts"] == {"checklist_rows": 9, "parallel_rows": 3, "sets": 2}
     sets = {s["set_name"]: s for s in payload["sets"]}
     assert list(sets) == ["2023 Set", "2024 Set"]
+    assert [s["set_year"] for s in payload["sets"]] == ["2023", "2024"]
+    assert [x["subset_name"] for x in sets["2024 Set"]["subsets"]] == ["Base", "Autos", "Stars"]
     base = sets["2024 Set"]["subsets"][0]
     assert base["subset_name"] == "Base"
     assert [c["card_number"] for c in base["cards"]] == ["2", "10", "1A"]
@@ -112,7 +117,7 @@ def test_metadata_payload_shape():
     assert gold["print_run"] == 50 and isinstance(gold["print_run"], int)
     assert gold["other_note"] == "SP"
     assert base["parallels"][0]["print_run"] is None
-    assert sets["2024 Set"]["subsets"][1]["parallels"] == []
+    assert sets["2024 Set"]["subsets"][2]["parallels"] == []
     # JSON-serializable end to end
     import json
 
@@ -141,3 +146,23 @@ def test_json_scalar():
 def test_normalize_nulls_handles_pd_na():
     out = normalize_nulls({"a": pd.NA, "b": "", "c": float("nan"), "d": 1})
     assert out == {"a": None, "b": None, "c": None, "d": 1}
+
+
+def test_subset_sort_key_puts_base_first_case_insensitively():
+    names = ["Stars", "base", "Autos", "Base", "Baseball Legends"]
+    assert sorted(names, key=subset_sort_key) == [
+        "Base",
+        "base",
+        "Autos",
+        "Baseball Legends",
+        "Stars",
+    ]
+
+
+def test_set_year_for_prefers_checklist_year_then_name_prefix():
+    g = pd.DataFrame({"set_year": [None, 2019.0, "2020"]})
+    assert set_year_for("2024 Something", g) == "2019"
+    assert set_year_for("2024 Something", pd.DataFrame({"set_year": [None, pd.NA]})) == "2024"
+    assert set_year_for(" 1999 Vintage", pd.DataFrame({"player": ["x"]})) == "1999"
+    assert set_year_for("Topps Heritage", pd.DataFrame({"set_year": [None]})) is None
+    assert set_year_for("20245 Not a year", pd.DataFrame({"set_year": [None]})) is None

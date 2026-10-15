@@ -115,7 +115,7 @@ Two objects live next to each other at `paths.queue_uri`:
 ```json
 {"version": "3f9a1c0b7e2d4a65", "generated_at": "2026-10-15T17:02:11+00:00", "ttl_s": 3600,
  "counts": {"checklist_rows": 41230, "parallel_rows": 1880, "sets": 212},
- "sets": [{"set_name": "2024 Topps Chrome", "subsets": [
+ "sets": [{"set_name": "2024 Topps Chrome", "set_year": "2024", "subsets": [
     {"subset_name": "Base",
      "cards": [{"card_number": "1", "derived_card_number": "1", "card_id": "…", "subset_id": "…",
                 "set_year": "2024", "subset_type": "Base", "player": "…", "team": "…",
@@ -124,10 +124,13 @@ Two objects live next to each other at `paths.queue_uri`:
  ]}]}
 ```
 
-Sets, subsets and parallels are sorted; **cards are in the UI's order**
-(numeric `derived_card_number` first, then text, blanks last — `build_indexes`
-in `transforms/queue_indexes.py`). Clients keep that order. Per-card detail is
-the first checklist row for the number, the same row the UI autofills from.
+Sets and parallels are sorted; subsets list **`Base` first**, then sorted;
+**cards are in the UI's order** (numeric `derived_card_number` first, then
+text, blanks last — `build_indexes` in `transforms/queue_indexes.py`). Clients
+keep that order. Each set carries a `set_year` (the checklist's `set_year`,
+else the four digits the name starts with, else `null`) so the app can group
+the Set picker by year. Per-card detail is the first checklist row for the
+number, the same row the UI autofills from.
 
 The views are loaded once and cached for an hour (`ttl_s`), like the
 Streamlit `st.cache_data`. `version` is a hash of the content; send it back as

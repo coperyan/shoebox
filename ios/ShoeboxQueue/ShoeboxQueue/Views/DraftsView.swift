@@ -1,15 +1,23 @@
 import SwiftUI
 
-/// Sheet listing the named local drafts. Opening one replaces the working queue (with a
-/// confirmation when the queue is not empty); swipe to delete.
+/// Sheet listing the named local drafts. Tapping one previews its first rows
+/// (`QueuePreviewSheet`) before it replaces the working queue; swipe to delete.
 @MainActor
 struct DraftsView: View {
+    /// A draft loaded in full for the preview sheet.
+    struct Opened: Identifiable {
+        let draft: NamedDraft
+        let rows: [QueueRow]
+
+        var id: UUID { draft.id }
+    }
+
     @Environment(QueueViewModel.self) private var queue
     @Environment(PreviewViewModel.self) private var preview
     @Environment(\.dismiss) private var dismiss
 
     @State private var drafts: [NamedDraftSummary] = []
-    @State private var pendingOpen: NamedDraftSummary?
+    @State private var opened: Opened?
 
     var body: some View {
         NavigationStack {
@@ -20,11 +28,7 @@ struct DraftsView: View {
                 }
                 ForEach(drafts) { draft in
                     Button {
-                        if queue.rows.isEmpty {
-                            open(draft)
-                        } else {
-                            pendingOpen = draft
-                        }
+                        show(draft)
                     } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(draft.name)
@@ -46,37 +50,34 @@ struct DraftsView: View {
                     Button("Done") { dismiss() }
                 }
             }
-            .confirmationDialog(
-                "Replace the current queue?",
-                isPresented: pendingOpenBinding,
-                titleVisibility: .visible,
-                presenting: pendingOpen
-            ) { draft in
-                Button("Replace with \"\(draft.name)\"", role: .destructive) { open(draft) }
-                Button("Cancel", role: .cancel) {}
-            } message: { draft in
-                Text("The \(queue.rows.count) rows on the Queue tab will be replaced by the \(draft.rowCount) rows of this draft. Save the queue as a draft first if you want to keep it.")
+            .sheet(item: $opened) { opened in
+                QueuePreviewSheet(
+                    title: opened.draft.name,
+                    subtitle: "Draft saved on this phone, updated \(opened.draft.updatedAt).",
+                    rows: opened.rows,
+                    currentCount: queue.rows.count
+                ) {
+                    open(opened.draft)
+                }
             }
             .onAppear { reload() }
         }
-    }
-
-    private var pendingOpenBinding: Binding<Bool> {
-        Binding(
-            get: { pendingOpen != nil },
-            set: { presented in
-                if !presented {
-                    pendingOpen = nil
-                }
-            }
-        )
     }
 
     private func reload() {
         drafts = queue.listDrafts()
     }
 
-    private func open(_ draft: NamedDraftSummary) {
+    private func show(_ summary: NamedDraftSummary) {
+        guard let named = queue.namedDraft(id: summary.id) else {
+            queue.errorMessage = QueueViewModel.QueueError.draftNotFound.localizedDescription
+            reload()
+            return
+        }
+        opened = Opened(draft: named, rows: queue.autofilled(named.rows))
+    }
+
+    private func open(_ draft: NamedDraft) {
         do {
             try queue.openDraft(id: draft.id)
             preview.reset()
