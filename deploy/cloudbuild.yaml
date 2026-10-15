@@ -1,5 +1,5 @@
 # Build the shoebox image, push it to Artifact Registry, and roll it out to the
-# Cloud Run jobs defined in deploy/jobs.yaml.
+# Cloud Run jobs and services defined in deploy/jobs.yaml.
 #
 # Wire this to a Cloud Build trigger on pushes to main with the substitution
 # _TAG = $SHORT_SHA (see docs/deployment.md), or run it by hand:
@@ -12,9 +12,10 @@
 #   gcloud builds submit --config deploy/cloudbuild.yaml \
 #     --substitutions=_TAG=$(git rev-parse --short HEAD),_DEPLOY_JOBS=false
 #
-# Only the jobs' images change here (--jobs-only). IAM bindings and schedules
-# are applied from a workstation with `python scripts/deploy_cloud_run.py`, so
-# the build identity never needs to set IAM policy or touch Cloud Scheduler.
+# Only the jobs' and services' images change here (--jobs-only). IAM bindings
+# (scheduler invokers, the API's allUsers binding) and schedules are applied
+# from a workstation with `python scripts/deploy_cloud_run.py`, so the build
+# identity never needs to set IAM policy or touch Cloud Scheduler.
 
 substitutions:
   _REGION: us-central1

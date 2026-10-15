@@ -56,6 +56,17 @@ Both entry points end at the same file: `exports/jsonl/listing_queue_enriched.js
 - Each row becomes a `ListingQueueRow`; enrichment and output are identical to
   the UI path.
 
+### `api/` (the iOS app's backend)
+
+- `shoebox api` serves the same two views as JSON (`GET /metadata`, cached an
+  hour, ETag-aware), previews and enriches rows with `build_enriched_json`,
+  and writes `listing_queue_enriched.jsonl` to `paths.queue_uri` in GCS plus a
+  `listing_queue_draft.json` with the raw rows for "load last saved".
+- Phone photos go to `uploads/` in the image bucket; the row carries the
+  `gs://` URI. See [api.md](api.md).
+- `build_indexes` (the cascading dropdown order) now lives in
+  `transforms/queue_indexes.py`, shared by the Streamlit UI and the API.
+
 ### Enrichment (`transforms/queue_enrichment.py`)
 
 `build_enriched_json(row, checklist_df, parallels_df)` joins on
@@ -71,6 +82,22 @@ of a queue row — check the output file for `error` keys before listing.
 
 ### `pipelines/create_listings.py`
 
+The queue comes from `paths.queue_uri` (GCS) when set, else the local JSONL;
+`--queue` overrides either. Rows carrying an `error` key abort the run up front.
+`run_listings` returns a `RunSummary` and accepts a `reporter` (progress
+hook); the image-log flush and the results sync run in a `finally`, so an
+interrupted run still ships what it listed.
+
+**`--run-request` (Cloud Run job mode).** `run_listing_request` claims the
+newest `requested` run record under `<queue dir>/runs/`
+(`services/listing_runs.py`; a generation-matched write, so two executions
+cannot list the same queue), reads publish/schedule from it, runs with
+`scrape_prices=False`, writes a result per row into the record, posts the
+usual start/finish messages to Slack, and marks the record `failed` (and
+exits non-zero) on any error. A bare scan number that is not on disk is
+fetched from OneDrive (`clients/onedrive.py`) by `materialize_image`. See
+[api.md](api.md#listing-from-the-app).
+
 Per queue row:
 
 1. **Pricing (only with `--scrape-prices`)** — build a 130point search query
@@ -79,13 +106,18 @@ Per queue row:
    the Slack pricing channel to confirm: reply `Y`/`YES` (or let it time out)
    to accept, or reply a number to override (tolerant parsing — `$4.99` etc.).
    If scraping fails, the prompt proposes the original queue price instead.
-2. **Images** — front/back scans upload through `ImageLogClient` (dedup cache;
-   see [data-storage.md](data-storage.md)), producing public GCS URLs. When a
-   row has both, `ImageLogClient.upload_combined_image` first builds and
-   uploads a side-by-side composite (side `combined`). It has to go first
-   because uploading a scan deletes the local original. The composite is
-   named after the two scans, so a re-run is served from the cache. It is
-   listed third: picture order is front, back, combined.
+2. **Images** — each reference is first turned into a local file by
+   `utils/image_refs.materialize_image` (an existing path as-is, a bare scan
+   number via the configured naming convention — fetched from OneDrive into
+   that path when it is not on disk and `onedrive.*` is configured —, a `gs://`
+   photo from the iOS app downloaded to `scans_dir/app_uploads/`). When a row has both,
+   `ImageLogClient.upload_combined_image` then builds and uploads a
+   side-by-side composite (side `combined`) from those two files. It has to
+   go before the scans upload because uploading a scan deletes the local
+   original. The composite is named after the two files, so a re-run is served
+   from the cache. Then the front and back upload through `ImageLogClient`
+   (dedup cache; see [data-storage.md](data-storage.md)), producing public
+   GCS URLs. Picture order is front, back, combined.
 3. **Payload** — `transforms/listing_builder.build_draft` assembles the title
    (80-char limit with progressive element-stripping), HTML description,
    full item-specifics dict, store category, condition, package, and policy

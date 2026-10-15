@@ -1,4 +1,6 @@
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from shoebox.settings import Settings, get_settings
 
@@ -35,3 +37,50 @@ def test_unknown_top_level_key_is_rejected():
     except Exception:
         return
     raise AssertionError("extra top-level key should have been rejected")
+
+
+def test_queue_uri_default_none():
+    assert Settings(**_example_raw()).paths.queue_uri is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["gs://bucket/queue/listing_queue_enriched.jsonl", "gs://b/x.jsonl"],
+)
+def test_queue_uri_accepts_object_uri(value):
+    raw = _example_raw()
+    raw["paths"]["queue_uri"] = value
+    assert Settings(**raw).paths.queue_uri == value
+
+
+@pytest.mark.parametrize("value", ["gs://bucket", "gs://bucket/", "exports/x.jsonl", "gs:///x"])
+def test_queue_uri_rejects_non_object(value):
+    raw = _example_raw()
+    raw["paths"]["queue_uri"] = value
+    with pytest.raises(ValidationError):
+        Settings(**raw)
+
+
+def test_onedrive_and_cloud_run_sections_default():
+    s = Settings(**_example_raw())
+    assert s.onedrive.enabled is False
+    assert s.onedrive.authority.endswith("/consumers")
+    assert s.onedrive.scopes == ["Files.Read"]
+    assert s.onedrive.token_cache_uri is None
+    assert (s.cloud_run.region, s.cloud_run.listings_job) == ("us-central1", "create-listings")
+
+    raw = _example_raw()
+    del raw["onedrive"]
+    del raw["cloud_run"]
+    assert Settings(**raw).onedrive.enabled is False  # old configs still load
+
+
+def test_onedrive_enabled_and_token_uri_validation():
+    raw = _example_raw()
+    raw["onedrive"].update({"client_id": "abc", "scans_folder": "Scans"})
+    raw["onedrive"]["token_cache_uri"] = "gs://b/queue/onedrive_token_cache.json"
+    s = Settings(**raw)
+    assert s.onedrive.enabled is True
+    raw["onedrive"]["token_cache_uri"] = "gs://b"
+    with pytest.raises(ValidationError):
+        Settings(**raw)

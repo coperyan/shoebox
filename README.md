@@ -13,7 +13,7 @@ lifecycle automation — wiring together the eBay Sell/Trading APIs, Google Clou
 
 Automate common workflows for an eBay sports card store:
 - Maintain checklist + parallel metadata in **BigQuery**
-- Build a **listing queue** via Streamlit UI
+- Build a **listing queue** via Streamlit UI, Excel, or the **iOS app** (backed by a small Cloud Run API)
 - Upload scans to **GCS** with a local cache to avoid re-uploads
 - Create eBay listings via `ebay_rest`
 - Log outputs to **JSONL → GCS → BigQuery**
@@ -53,8 +53,11 @@ Typical flow:
 flowchart LR
     XLSM[Master workbook] -->|sync-metadata| BQ[(BigQuery\nchecklist + parallels)]
     BQ --> UI[Streamlit UI / Excel loader]
+    BQ --> API[Cloud Run API / iOS app]
     UI --> Q[listing queue JSONL]
+    API -->|GCS| Q
     SCANS[Card scans] -->|dedup cache| GCS[(GCS images)]
+    PHONE[Phone photos] -->|uploads/| GCS
     Q -->|create-listings| EBAY[eBay Sell APIs]
     GCS --> EBAY
     EBAY -->|orders / listings / traffic| BQ2[(BigQuery snapshots)]
@@ -140,6 +143,14 @@ Purpose:
 - Enter card-specific details
 - Attach front/back scans
 - Export listing queue rows
+
+## iOS app
+
+A SwiftUI app under [`ios/ShoeboxQueue`](ios/ShoeboxQueue/README.md) does the
+same queue building on an iPhone, against the `shoebox api` Cloud Run service
+([docs/api.md](docs/api.md)). Scan numbers work as in the Excel sheet; photos
+from the camera roll upload to GCS and flow through `create-listings` like
+scans.
 
 ---
 

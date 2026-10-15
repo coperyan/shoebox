@@ -19,6 +19,23 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _gs_uri_or_none(value: str | None, message: str, *, require_object: bool = False) -> str | None:
+    """Validate a ``gs://bucket[/object]`` setting.
+
+    Only GCS is supported; a local override is what exports_dir is for. Caught
+    at settings load so a typo fails at startup, not as a mangled local path.
+    ``None``/empty mean "unset". With ``require_object`` the URI must name an
+    object inside the bucket, not just the bucket.
+    """
+    if value in (None, ""):
+        return None
+    rest = value[len("gs://") :] if value.startswith("gs://") else ""
+    bucket, _, name = rest.partition("/")
+    if not bucket or (require_object and not name.strip("/")):
+        raise ValueError(message)
+    return value
+
+
 class GCPSettings(BaseModel):
     project_id: str
     # Path to a service-account json file. Prefer ADC/Secret Manager in production.
@@ -85,16 +102,25 @@ class PathSettings(BaseModel):
     # state and one lock -- see docs/deployment.md.
     searches_state_uri: str | None = None
 
+    # The listing queue as a GCS object: gs://bucket/prefix/listing_queue_enriched.jsonl.
+    # Set it on the Cloud Run API (which writes it) and on the workstation (so
+    # create-listings reads the phone's queue). Unset keeps the local file
+    # <exports_dir>/jsonl/listing_queue_enriched.jsonl. See docs/api.md.
+    queue_uri: str | None = None
+
     @field_validator("searches_state_uri")
     @classmethod
     def _state_uri_is_gs(cls, value: str | None) -> str | None:
-        # Only GCS is supported; a local override is what exports_dir is for.
-        # Caught here so a typo fails at startup, not as a mangled local path.
-        if value in (None, ""):
-            return None
-        if not value.startswith("gs://") or not value[len("gs://") :].split("/")[0]:
-            raise ValueError("searches_state_uri must look like gs://bucket/prefix")
-        return value
+        return _gs_uri_or_none(value, "searches_state_uri must look like gs://bucket/prefix")
+
+    @field_validator("queue_uri")
+    @classmethod
+    def _queue_uri_is_gs_object(cls, value: str | None) -> str | None:
+        return _gs_uri_or_none(
+            value,
+            "queue_uri must look like gs://bucket/prefix/listing_queue_enriched.jsonl",
+            require_object=True,
+        )
 
     def ensure_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
@@ -197,6 +223,52 @@ class TcdbSettings(BaseModel):
     search_defaults: dict[str, str] = Field(default_factory=dict)
 
 
+class OneDriveSettings(BaseModel):
+    """Card scans fetched from OneDrive (Microsoft Graph) when they are not on
+    local disk -- how the Cloud Run ``create-listings`` job started from the
+    iOS app reaches ``SCAN_0234.jpg``. All fields default, so an existing
+    config without an ``onedrive`` section still validates; ``enabled`` is
+    false until ``client_id`` and ``scans_folder`` are set. See docs/api.md.
+    """
+
+    # Application (client) ID of the Azure app registration (public client,
+    # "Personal Microsoft accounts", device-code flow). No secret needed.
+    client_id: str = ""
+    # "consumers" for a personal Microsoft account; a tenant ID for work/school.
+    authority: str = "https://login.microsoftonline.com/consumers"
+    # Folder under the OneDrive root that holds the scans, e.g. "Pictures/Card Scans".
+    scans_folder: str = ""
+    # Delegated Graph scopes; offline_access is added by MSAL.
+    scopes: list[str] = Field(default_factory=lambda: ["Files.Read"])
+    # MSAL token cache. The local file is written by scripts/onedrive_login.py;
+    # the gs:// object (written by --upload, then kept fresh by the job) is used
+    # whenever it is set, and is what Cloud Run needs: refresh tokens rotate,
+    # so the cache must be writable, which a mounted secret is not.
+    token_cache_path: str = "configs/onedrive_token_cache.json"
+    token_cache_uri: str | None = None
+
+    @field_validator("token_cache_uri")
+    @classmethod
+    def _token_cache_uri_is_gs_object(cls, value: str | None) -> str | None:
+        return _gs_uri_or_none(
+            value,
+            "onedrive.token_cache_uri must look like gs://bucket/prefix/onedrive_token_cache.json",
+            require_object=True,
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.client_id and self.scans_folder)
+
+
+class CloudRunSettings(BaseModel):
+    """Where the API finds the Cloud Run job it starts for app-triggered
+    listing runs (``POST /queue/listings``). Project is ``gcp.project_id``."""
+
+    region: str = "us-central1"
+    listings_job: str = "create-listings"
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -209,6 +281,8 @@ class Settings(BaseModel):
     google_calendar: GoogleCalendarSettings
     store: StoreSettings = Field(default_factory=StoreSettings)
     tcdb: TcdbSettings = Field(default_factory=TcdbSettings)
+    onedrive: OneDriveSettings = Field(default_factory=OneDriveSettings)
+    cloud_run: CloudRunSettings = Field(default_factory=CloudRunSettings)
 
 
 def _resolve_config_path(config_path: str | os.PathLike[str] | None = None) -> Path:

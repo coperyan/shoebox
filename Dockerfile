@@ -62,6 +62,10 @@ RUN useradd --create-home --uid 1000 shoebox \
     && chown -R shoebox:shoebox /app
 USER shoebox
 
+# `shoebox api` (the listing-queue API, a Cloud Run service) listens on $PORT,
+# which Cloud Run sets; 8080 is its default. EXPOSE is documentation only.
+EXPOSE 8080
+
 # Every real invocation names a command, supplied by the job definition as
 # container args. The default CMD just prints help, so an image run with no
 # arguments is harmless rather than accidentally publishing something.

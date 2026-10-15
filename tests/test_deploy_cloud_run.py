@@ -412,3 +412,234 @@ class TestMain:
         monkeypatch.setattr(deploy.sys, "argv", ["deploy_cloud_run.py", "--list", "--only", "zz"])
         assert deploy.main() == 1
         assert "unknown job" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# Services (the listing-queue API)
+# ---------------------------------------------------------------------------
+
+SERVICE = {
+    "name": "shoebox-api",
+    "kind": "service",
+    "run": "api",
+    "timeout": "300s",
+    "port": 8080,
+    "concurrency": 8,
+    "min_instances": 0,
+    "max_instances": 2,
+    "public": True,
+    "env_secrets": {"SHOEBOX_API_KEY": "shoebox-api-key:latest"},
+}
+
+
+class TestServices:
+    def test_real_config_has_the_api_service(self):
+        _, entries = deploy.load_config(REPO_ROOT / "deploy" / "jobs.yaml")
+        api = next(e for e in entries if e["name"] == "shoebox-api")
+        assert deploy.is_service(api)
+        assert api["public"] is True
+        assert api["env_secrets"] == {"SHOEBOX_API_KEY": "shoebox-api-key:latest"}
+        # Jobs keep working and are tagged.
+        assert all(not deploy.is_service(e) for e in entries if e["name"] != "shoebox-api")
+
+    def test_services_only_config_loads(self, tmp_path):
+        path = write_config(tmp_path, "services:\n  - {name: api, run: api}\n")
+        _, entries = deploy.load_config(path)
+        assert [e["name"] for e in entries] == ["api"]
+
+    def test_duplicate_across_jobs_and_services_rejected(self, tmp_path):
+        path = write_config(
+            tmp_path,
+            "jobs:\n  - {name: a, run: a, schedule: manual}\nservices:\n  - {name: a, run: api}\n",
+        )
+        with pytest.raises(deploy.ConfigError, match="duplicate"):
+            deploy.load_config(path)
+
+    def test_service_with_schedule_rejected(self, tmp_path):
+        path = write_config(
+            tmp_path, 'services:\n  - {name: api, run: api, schedule: "0 1 * * *"}\n'
+        )
+        with pytest.raises(deploy.ConfigError, match="no `schedule`"):
+            deploy.load_config(path)
+
+    def test_bad_env_secret_name_rejected(self, tmp_path):
+        path = write_config(
+            tmp_path, "services:\n  - {name: api, run: api, env_secrets: {'bad-name': s:1}}\n"
+        )
+        with pytest.raises(deploy.ConfigError, match="env_secrets"):
+            deploy.load_config(path)
+
+    def test_deploy_shape(self):
+        cmd = deploy.render_service_deploy(
+            SERVICE, DEFAULTS, project=PROJECT, image=None, gcloud=GCLOUD
+        )
+        argv = cmd.argv
+        assert argv[:4] == [GCLOUD, "run", "deploy", "shoebox-api"]
+        assert "jobs" not in argv
+        assert flag(argv, "--args") == "api"
+        assert flag(argv, "--port") == "8080"
+        assert flag(argv, "--concurrency") == "8"
+        assert flag(argv, "--min-instances") == "0"
+        assert flag(argv, "--max-instances") == "2"
+        assert flag(argv, "--timeout") == "300s"
+        assert flag(argv, "--image") == "us-central1-docker.pkg.dev/proj/shoebox/shoebox:latest"
+        assert flag(argv, "--service-account") == "runner@proj.iam.gserviceaccount.com"
+        assert "--allow-unauthenticated" not in argv
+        assert "--command" not in argv
+        assert "--task-timeout" not in argv and "--max-retries" not in argv
+
+    def test_env_secret_merged_into_set_secrets(self):
+        cmd = deploy.render_service_deploy(
+            SERVICE, DEFAULTS, project=PROJECT, image=None, gcloud=GCLOUD
+        )
+        assert flag(cmd.argv, "--set-secrets") == (
+            "/secrets/app/app.yaml=shoebox-app-yaml:latest,"
+            "/secrets/ebay-rest/ebay_rest.json=shoebox-ebay-rest:latest,"
+            "SHOEBOX_API_KEY=shoebox-api-key:latest"
+        )
+
+    def test_image_override_wins(self):
+        cmd = deploy.render_service_deploy(
+            SERVICE, DEFAULTS, project=PROJECT, image="img:abc", gcloud=GCLOUD
+        )
+        assert flag(cmd.argv, "--image") == "img:abc"
+
+    def test_public_binding(self):
+        cmd = deploy.render_public_binding(SERVICE, DEFAULTS, project=PROJECT, gcloud=GCLOUD)
+        assert cmd.argv[1:5] == ["run", "services", "add-iam-policy-binding", "shoebox-api"]
+        assert flag(cmd.argv, "--member") == "allUsers"
+        assert flag(cmd.argv, "--role") == "roles/run.invoker"
+
+    def test_private_service_gets_no_binding(self):
+        private = {**SERVICE, "public": False}
+        assert (
+            deploy.render_public_binding(private, DEFAULTS, project=PROJECT, gcloud=GCLOUD) is None
+        )
+
+    @pytest.mark.parametrize(
+        "mode,expected",
+        [
+            ("all", ["run deploy shoebox-api", "run services add-iam-policy-binding"]),
+            ("jobs", ["run deploy shoebox-api"]),
+            ("scheduler", ["run services add-iam-policy-binding"]),
+        ],
+    )
+    def test_plan_modes(self, mode, expected):
+        commands = deploy.plan(
+            [SERVICE], DEFAULTS, project=PROJECT, image=None, mode=mode, existing={}, gcloud=GCLOUD
+        )
+        assert verbs(commands) == expected
+
+    def test_plan_mixes_jobs_and_services(self):
+        commands = deploy.plan(
+            [JOB, SERVICE],
+            DEFAULTS,
+            project=PROJECT,
+            image=None,
+            mode="jobs",
+            existing=None,
+            gcloud=GCLOUD,
+        )
+        assert verbs(commands) == ["run jobs deploy", "run deploy shoebox-api"]
+
+    def test_services_only_cli(self, monkeypatch, capsys):
+        monkeypatch.setattr(deploy.shutil, "which", lambda name: None)
+        monkeypatch.setattr(
+            deploy.sys, "argv", ["deploy_cloud_run.py", "--services-only", "--dry-run"]
+        )
+        assert deploy.main() == 0
+        out = capsys.readouterr().out
+        assert "gcloud run deploy shoebox-api" in out
+        assert "gcloud run jobs deploy" not in out
+        assert "add-iam-policy-binding" not in out
+
+    def test_list_shows_service(self, monkeypatch, capsys):
+        monkeypatch.setattr(deploy.sys, "argv", ["deploy_cloud_run.py", "--list"])
+        assert deploy.main() == 0
+        out = capsys.readouterr().out
+        assert "shoebox-api" in out and "(public)" in out
+
+
+# ---------------------------------------------------------------------------
+# Extra IAM bindings (`bindings:`) and the create-listings job
+# ---------------------------------------------------------------------------
+
+LISTINGS_JOB = {
+    "name": "create-listings",
+    "kind": "job",
+    "run": "create-listings --run-request",
+    "schedule": "manual",
+    "timeout": "3600s",
+    "memory": "2Gi",
+    "bindings": [
+        {"member": "serviceAccount:{runner_service_account}", "role": "roles/run.invoker"}
+    ],
+}
+
+
+class TestBindings:
+    def test_real_config_has_the_listings_job(self):
+        _, entries = deploy.load_config(REPO_ROOT / "deploy" / "jobs.yaml")
+        job = next(e for e in entries if e["name"] == "create-listings")
+        assert job["schedule"] == "manual"
+        assert job["bindings"][0]["role"] == "roles/run.invoker"
+        assert "run-request" in job["run"]
+
+    def test_binding_rendered_with_runner_placeholder(self):
+        cmds = deploy.render_extra_bindings(LISTINGS_JOB, DEFAULTS, project=PROJECT, gcloud=GCLOUD)
+        assert len(cmds) == 1
+        argv = cmds[0].argv
+        assert argv[1:5] == ["run", "jobs", "add-iam-policy-binding", "create-listings"]
+        assert flag(argv, "--member") == "serviceAccount:runner@proj.iam.gserviceaccount.com"
+        assert flag(argv, "--role") == "roles/run.invoker"
+
+    def test_service_binding_uses_services_resource(self):
+        svc = {**SERVICE, "bindings": [{"member": "user:a@b.c", "role": "roles/run.invoker"}]}
+        cmds = deploy.render_extra_bindings(svc, DEFAULTS, project=PROJECT, gcloud=GCLOUD)
+        assert cmds[0].argv[1:4] == ["run", "services", "add-iam-policy-binding"]
+
+    @pytest.mark.parametrize(
+        "mode,expected",
+        [
+            ("all", ["run jobs deploy", "run jobs add-iam-policy-binding"]),
+            ("jobs", ["run jobs deploy"]),
+            ("scheduler", ["run jobs add-iam-policy-binding"]),
+        ],
+    )
+    def test_manual_job_with_binding_in_each_mode(self, mode, expected):
+        commands = deploy.plan(
+            [LISTINGS_JOB],
+            DEFAULTS,
+            project=PROJECT,
+            image=None,
+            mode=mode,
+            existing={},
+            gcloud=GCLOUD,
+        )
+        assert verbs(commands) == expected
+
+    def test_scheduled_job_bindings_come_before_the_schedule(self):
+        job = {**JOB, "bindings": [{"member": "user:a@b.c", "role": "roles/run.viewer"}]}
+        commands = deploy.plan(
+            [job],
+            DEFAULTS,
+            project=PROJECT,
+            image=None,
+            mode="scheduler",
+            existing={},
+            gcloud=GCLOUD,
+        )
+        assert verbs(commands) == [
+            "run jobs add-iam-policy-binding",
+            "run jobs add-iam-policy-binding",
+            "scheduler jobs create",
+        ]
+        assert flag(commands[0].argv, "--role") == "roles/run.viewer"
+
+    def test_bad_bindings_rejected(self, tmp_path):
+        path = write_config(tmp_path, "jobs:\n  - {name: a, run: a, bindings: {member: x}}\n")
+        with pytest.raises(deploy.ConfigError, match="bindings"):
+            deploy.load_config(path)
+        path = write_config(tmp_path, "jobs:\n  - {name: a, run: a, bindings: [{member: x}]}\n")
+        with pytest.raises(deploy.ConfigError, match="member"):
+            deploy.load_config(path)
