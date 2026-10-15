@@ -16,6 +16,7 @@ and image log behave identically for all three kinds.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 
@@ -38,14 +39,18 @@ def materialize_image(
     ref: str,
     *,
     settings: Settings | None = None,
-    download=download_gs_file,
+    download: Callable[[str, Path], Path] | None = None,
 ) -> Path:
     """Return a local file for ``ref`` (see module docstring).
 
     Raises ValueError for a blank reference. A ``gs://`` object that does not
     exist raises FileNotFoundError from the download; the caller (the per-row
-    try/except in ``run_listings``) records it and moves on.
+    try/except in ``run_listings``) records it and moves on. ``download``
+    defaults to :func:`download_gs_file`, looked up at call time so tests can
+    patch it on this module.
     """
+    if download is None:
+        download = download_gs_file
     kind = classify_image_ref(ref)
     if kind == "blank":
         raise ValueError("empty image reference")

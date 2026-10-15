@@ -73,6 +73,11 @@ locally.
 
 Offers are created **unpublished** unless `--publish` is passed.
 
+Rows with both a front and a back scan get a third picture: the two side by
+side at matched heights (capped at 3200px wide). The front stays picture 1, so
+the search thumbnail doesn't change. If the composite can't be built, the
+listing goes ahead with the two scans.
+
 ### `create-variation-listings`
 Builds multi-variation ("You Pick") listings from an inventory workbook. Each
 `Subset ID` group in the sheet becomes one listing whose variations are the
@@ -143,7 +148,9 @@ eBay APIs. Listings **with a SKU** (created through the Sell Inventory API) go
 through `createOrReplaceInventoryItem`; listings **without one** — listed via
 the Trading API or eBay's own form — are invisible to the inventory API and go
 through Trading `ReviseFixedPriceItem` by item ID. If the inventory route
-fails, Trading is tried as a fallback. Either way the listing keeps its item ID,
+fails, Trading is tried as a fallback. The inventory route sends the live
+listing's pictures (re-hosted in GCS) with the new title, because the item is
+replaced whole. Either way the listing keeps its item ID,
 watchers, and search standing — no withdraw/republish. The report's
 `update_method` column shows the intended route, `applied_method` the one that
 did the work. Variation ("Complete Your Set") listings are skipped.
@@ -153,6 +160,40 @@ did the work. Variation ("Complete Your Set") listings are skipped.
 | `--input PATH` | Read a local `.jsonl`/`.csv` export instead of the BigQuery view |
 | `--apply` | Push the new titles to eBay (default: preview only) |
 | `--limit N` | Cap how many listings are updated in one run |
+
+### `add-combined-images`
+Backfills the combined front+back picture on listings already live. Every
+single-card listing with exactly two pictures gets front, back, and combined.
+The two live pictures (Trading `GetItem`, full-size `$_57`) are re-hosted in
+GCS the same way `relist-listings` does it. The composite goes to
+`other/<sku>_combined.jpg`, and all three are written to the inventory item
+with the rest of the item round-tripped untouched. The listing keeps its
+item ID, watchers, and sales history.
+
+The pictures come from the live listing rather than the inventory item's
+`imageUrls`, which often lists only the front for a listing that shows two.
+Writing that list back would drop the back.
+
+Reads the same source as `enhance-listing-titles` (the BigQuery view by
+default, or `--input`) and writes `exports/csv/combined_images_<timestamp>.csv`.
+Skipped: variation listings, listings without a SKU or item ID, and anything
+without exactly two pictures. The live count is re-checked right before
+writing, so re-runs are safe: no listing gets a second composite. `--limit`
+counts listings updated, not listings checked.
+With `--restore-backs` it also repairs listings that lost their back
+picture. For each listing that shows only the front, it looks in GCS for the
+back: first the scan `create-listings` uploaded, then the copy an earlier
+relist made. If it finds one, the listing gets front, restored back,
+combined. Listings with no stored back are reported as `no_stored_back`.
+
+**Nothing is sent to eBay without `--apply`.**
+
+| Flag | Effect |
+|---|---|
+| `--input PATH` | Read a local `.jsonl`/`.csv` export instead of the BigQuery view |
+| `--apply` | Push the new pictures to eBay (default: preview only) |
+| `--limit N` | Cap how many listings are updated in one run |
+| `--restore-backs` | Also restore missing backs from the copies stored in GCS |
 
 ### `send-offers`
 Finds listings with interested buyers (Negotiation API) and posts each one to

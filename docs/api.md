@@ -152,7 +152,8 @@ These uploads are a staging area, not the listing images. On the workstation
 `scans_dir/app_uploads/<name>` and hands it to `ImageLogClient.upload_image`
 exactly like a scan, so the dedup cache, the `images/<set>/…` naming, the local
 mirror and the `images.image_log` table all behave as before (and the download
-is deleted afterwards like any scan). Add a lifecycle rule that deletes
+is deleted afterwards like any scan). Because the download happens before the
+combined front+back picture is built, a phone photo feeds that third picture too. Add a lifecycle rule that deletes
 `uploads/` objects after 30 days (see [deployment.md](deployment.md#services)).
 
 ## The workstation side

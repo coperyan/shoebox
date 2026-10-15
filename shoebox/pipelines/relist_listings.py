@@ -3,12 +3,12 @@ from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pandas as pd
-import requests
 
 from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.ebay.errors import EbayClientError
 from shoebox.clients.gcs import GCSClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
+from shoebox.services.listing_pictures import ebay_image_to_gcs
 from shoebox.services.listings import ListingService
 from shoebox.settings import get_settings
 from shoebox.transforms.listing_builder import rebuild_inventory_item_body, rebuild_offer_body
@@ -78,23 +78,6 @@ def get_listing_df(ebay_api: EbayClient) -> pd.DataFrame:
 
     listing_df["price"] = listing_df["price"].astype(float)
     return listing_df
-
-
-def ebay_image_to_gcs(
-    picture_urls: list[str], sku: str, gcs_client: GCSClient, settings
-) -> list[str]:
-    picture_urls = [p.replace("$_1", "$_57") for p in picture_urls]
-    bucket = gcs_client.client.bucket(settings.gcs.image_bucket)
-    gcs_urls = []
-    for url in picture_urls:
-        side = "front" if url == picture_urls[0] else "back"
-        resp = requests.get(url)
-        tmp_img = resp.content
-        blob_path = f"other/{sku}_{side}.png"
-        blob = bucket.blob(blob_path)
-        blob.upload_from_string(tmp_img, content_type="image/png")
-        gcs_urls.append(blob.public_url)
-    return gcs_urls
 
 
 def get_campaign_ads(ebay_api: EbayClient) -> pd.DataFrame:

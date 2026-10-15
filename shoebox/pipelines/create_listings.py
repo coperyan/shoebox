@@ -107,6 +107,40 @@ def sync_results_to_bq(
     return object_name
 
 
+def _upload_combined_image(
+    q: ListingQueueRow,
+    img_client: ImageLogClient,
+    *,
+    front: Path | None,
+    back: Path | None,
+) -> str | None:
+    """Upload a front+back composite for a two-image row; return its URL.
+
+    ``front`` / ``back`` are the materialised local files (see
+    ``_create_one_listing``), never the raw queue references, which may be
+    scan numbers or ``gs://`` photos. Best-effort: the listing goes ahead with
+    just the two images if this fails.
+    """
+    if front is None or back is None:
+        return None
+    try:
+        return img_client.upload_combined_image(
+            front=front,
+            back=back,
+            set_name=q.set_name,
+            subset_name=q.subset_name,
+            card_number=q.card_number,
+            parallel_variety=q.parallel_variety,
+        ).public_url
+    except Exception:
+        logger.warning(
+            "Could not build the combined image for %s; listing without it",
+            q.card_number,
+            exc_info=True,
+        )
+        return None
+
+
 def _create_one_listing(
     q: ListingQueueRow,
     *,
@@ -176,13 +210,19 @@ def _create_one_listing(
         logger.info("Editing price from %s to %s..", old_price, new_price)
         time.sleep(1)
 
-    # Upload images
+    # Upload images. Each reference (local path, bare scan number, or a gs://
+    # photo from the iOS app) is resolved to a local file once, up front. The
+    # combined front+back picture is built from those files before the scans
+    # upload: uploading a scan deletes the local original.
+    front_path = materialize_image(q.image_front) if q.image_front else None
+    back_path = materialize_image(q.image_back) if q.image_back else None
+    combined_url = _upload_combined_image(q, img_client, front=front_path, back=back_path)
     image_urls: list[str] = []
 
-    if q.image_front:
+    if front_path is not None:
         image_urls.append(
             img_client.upload_image(
-                file_path=materialize_image(q.image_front),
+                file_path=front_path,
                 set_name=q.set_name,
                 subset_name=q.subset_name,
                 card_number=q.card_number,
@@ -190,10 +230,10 @@ def _create_one_listing(
                 side="front",
             ).public_url
         )
-    if q.image_back:
+    if back_path is not None:
         image_urls.append(
             img_client.upload_image(
-                file_path=materialize_image(q.image_back),
+                file_path=back_path,
                 set_name=q.set_name,
                 subset_name=q.subset_name,
                 card_number=q.card_number,
@@ -201,6 +241,10 @@ def _create_one_listing(
                 side="back",
             ).public_url
         )
+    # Third, after the scans: the front stays picture 1, which is the search
+    # thumbnail and the image send-offers shows in Slack.
+    if combined_url:
+        image_urls.append(combined_url)
 
     draft = build_draft(row=q, image_urls=image_urls, sku=sku, schedule=schedule)
 
