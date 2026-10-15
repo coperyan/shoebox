@@ -396,6 +396,43 @@ final class QueueViewModelTests: XCTestCase {
         XCTAssertEqual(vm.autofilled(named.rows).first?.player, "Player One")
     }
 
+    func testStagedScanNumberLeavesTheDraftAloneUntilCommitted() throws {
+        let vm = try makeHarness().viewModel
+        vm.stageScanNumber("12", side: .front)
+        XCTAssertEqual(vm.draft.imageFront, .empty)
+        XCTAssertEqual(vm.scanText(for: .front), "12")
+
+        vm.commitStagedScans()
+        XCTAssertEqual(vm.draft.imageFront, .scan("12"))
+
+        vm.stageScanNumber("", side: .front)
+        vm.commitStagedScans()
+        XCTAssertEqual(vm.draft.imageFront, .empty)
+    }
+
+    func testSaveCommitsStagedScansAndResetDiscardsThem() throws {
+        let vm = try makeHarness().viewModel
+        fillDraft(vm)
+        vm.stageScanNumber("456", side: .front)
+        XCTAssertTrue(vm.saveDraft())
+        XCTAssertEqual(vm.rows.last?.imageFront, .scan("456"))
+
+        vm.stageScanNumber("789", side: .front)
+        vm.cancelDraft()
+        XCTAssertEqual(vm.scanText(for: .front), "")
+        vm.commitStagedScans()
+        XCTAssertEqual(vm.draft.imageFront, .empty)
+    }
+
+    func testClearingAStagedScanKeepsAPhoto() throws {
+        let vm = try makeHarness().viewModel
+        let photo = ImageRef.photo(localFileName: "abc.jpg")
+        vm.setImageRef(photo, for: .back)
+        vm.stageScanNumber("", side: .back)
+        vm.commitStagedScans()
+        XCTAssertEqual(vm.draft.imageBack, photo)
+    }
+
     func testSetGroupsFollowTheIndex() throws {
         let vm = try makeHarness().viewModel
         XCTAssertEqual(vm.setGroups.map { $0.title }, ["2024", "2023"])

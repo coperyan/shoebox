@@ -58,6 +58,10 @@ final class QueueViewModel {
     @ObservationIgnored
     private var autosaveTask: Task<Void, Never>?
 
+    /// Scan numbers being typed, not yet written to `draft` (see `stageScanNumber`).
+    @ObservationIgnored
+    private var stagedScans: [ImageSide: String] = [:]
+
     init(store: DraftStore, metadata: MetadataStore, uploader: ImageUploader, apiProvider: @escaping APIProvider = { nil }) {
         self.store = store
         self.metadata = metadata
@@ -191,6 +195,7 @@ final class QueueViewModel {
     /// back to `QueueRow.defaultPrice`).
     @discardableResult
     func saveDraft() -> Bool {
+        commitStagedScans()
         guard draft.isComplete else {
             return false
         }
@@ -219,6 +224,7 @@ final class QueueViewModel {
             next.parallelVariety = previous.parallelVariety
         }
         applyAutofill(to: &next)
+        stagedScans = [:]
         draft = next
         editIndex = nil
     }
@@ -234,6 +240,7 @@ final class QueueViewModel {
         }
         var row = rows[index]
         applyAutofill(to: &row)
+        stagedScans = [:]
         draft = row
         editIndex = index
     }
@@ -304,10 +311,52 @@ final class QueueViewModel {
 
     /// A bare scan number, stored verbatim (the workstation resolves it).
     func setScanNumber(_ number: String, side: ImageSide) {
+        stagedScans[side] = nil
         setImageRef(.scan(number), for: side)
     }
 
+    /// What the scan-number field for `side` should show: the staged text, else the draft's scan.
+    func scanText(for side: ImageSide) -> String {
+        if let staged = stagedScans[side] {
+            return staged
+        }
+        let ref = draft.image(for: side)
+        return ref.kind == .scan ? ref.scanNumber : ""
+    }
+
+    /// A keystroke in a scan-number field. It is held here instead of being written to `draft`,
+    /// because every `draft` change re-renders the whole Queue tab (form, toolbar, keyboard bar)
+    /// and that made typing lag. `commitStagedScans` writes it on Next, focus loss, Save and
+    /// before the app goes to the background.
+    func stageScanNumber(_ text: String, side: ImageSide) {
+        if stagedScans[side] == nil, text == scanText(for: side) {
+            return
+        }
+        stagedScans[side] = text
+    }
+
+    func commitStagedScans() {
+        guard !stagedScans.isEmpty else {
+            return
+        }
+        let staged = stagedScans
+        stagedScans = [:]
+        for (side, text) in staged {
+            let ref = draft.image(for: side)
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                // Clearing the field never drops a photo, only a typed scan number.
+                if ref.kind == .scan {
+                    setImageRef(.empty, for: side)
+                }
+            } else if ref != .scan(trimmed) {
+                setImageRef(.scan(trimmed), for: side)
+            }
+        }
+    }
+
     func removeImage(side: ImageSide) {
+        stagedScans[side] = nil
         setImageRef(.empty, for: side)
     }
 
@@ -323,6 +372,7 @@ final class QueueViewModel {
                 try ImageProcessor.downscaledJPEG(data)
             }.value
             let fileName = try store.saveImage(jpeg)
+            stagedScans[side] = nil
             setImageRef(.photo(localFileName: fileName), for: side)
             if let api = apiProvider() {
                 startUpload(fileName: fileName, data: jpeg, side: side, api: api)
@@ -433,6 +483,7 @@ final class QueueViewModel {
     }
 
     func saveNow() {
+        commitStagedScans()
         autosaveTask?.cancel()
         autosaveTask = nil
         let state = WorkingState(rows: rows, draft: draft, editIndex: editIndex, savedAt: Timestamps.now())

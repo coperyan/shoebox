@@ -10,15 +10,33 @@ struct SearchablePicker: View {
     let title: String
     let groups: [PickerGroup]
     @Binding var selection: String
+    /// A small italic line under the title (e.g. the card's player / team / year).
+    var subtitle: String = ""
+    /// Called after a non-empty option is picked and the list is dismissed.
+    var onSelect: ((String) -> Void)? = nil
 
-    init(title: String, options: [String], selection: Binding<String>) {
-        self.init(title: title, groups: [PickerGroup(options: options)], selection: selection)
+    init(
+        title: String,
+        options: [String],
+        selection: Binding<String>,
+        subtitle: String = "",
+        onSelect: ((String) -> Void)? = nil
+    ) {
+        self.init(title: title, groups: [PickerGroup(options: options)], selection: selection, subtitle: subtitle, onSelect: onSelect)
     }
 
-    init(title: String, groups: [PickerGroup], selection: Binding<String>) {
+    init(
+        title: String,
+        groups: [PickerGroup],
+        selection: Binding<String>,
+        subtitle: String = "",
+        onSelect: ((String) -> Void)? = nil
+    ) {
         self.title = title
         self.groups = groups
         self._selection = selection
+        self.subtitle = subtitle
+        self.onSelect = onSelect
     }
 
     private var options: [String] {
@@ -45,12 +63,21 @@ struct SearchablePicker: View {
 
     var body: some View {
         NavigationLink {
-            SearchablePickerList(title: title, groups: groups, selection: $selection)
+            SearchablePickerList(title: title, groups: groups, selection: $selection, onSelect: onSelect)
         } label: {
-            LabeledContent(title) {
-                Text(displayText)
-                    .foregroundStyle(displayColor)
-                    .multilineTextAlignment(.trailing)
+            VStack(alignment: .leading, spacing: 2) {
+                LabeledContent(title) {
+                    Text(displayText)
+                        .foregroundStyle(displayColor)
+                        .multilineTextAlignment(.trailing)
+                }
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.caption)
+                        .italic()
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
             }
         }
     }
@@ -61,18 +88,20 @@ struct SearchablePickerList: View {
     let title: String
     let groups: [PickerGroup]
     @Binding var selection: String
+    var onSelect: ((String) -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var query = ""
 
-    init(title: String, options: [String], selection: Binding<String>) {
-        self.init(title: title, groups: [PickerGroup(options: options)], selection: selection)
+    init(title: String, options: [String], selection: Binding<String>, onSelect: ((String) -> Void)? = nil) {
+        self.init(title: title, groups: [PickerGroup(options: options)], selection: selection, onSelect: onSelect)
     }
 
-    init(title: String, groups: [PickerGroup], selection: Binding<String>) {
+    init(title: String, groups: [PickerGroup], selection: Binding<String>, onSelect: ((String) -> Void)? = nil) {
         self.title = title
         self.groups = groups
         self._selection = selection
+        self.onSelect = onSelect
     }
 
     private var options: [String] {
@@ -141,6 +170,9 @@ struct SearchablePickerList: View {
     private func select(_ value: String) {
         selection = value
         dismiss()
+        if !value.isEmpty {
+            onSelect?(value)
+        }
     }
 
     @ViewBuilder

@@ -139,6 +139,19 @@ final class QueueRowTests: XCTestCase {
         XCTAssertEqual(rows.count, 1)
     }
 
+    func testAutofillSummaryJoinsTheNonEmptyFields() {
+        var row = sampleRow()
+        row.parallelNote = nil
+        XCTAssertEqual(row.autofillSummary, "Player One · Team A · 2023 · Base · /50")
+
+        row.team = "  "
+        row.printRun = nil
+        row.note = "RC"
+        XCTAssertEqual(row.autofillSummary, "Player One · 2023 · Base · RC")
+
+        XCTAssertEqual(QueueRow().autofillSummary, "")
+    }
+
     func testListLabelMatchesStreamlitCaption() {
         var row = sampleRow()
         XCTAssertEqual(row.listLabel(index: 0), "1. 2023 Topps Chrome | Base | Gold Refractor | 1")

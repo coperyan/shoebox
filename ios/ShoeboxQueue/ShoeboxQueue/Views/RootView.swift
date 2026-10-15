@@ -54,6 +54,7 @@ struct RootView: View {
     @State private var pendingAction: PendingAction?
     @State private var serverQueue: ServerQueue?
     @State private var isBusy = false
+    @FocusState private var focusedField: RowFormView.Field?
 
     var body: some View {
         TabView {
@@ -135,7 +136,7 @@ struct RootView: View {
                         .font(.callout)
                     }
                 }
-                RowFormView()
+                RowFormView(focus: $focusedField)
                 Section {
                     QueueListView()
                 } header: {
@@ -154,7 +155,7 @@ struct RootView: View {
                 }
             }
             .navigationTitle("Shoebox Queue")
-            .keyboardDismissToolbar()
+            .keyboardDismissToolbar(next: focusedField?.next == nil ? nil : { focusNext() })
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Clear") {
@@ -164,6 +165,7 @@ struct RootView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button(queue.mode == .add ? "Save" : "Update") {
+                        focusedField = nil
                         queue.saveDraft()
                     }
                     .fontWeight(.semibold)
@@ -284,6 +286,17 @@ struct RootView: View {
     }
 
     // MARK: Actions
+
+    /// The keyboard's Next: the following field, skipping an image side that holds a photo (it
+    /// has no text field to focus). Past Price the keyboard closes.
+    private func focusNext() {
+        queue.commitStagedScans()
+        var next = focusedField?.next
+        while let candidate = next, let side = candidate.imageSide, queue.imageRef(for: side).kind == .photo {
+            next = candidate.next
+        }
+        focusedField = next
+    }
 
     private func saveAsDraft() {
         do {
