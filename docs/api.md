@@ -194,7 +194,10 @@ that fails to start leaves a `failed` record and answers `502`.
 number is fetched from OneDrive through Microsoft Graph
 (`clients/onedrive.py`) into the same path the workstation would use
 (`scans/SCAN_0234.jpg`), which keeps the image-log cache keys and GCS object
-names identical on both hosts. Phone photos come from `uploads/` as before.
+names identical on both hosts. Once such a scan is uploaded, the job moves it
+into `<scans_folder>/Listed` (`onedrive.listed_subfolder`), the way the
+workstation deletes the local original, so the OneDrive scans folder only
+holds unlisted cards. Phone photos come from `uploads/` as before.
 Setup (Azure app registration, device-code sign-in, token cache in GCS) is in
 [deployment.md](deployment.md#listing-from-the-app).
 
@@ -211,7 +214,8 @@ Two settings/flags tie the API to `create-listings`:
 
 Everything else in `create-listings` is unchanged; image references of all
 three kinds (path, scan number, `gs://`) go through
-`utils/image_refs.materialize_image`.
+`utils/image_refs.materialize_scan`, and `archive_scan` moves the OneDrive
+original of a fetched scan once it has been uploaded.
 
 ## Errors
 

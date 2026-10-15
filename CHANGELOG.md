@@ -12,11 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **iOS form.** *Clear* and *Save* sit in the Queue tab's top bar (*Save* reads
   *Update* while editing a row; *Edit* for reordering moved next to the queue
   heading); the app has an icon; the scan-number field uses the number pad; a
-  *Done* button above the keyboard (and a scroll) dismisses it; a new row's
+  *Done* button above the keyboard (and a scroll, or Return on the Settings
+  fields) dismisses it; a new row's
   price starts at 0.99 and is no longer carried over from the previous row.
 
 ### Added
 
+- **Listed scans leave the OneDrive scans folder.** When `create-listings`
+  fetches a scan from OneDrive (the Cloud Run job started from the iOS app),
+  it now moves that scan into `<scans_folder>/<onedrive.listed_subfolder>`
+  (`Listed` by default, created on first use) once the scan has been
+  uploaded -- the counterpart of the workstation deleting the local original,
+  so the scans folder only holds cards still to be listed. Best-effort: a
+  failed move is logged and the listing stands. Needs the `Files.ReadWrite`
+  Graph scope, now the `onedrive.scopes` default; add it to the Azure app
+  registration and sign in again (`scripts/onedrive_login.py --login --reset`,
+  then `--upload`). `utils/image_refs.materialize_scan` reports where each
+  image came from; `archive_scan` does the move; `OneDriveClient.move` is the
+  Graph call.
 - **App pickers and queue loading.** The iOS Set picker is sectioned by year
   (newest first) from a new per-set `set_year` in `GET /metadata`; subsets
   list `Base` first, then A–Z, in the API, the Streamlit UI and the app
@@ -74,6 +87,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   everything else. The pictures come from `GetItem` because eBay's inventory
   item often lists only the front. Pillow is now a declared dependency (it was
   already installed through Streamlit).
+- **`variation-template`**: lists a whole subset as "You Pick" variation
+  listings from the checklist. `variation-template build "2026 Topps Update"
+  --subset Base` writes a workbook with every card (US1–US350) in card-number
+  order, split into segments (default 2) of at most 250 cards, eBay's
+  per-listing variation cap. You fill in Qty and Price per card, plus a default
+  price, ad rate and volume-discount tiers on the Listing sheet.
+  `variation-template upload` validates the workbook, reporting every problem
+  by row before anything reaches eBay, and creates one variation listing per
+  segment, titled with its card range. Every card is listed, with a blank Qty
+  showing as sold out, so the dropdown always covers the full checklist. See
+  `docs/cli.md`.
 
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
@@ -186,6 +210,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   picture overwrote the back in GCS and the relisted listing showed the
   composite twice and lost the back.
 
+- **Chrome on Apple Silicon.** TCDB commands, the 130point price scraper and
+  the Topps release scraper now start Chrome on an arm64 Mac that has no
+  Rosetta. undetected-chromedriver 3.5.5 downloaded the Intel chromedriver
+  (`Bad CPU type in executable`). Its in-place patch also broke the arm64
+  driver's code signature, so macOS killed it (`Status code was: -9`).
+  `clients/chromedriver.py` now downloads `mac-arm64` and ad-hoc re-signs the
+  driver after uc patches it. It does nothing on other platforms. See
+  `docs/tcdb.md`, "Apple Silicon Macs".
+- Variation listings: per-card scans are matched by card number without
+  matching longer numbers, so `US1` no longer picks up `US10`–`US199`'s
+  images. `create-variation-listings --dry-run` no longer needs eBay
+  credentials.
 - `watch-searches` no longer rejects a listing whose aspect value arrives
   comma-joined. `getItem` returns a multi-valued aspect as one string —
   `Features: "Insert, Serial Numbered, Parallel/Variety"` — rather than one

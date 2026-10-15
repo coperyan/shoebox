@@ -107,7 +107,7 @@ Per queue row:
    to accept, or reply a number to override (tolerant parsing — `$4.99` etc.).
    If scraping fails, the prompt proposes the original queue price instead.
 2. **Images** — each reference is first turned into a local file by
-   `utils/image_refs.materialize_image` (an existing path as-is, a bare scan
+   `utils/image_refs.materialize_scan` (an existing path as-is, a bare scan
    number via the configured naming convention — fetched from OneDrive into
    that path when it is not on disk and `onedrive.*` is configured —, a `gs://`
    photo from the iOS app downloaded to `scans_dir/app_uploads/`). When a row has both,
@@ -117,7 +117,10 @@ Per queue row:
    original. The composite is named after the two files, so a re-run is served
    from the cache. Then the front and back upload through `ImageLogClient`
    (dedup cache; see [data-storage.md](data-storage.md)), producing public
-   GCS URLs. Picture order is front, back, combined.
+   GCS URLs; a scan that was fetched from OneDrive is then moved into
+   `<scans_folder>/<onedrive.listed_subfolder>` (`archive_scan`, best-effort),
+   the cloud counterpart of the local delete. Picture order is front, back,
+   combined.
 3. **Payload** — `transforms/listing_builder.build_draft` assembles the title
    (80-char limit with progressive element-stripping), HTML description,
    full item-specifics dict, store category, condition, package, and policy
@@ -149,6 +152,27 @@ Multi-variation "You Pick / Complete Your Set" listings:
   new listing.
 - SKUs/group keys are SHA1-derived (`build_variation_sku`, `build_group_key`)
   so re-runs address the same objects.
+
+### `pipelines/variation_template.py` (CLI: `variation-template build|upload`)
+
+Template-driven front end to the variation pipeline above, for listing a whole
+subset (e.g. US1–US350) without hand-building the inventory workbook:
+
+- **build** — `variation_template.sql` reads every `cards.v_checklist` row for
+  the set (case-insensitive) and keeps the requested subset.
+  `transforms/variation_template.build_template_records` sorts by card number
+  (`US2` before `US10`, using `derived_card_number`) and splits the cards into
+  contiguous, near-equal segments of at most 250, eBay's per-listing variation
+  cap. The workbook's Checklist sheet uses the same column names as the
+  inventory workbook, plus `Segment`.
+- **upload** — `parse_listing_settings` and `parse_template_rows` validate both
+  sheets and collect every problem before anything is sent. Every card is
+  listed (blank `Qty` = 0, a sold-out variation), and no per-card images are
+  uploaded. Rows are grouped
+  by `Subset ID|Segment`, which `build_group_key` hashes into a distinct,
+  stable eBay group key per segment. `create_variation_listing.list_variation_groups`
+  then lists each group with the sheet's promote rate and volume-discount
+  tiers.
 
 ### SKU scheme
 

@@ -20,9 +20,13 @@ struct SettingsView: View {
                         .textContentType(.URL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .submitLabel(.next)
+                        .onSubmit { KeyboardDismissModifier.hideKeyboard() }
                     SecureField("API key (SHOEBOX_API_KEY)", text: $apiKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit { KeyboardDismissModifier.hideKeyboard() }
                     Button("Save") { save() }
                         .disabled(baseURL.trimmingCharacters(in: .whitespaces).isEmpty)
                     Button {
@@ -99,6 +103,7 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .keyboardDismissToolbar()
             .onAppear {
                 baseURL = settings.baseURLString
                 apiKey = settings.apiKey

@@ -199,7 +199,9 @@ is not involved. Setup, in order (`$RUNNER` as above):
 - Redirect URI: platform **Mobile and desktop applications**, URI
   `https://login.microsoftonline.com/common/oauth2/nativeclient`.
 - Authentication → Advanced settings → **Allow public client flows: Yes**.
-- API permissions → Add → Microsoft Graph → Delegated → `Files.Read`.
+- API permissions → Add → Microsoft Graph → Delegated → `Files.ReadWrite`
+  (read for the download, write so the job can move a listed scan into
+  `<scans_folder>/Listed`).
 - Copy the **Application (client) ID**. No client secret is needed.
 
 **L2. Configure both `app.yaml` files** (workstation and `configs/app.cloud.yaml`):
@@ -243,8 +245,15 @@ curl -s -H "X-API-Key: $KEY" $URL/queue/listings | head -c 400
 gcloud run jobs executions list --job create-listings --region us-central1 --limit 3
 ```
 
-Things worth knowing: the refresh token expires after about 90 days without
-use (re-run `--login --reset` and `--upload`); the image dedup cache is
+Things worth knowing: once a scan the job fetched from OneDrive has been
+uploaded, it is moved into `<scans_folder>/<onedrive.listed_subfolder>`
+(`Listed` by default; the folder is created on first use) -- the cloud
+counterpart of the workstation deleting the local original, so the scans
+folder only holds cards still to be listed. A token issued for `Files.Read`
+cannot move anything: the listing still goes ahead, the job logs a warning
+per scan, and `--login --reset` then `--upload` fixes it. The refresh token
+expires after about 90 days without use (re-run `--login --reset` and
+`--upload`); the image dedup cache is
 per-execution in the cloud, so a re-run re-uploads the same object names;
 the job's memory covers each scan twice (download plus the local mirror)
 because the container filesystem is RAM; `ACTIVE_STALE_AFTER` in
@@ -875,6 +884,7 @@ gcloud run jobs delete alert-test --region us-central1 --quiet
 | Job fails with `OneDriveAuthError` | No account in the token cache, or the refresh token expired (~90 days idle): `python scripts/onedrive_login.py --login --reset` then `--upload` ([L3](#listing-from-the-app)) |
 | Job fails with `OneDrive: <folder>/SCAN_0234.jpg not found` | Wrong `onedrive.scans_folder`, or the scan is not in OneDrive yet; `--verify 234` on the workstation reproduces it |
 | Job exits at start: `running in Cloud Run with a local OneDrive token cache` | The uploaded `app.yaml` lacks `onedrive.token_cache_uri` (L2) |
+| Listings succeed but the job logs `Could not move SCAN_0234.jpg into OneDrive .../Listed` (HTTP 403) | The token cache predates the `Files.ReadWrite` scope: `python scripts/onedrive_login.py --login --reset` then `--upload` ([L3](#listing-from-the-app)); the app registration must also list `Files.ReadWrite` (L1) |
 | `watch-searches`: `Missing object: gs://.../searches.yaml` | Nothing deployed yet (S3), or `paths.searches_file` and the trigger's `_DEST_URI` disagree |
 | `watch-searches`: 403 on `storage.objects.create` or `.get` | The runner lacks `roles/storage.objectUser` on the searches bucket (S2) |
 | Every tick logs "Another watch-searches run holds the lock" | A run is still going, or one died holding it. It expires after 20 minutes; `gcloud storage cat gs://BUCKET/state/.lock` shows the holder |

@@ -65,7 +65,8 @@ def test_onedrive_and_cloud_run_sections_default():
     s = Settings(**_example_raw())
     assert s.onedrive.enabled is False
     assert s.onedrive.authority.endswith("/consumers")
-    assert s.onedrive.scopes == ["Files.Read"]
+    assert s.onedrive.scopes == ["Files.ReadWrite"]  # the job moves listed scans
+    assert s.onedrive.listed_subfolder == "Listed"
     assert s.onedrive.token_cache_uri is None
     assert (s.cloud_run.region, s.cloud_run.listings_job) == ("us-central1", "create-listings")
 

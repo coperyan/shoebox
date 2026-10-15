@@ -6,6 +6,11 @@ so it fetches ``SCAN_0234.jpg`` from OneDrive itself:
 
     GET https://graph.microsoft.com/v1.0/me/drive/root:/<scans_folder>/<name>:/content
 
+Once such a scan has been uploaded, the job moves it into
+``<scans_folder>/<listed_subfolder>`` (PATCH the item's ``parentReference``),
+which is what deleting the local original does on the workstation: the scans
+folder only ever holds cards that still need listing.
+
 Auth is MSAL's device-code flow, done once on the workstation by
 ``scripts/onedrive_login.py``. The resulting token cache (a refresh token) is
 kept as a local file and, for the job, as a GCS object named by
@@ -111,7 +116,8 @@ class MsalTokenStore:
 
 
 class OneDriveClient:
-    """Downloads scans by file name from ``onedrive.scans_folder``."""
+    """Downloads scans by file name from ``onedrive.scans_folder`` and moves
+    listed ones into its ``listed_subfolder``."""
 
     def __init__(
         self,
@@ -130,6 +136,7 @@ class OneDriveClient:
         self._app = msal_app
         self._cache = None
         self._access_token: str | None = None
+        self._folder_ids: dict[str, str] = {}
 
     # -----------------------------
     # Auth
@@ -174,9 +181,17 @@ class OneDriveClient:
     # -----------------------------
     # Files
     # -----------------------------
+    def _folder_path(self, *parts: str) -> str:
+        segments = self.config.scans_folder.strip("/").split("/")
+        segments += [part for p in parts for part in p.strip("/").split("/") if part]
+        return "/".join(quote(part) for part in segments if part)
+
+    def item_url(self, name: str, *, subfolder: str = "") -> str:
+        """The driveItem itself (metadata, PATCH)."""
+        return f"{GRAPH_ROOT}/me/drive/root:/{self._folder_path(subfolder)}/{quote(name)}"
+
     def content_url(self, name: str) -> str:
-        folder = "/".join(quote(part) for part in self.config.scans_folder.strip("/").split("/"))
-        return f"{GRAPH_ROOT}/me/drive/root:/{folder}/{quote(name)}:/content"
+        return f"{self.item_url(name)}:/content"
 
     def download(self, name: str, dest: Path) -> Path:
         """Fetch ``<scans_folder>/<name>`` into ``dest`` (parents created).
@@ -206,6 +221,80 @@ class OneDriveClient:
         tmp.replace(dest)
         logger.info("Downloaded %s from OneDrive (%d bytes)", name, dest.stat().st_size)
         return dest
+
+    def move(self, name: str, subfolder: str) -> str:
+        """Move ``<scans_folder>/<name>`` into ``<scans_folder>/<subfolder>``,
+        creating the subfolder on first use; returns the new OneDrive path.
+
+        A same-named file already there is replaced (a re-run of the same
+        queue). Missing source is FileNotFoundError; a token without
+        ``Files.ReadWrite`` surfaces as OneDriveError (HTTP 403).
+        """
+        subfolder = subfolder.strip("/")
+        if not subfolder:
+            raise ValueError("subfolder is empty")
+        folder_id = self._folder_id(subfolder)
+        body = {
+            "parentReference": {"id": folder_id},
+            "name": name,
+            "@microsoft.graph.conflictBehavior": "replace",
+        }
+        response = self._json("patch", self.item_url(name), json=body)
+        if response.status_code == 404:
+            raise FileNotFoundError(f"OneDrive: {self.config.scans_folder}/{name} not found")
+        self._raise_for(response, f"move of {name} to {subfolder}")
+        new_path = f"{self.config.scans_folder.strip('/')}/{subfolder}/{name}"
+        logger.info("Moved %s to OneDrive %s", name, new_path)
+        return new_path
+
+    def _folder_id(self, subfolder: str) -> str:
+        cached = self._folder_ids.get(subfolder)
+        if cached:
+            return cached
+        response = self._json("get", self.item_url(subfolder))
+        if response.status_code == 404:
+            parent, _, leaf = subfolder.rpartition("/")
+            response = self._json(
+                "post",
+                f"{GRAPH_ROOT}/me/drive/root:/{self._folder_path(parent)}:/children",
+                json={"name": leaf, "folder": {}, "@microsoft.graph.conflictBehavior": "fail"},
+            )
+            if response.status_code == 409:  # created meanwhile; look it up
+                response = self._json("get", self.item_url(subfolder))
+        self._raise_for(response, f"lookup of folder {subfolder}")
+        folder_id = (response.json() or {}).get("id")
+        if not folder_id:
+            raise OneDriveError(f"OneDrive folder {subfolder} has no id in {response.text[:200]}")
+        self._folder_ids[subfolder] = folder_id
+        return folder_id
+
+    def _raise_for(self, response, what: str) -> None:
+        if response.status_code >= 400:
+            hint = (
+                " (the token lacks Files.ReadWrite: run `python scripts/onedrive_login.py "
+                "--login --reset`, then --upload)"
+                if response.status_code == 403
+                else ""
+            )
+            raise OneDriveError(
+                f"OneDrive {what} failed: HTTP {response.status_code} "
+                f"{(response.text or '')[:200]}{hint}"
+            )
+
+    def _json(self, method: str, url: str, *, json: dict | None = None):
+        """One Graph JSON call, with a single retry on 401 after a fresh token."""
+        response = self._request(method, url, self.access_token(), json=json)
+        if response.status_code == 401:
+            response = self._request(method, url, self.access_token(fresh=True), json=json)
+        return response
+
+    def _request(self, method: str, url: str, token: str, *, json: dict | None = None):
+        return getattr(self.http, method)(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            json=json,
+            timeout=DOWNLOAD_TIMEOUT_S,
+        )
 
     def _get(self, url: str, token: str):
         return self.http.get(

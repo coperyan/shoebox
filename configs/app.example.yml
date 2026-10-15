@@ -126,6 +126,12 @@ onedrive:
   authority: https://login.microsoftonline.com/consumers
   # Folder under the OneDrive root holding the scans.
   scans_folder: ""
+  # Subfolder of scans_folder a scan is moved into once the cloud job has
+  # fetched and uploaded it (created on first use); "" leaves scans in place.
+  listed_subfolder: Listed
+  # Delegated Graph scopes. Files.ReadWrite is needed for the move above; after
+  # changing scopes sign in again (`onedrive_login.py --login --reset`, `--upload`).
+  scopes: [Files.ReadWrite]
   # MSAL token cache: local file (workstation) and, when set, the gs:// copy the
   # job reads and refreshes. Required for the Cloud Run job.
   token_cache_path: configs/onedrive_token_cache.json
