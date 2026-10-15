@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **iOS listing-queue app and its API.** A SwiftUI app (`ios/ShoeboxQueue`,
+  built with XcodeGen) recreates the Streamlit queue builder on an iPhone:
+  the same Set → Subset → Parallel → Card # cascade, autofill, quantity and
+  price, scan numbers typed as in the Excel sheet or photos picked from the
+  library, a locally auto-saved working queue plus named drafts, enriched
+  preview and submit. It talks to a new FastAPI service, `shoebox api`
+  (`shoebox/api/`), deployed from the same image as a Cloud Run **service**
+  (`services:` in `deploy/jobs.yaml`, `scripts/deploy_cloud_run.py
+  --services-only`, `allUsers` invoker + `X-API-Key` from the new
+  `shoebox-api-key` secret). The API serves the metadata views as JSON
+  (cached an hour, `ETag`/`304`), enriches rows with the unchanged
+  `build_enriched_json`, writes `listing_queue_enriched.jsonl` and a
+  `listing_queue_draft.json` to the new `paths.queue_uri` GCS object, and
+  stages phone photos under `uploads/` in the image bucket. See `docs/api.md`.
+- `create-listings` reads the queue from `paths.queue_uri` when set, or from
+  `--queue PATH_OR_GS_URI`, and refuses a queue carrying enrichment error
+  rows. Image references of all three kinds (path, bare scan number, `gs://`
+  photo) go through the new `utils/image_refs.materialize_image`, so the
+  dedup cache, naming, mirror and image log are unchanged.
+
+### Changed
+
+- `build_indexes` (the dropdown order) moved from `ui/app.py` to
+  `transforms/queue_indexes.py`, shared by the UI and the API.
+- `GCSClient` gained `upload_bytes` and `read_text`; `clients/gcs.py` gained
+  `download_gs_file`. `normalize_nulls` treats `pd.NA` as null.
+- `fastapi`, `uvicorn[standard]` and `python-multipart` are base dependencies;
+  `httpx` is a dev dependency (FastAPI's test client).
+
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
   paused until the cutover). New `paths.searches_state_uri: gs://bucket/prefix`

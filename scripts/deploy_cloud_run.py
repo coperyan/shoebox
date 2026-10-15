@@ -27,6 +27,11 @@ image out. ``--scheduler-only`` runs steps 2-4 without touching images.
 ``--dry-run`` prints one ``shlex``-quoted line per command, so the output is a
 shell script you can read or pipe to ``bash``. Nothing is ever deleted: a job
 removed or renamed here lingers in GCP until you delete it by hand.
+
+``services:`` entries (the listing-queue API for the iOS app) are Cloud Run
+*services* rather than jobs: ``gcloud run deploy`` in the jobs phase, and, when
+``public: true``, an ``allUsers`` invoker binding in the IAM phase (the API key
+is the authentication). They share ``defaults:`` and ``--only``/``--list``.
 """
 
 from __future__ import annotations
@@ -52,6 +57,9 @@ CONFIG = REPO_ROOT / "deploy" / "jobs.yaml"
 JOB_NAME_RE = re.compile(r"^[a-z]([a-z0-9-]{0,47}[a-z0-9])?$")
 CRON_FIELDS = 5
 MANUAL = "manual"
+KIND_JOB = "job"
+KIND_SERVICE = "service"
+ENV_NAME_RE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
 # Cloud Run Admin API endpoint Cloud Scheduler calls to start one execution.
 RUN_URI = "https://run.googleapis.com/v2/projects/{project}/locations/{region}/jobs/{name}:run"
@@ -82,20 +90,28 @@ def load_config(path: Path) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         raise ConfigError(f"config not found: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     defaults = data.get("defaults") or {}
-    jobs = data.get("jobs") or []
-    if not jobs:
-        raise ConfigError(f"no jobs defined in {path}")
+    jobs = [{**job, "kind": KIND_JOB} for job in (data.get("jobs") or [])]
+    services = [{**svc, "kind": KIND_SERVICE} for svc in (data.get("services") or [])]
+    if not jobs and not services:
+        raise ConfigError(f"no jobs or services defined in {path}")
 
-    names = [job.get("name") for job in jobs]
+    entries = jobs + services
+    names = [entry.get("name") for entry in entries]
     if any(not name for name in names):
-        raise ConfigError("every job needs a `name`")
+        raise ConfigError("every job and service needs a `name`")
     dupes = {n for n in names if names.count(n) > 1}
     if dupes:
         raise ConfigError(f"duplicate job names: {', '.join(sorted(dupes))}")
 
     for job in jobs:
         validate_job(job)
-    return defaults, jobs
+    for svc in services:
+        validate_service(svc)
+    return defaults, entries
+
+
+def is_service(entry: dict[str, Any]) -> bool:
+    return entry.get("kind") == KIND_SERVICE
 
 
 def validate_job(job: dict[str, Any]) -> None:
@@ -112,6 +128,24 @@ def validate_job(job: dict[str, Any]) -> None:
         raise ConfigError(
             f"{name}: `schedule` must be a 5-field cron expression or {MANUAL!r}, got {schedule!r}"
         )
+
+
+def validate_service(svc: dict[str, Any]) -> None:
+    name = svc["name"]
+    if not JOB_NAME_RE.match(name):
+        raise ConfigError(
+            f"{name}: Cloud Run service names must be lowercase letters, digits and hyphens, "
+            "start with a letter, and be at most 49 characters"
+        )
+    if not svc.get("run"):
+        raise ConfigError(f"{name}: needs a `run` (the shoebox subcommand with any flags)")
+    if "schedule" in svc:
+        raise ConfigError(f"{name}: a service has no `schedule`; it serves requests")
+    for key in svc.get("env_secrets") or {}:
+        if not ENV_NAME_RE.match(str(key)):
+            raise ConfigError(
+                f"{name}: env_secrets key {key!r} is not an environment variable name"
+            )
 
 
 def setting(job: dict[str, Any], defaults: dict[str, Any], key: str, fallback: Any = None) -> Any:
@@ -172,6 +206,12 @@ def secrets_for(job: dict[str, Any], defaults: dict[str, Any]) -> dict[str, str]
             )
         by_dir[directory] = path
     return secrets
+
+
+def env_secrets_for(entry: dict[str, Any]) -> dict[str, str]:
+    """Environment variable -> ``secret:version`` (services only; not inherited
+    from defaults, since a job never needs the API key)."""
+    return {str(k): str(v) for k, v in (entry.get("env_secrets") or {}).items()}
 
 
 def resolve_project(defaults: dict[str, Any], cli_project: str | None, gcloud: str) -> str:
@@ -286,6 +326,105 @@ def render_job_deploy(
         argv += ["--labels", gcloud_map({str(k): str(v) for k, v in labels.items()})]
 
     return Command(f"deploy Cloud Run job {name}", argv)
+
+
+def render_service_deploy(
+    svc: dict[str, Any],
+    defaults: dict[str, Any],
+    *,
+    project: str,
+    image: str | None,
+    gcloud: str,
+) -> Command:
+    """``gcloud run deploy``: creates the service or rolls a new revision.
+
+    No ``--allow-unauthenticated`` here: that needs ``run.services.setIamPolicy``,
+    which the Cloud Build identity deliberately lacks. ``render_public_binding``
+    adds the ``allUsers`` invoker in the IAM phase, run from a workstation.
+    """
+    where = _common(svc, defaults, project)
+    variables = {"project": project, "region": where["region"]}
+    name = svc["name"]
+
+    resolved_image = image or expand(setting(svc, defaults, "image"), **variables)
+    if not resolved_image:
+        raise ConfigError(f"{name}: no image; set `image:` in jobs.yaml or pass --image")
+    runner = expand(setting(svc, defaults, "runner_service_account"), **variables)
+    if not runner:
+        raise ConfigError(f"{name}: `runner_service_account` is required")
+
+    argv = [
+        gcloud,
+        "run",
+        "deploy",
+        name,
+        "--project",
+        project,
+        "--region",
+        where["region"],
+        "--quiet",
+        "--image",
+        resolved_image,
+        "--args",
+        gcloud_list(job_args(svc)),
+        "--service-account",
+        runner,
+        "--cpu",
+        str(setting(svc, defaults, "cpu", "1")),
+        "--memory",
+        str(setting(svc, defaults, "memory", "1Gi")),
+        "--timeout",
+        str(setting(svc, defaults, "timeout", "300s")),
+        "--port",
+        str(svc.get("port", 8080)),
+        "--concurrency",
+        str(svc.get("concurrency", 8)),
+        "--min-instances",
+        str(svc.get("min_instances", 0)),
+        "--max-instances",
+        str(svc.get("max_instances", 2)),
+        "--ingress",
+        "all",
+    ]
+
+    env = expand(env_for(svc, defaults), **variables)
+    if env:
+        argv += ["--set-env-vars", gcloud_map(env)]
+    secrets = {**secrets_for(svc, defaults), **env_secrets_for(svc)}
+    if secrets:
+        argv += ["--set-secrets", gcloud_map(secrets)]
+    labels = setting(svc, defaults, "labels") or {}
+    if labels:
+        argv += ["--labels", gcloud_map({str(k): str(v) for k, v in labels.items()})]
+
+    return Command(f"deploy Cloud Run service {name}", argv)
+
+
+def render_public_binding(
+    svc: dict[str, Any], defaults: dict[str, Any], *, project: str, gcloud: str
+) -> Command | None:
+    """Let anyone reach a ``public: true`` service (the API key does the auth).
+    Re-adding a binding is a no-op. Private services get no command."""
+    if not svc.get("public", False):
+        return None
+    where = _common(svc, defaults, project)
+    argv = [
+        gcloud,
+        "run",
+        "services",
+        "add-iam-policy-binding",
+        svc["name"],
+        "--project",
+        project,
+        "--region",
+        where["region"],
+        "--quiet",
+        "--member",
+        "allUsers",
+        "--role",
+        "roles/run.invoker",
+    ]
+    return Command(f"make {svc['name']} publicly invokable (API key protects it)", argv)
 
 
 def render_invoker_binding(
@@ -456,9 +595,25 @@ def plan(
     existing: dict[str, str] | None,
     gcloud: str,
 ) -> list[Command]:
-    """Every command to run, in order. ``mode`` is ``all``, ``jobs`` or ``scheduler``."""
+    """Every command to run, in order. ``mode`` is ``all``, ``jobs`` or ``scheduler``.
+
+    ``jobs`` may hold services too (``kind: service``): they deploy in the
+    ``jobs`` phase and get their public binding in the ``scheduler`` (IAM) phase.
+    """
     commands: list[Command] = []
     for job in jobs:
+        if is_service(job):
+            if mode in ("all", "jobs"):
+                commands.append(
+                    render_service_deploy(
+                        job, defaults, project=project, image=image, gcloud=gcloud
+                    )
+                )
+            if mode in ("all", "scheduler"):
+                binding = render_public_binding(job, defaults, project=project, gcloud=gcloud)
+                if binding is not None:
+                    commands.append(binding)
+            continue
         if mode in ("all", "jobs"):
             commands.append(
                 render_job_deploy(job, defaults, project=project, image=image, gcloud=gcloud)
@@ -500,6 +655,14 @@ def execute(commands: list[Command], *, dry_run: bool) -> None:
 
 def list_jobs(jobs: list[dict[str, Any]], defaults: dict[str, Any]) -> None:
     for job in jobs:
+        if is_service(job):
+            public = "(public)" if job.get("public") else "(private)"
+            print(
+                f"{job['name']:<32} {'service':<14} {public:<9} "
+                f"{setting(job, defaults, 'memory', '1Gi'):<6} "
+                f"{setting(job, defaults, 'timeout', '300s'):<7} {shlex.join(job_args(job))}"
+            )
+            continue
         schedule = str(job.get("schedule", MANUAL))
         enabled = "" if setting(job, defaults, "enabled", True) else "(paused)"
         print(
@@ -541,18 +704,25 @@ def main() -> int:
     scope.add_argument(
         "--jobs-only",
         action="store_true",
-        help="deploy the Cloud Run jobs only (no IAM, no schedules)",
+        help="deploy the Cloud Run jobs and services only (no IAM, no schedules)",
     )
     scope.add_argument(
         "--scheduler-only",
         action="store_true",
-        help="IAM bindings and schedules only (leave the jobs' images alone)",
+        help="IAM bindings and schedules only (leave the images alone)",
+    )
+    scope.add_argument(
+        "--services-only",
+        action="store_true",
+        help="deploy the Cloud Run services only (the listing-queue API)",
     )
     parser.add_argument("--gcloud", help="path to the gcloud executable (default: search PATH)")
     args = parser.parse_args()
 
     try:
         defaults, jobs = load_config(args.config)
+        if args.services_only:
+            jobs = [job for job in jobs if is_service(job)]
         jobs = select_jobs(jobs, args.only)
         if args.list:
             list_jobs(jobs, defaults)
@@ -565,7 +735,13 @@ def main() -> int:
         else:
             project = resolve_project(defaults, args.project, gcloud)
 
-        mode = "jobs" if args.jobs_only else "scheduler" if args.scheduler_only else "all"
+        mode = (
+            "jobs"
+            if args.jobs_only or args.services_only
+            else "scheduler"
+            if args.scheduler_only
+            else "all"
+        )
         existing: dict[str, str] | None = None
         if mode != "jobs":
             region = str(defaults.get("region", "us-central1"))

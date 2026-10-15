@@ -48,6 +48,25 @@ def read_gs_text(uri: str, *, client: GCSClient | None = None) -> str:
         raise FileNotFoundError(f"Missing object: {uri}") from exc
 
 
+def download_gs_file(uri: str, dest: Path, *, client: GCSClient | None = None) -> Path:
+    """Download one object to ``dest`` (parents created). A missing object raises
+    FileNotFoundError, matching what a local path would do."""
+    from google.api_core.exceptions import NotFound
+
+    bucket, name = parse_gs_uri(uri)
+    if not name:
+        raise ValueError(f"gs:// URI names a bucket, not an object: {uri!r}")
+    client = client or GCSClient()
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    blob = client.client.bucket(bucket).blob(name)
+    try:
+        blob.download_to_filename(str(dest))
+    except NotFound as exc:
+        raise FileNotFoundError(f"Missing object: {uri}") from exc
+    return dest
+
+
 class GCSClient:
     """Thin wrapper around google.cloud.storage.Client.
 
@@ -102,6 +121,26 @@ class GCSClient:
             blob.make_public()
             return blob.public_url
         return blob.name
+
+    def upload_bytes(
+        self,
+        *,
+        bucket: str,
+        object_name: str,
+        data: bytes,
+        content_type: str,
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        """Upload in-memory bytes; returns the object's ``gs://`` URI."""
+        blob = self.client.bucket(bucket).blob(object_name)
+        if metadata:
+            blob.metadata = metadata
+        blob.upload_from_string(data, content_type=content_type)
+        return f"{GS_SCHEME}{bucket}/{object_name}"
+
+    def read_text(self, *, bucket: str, object_name: str) -> str:
+        """Download one object as text; a missing object raises FileNotFoundError."""
+        return read_gs_text(f"{GS_SCHEME}{bucket}/{object_name}", client=self)
 
     def make_public(self, *, bucket: str, object_name: str) -> str:
         blob = self.client.bucket(bucket).blob(object_name)

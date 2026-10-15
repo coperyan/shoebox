@@ -38,11 +38,28 @@ Cascading Set → Subset → Parallel → Card # dropdowns backed by the metadat
 views, image pickers, price/quantity entry; "Save Enriched JSONL" writes the
 same `listing_queue_enriched.jsonl` the Excel path produces.
 
+### `api`
+Serves the listing-queue HTTP API for the iOS app (FastAPI under uvicorn):
+metadata dropdowns, row enrichment/preview, queue + draft writes to
+`paths.queue_uri`, photo uploads. Needs `SHOEBOX_API_KEY` in the environment
+and `paths.queue_uri` in `app.yaml`. Runs as a Cloud Run service in
+production; see [api.md](api.md) and [deployment.md](deployment.md#services).
+
+| Flag | Effect |
+|---|---|
+| `--host` | Bind address (default `0.0.0.0`) |
+| `--port` | Listen port (default `$PORT`, else 8080) |
+
 ## Listing creation
 
 ### `create-listings`
-Consumes `exports/jsonl/listing_queue_enriched.jsonl` and creates eBay
-listings (inventory item → offer → publish → promote). Results are appended to
+Consumes the listing queue — `paths.queue_uri` in GCS when set (the iOS app's
+API writes it), else `exports/jsonl/listing_queue_enriched.jsonl` — and creates
+eBay listings (inventory item → offer → publish → promote). Image references
+may be local paths, bare scan numbers, or `gs://` photos uploaded from the
+app; all three are materialised to a local file first
+(`utils/image_refs.materialize_image`). A queue containing enrichment error
+rows is refused before anything is listed. Results are appended to
 `exports/jsonl/ebay_listings.jsonl`, then synced to GCS + BigQuery and deleted
 locally.
 
@@ -52,6 +69,7 @@ locally.
 | `--publish` | Publish offers after creation (otherwise offers are created unpublished) |
 | `--schedule` | Set `listingStartDate` ≈ now + 19 days on each listing |
 | `--scrape-prices` | Scrape 130point sold comps per card, then ask the Slack pricing channel to confirm/override before listing (see [slack.md](slack.md)) |
+| `--queue PATH_OR_GS_URI` | Read this queue file instead of the default (a local JSONL or a `gs://` object) |
 
 Offers are created **unpublished** unless `--publish` is passed.
 

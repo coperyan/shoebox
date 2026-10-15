@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 from pathlib import Path
 
@@ -32,6 +33,26 @@ def main() -> None:
     p_list.add_argument("--publish", action="store_true")
     p_list.add_argument("--schedule", action="store_true")
     p_list.add_argument("--scrape-prices", action="store_true")
+    p_list.add_argument(
+        "--queue",
+        metavar="PATH_OR_GS_URI",
+        help=(
+            "Queue file to read: a local JSONL path or a gs:// object. Default: "
+            "paths.queue_uri when set, else exports/jsonl/listing_queue_enriched.jsonl"
+        ),
+    )
+
+    ## Listing-queue HTTP API (the iOS app's backend; runs as a Cloud Run service)
+    p_api = sub.add_parser(
+        "api", help="Serve the listing-queue HTTP API (FastAPI/uvicorn) for the iOS app"
+    )
+    p_api.add_argument("--host", default="0.0.0.0")
+    p_api.add_argument(
+        "--port",
+        type=int,
+        default=int(os.environ.get("PORT", "8080")),
+        help="Listen port (default: $PORT, else 8080)",
+    )
 
     ## Orders Awaiting Shipment
     orders = sub.add_parser("orders-awaiting-shipment", help="Display orders awaiting shipment")
@@ -342,11 +363,18 @@ def main() -> None:
         from shoebox.pipelines.create_listings import run_listings
 
         run_listings(
+            queue=args.queue,
             publish=args.publish,
             dry_run=args.dry_run,
             schedule=args.schedule,
             scrape_prices=args.scrape_prices,
         )
+        return
+
+    if args.cmd == "api":
+        from shoebox.api.server import serve
+
+        serve(host=args.host, port=args.port)
         return
 
     if args.cmd == "create-variation-listings":

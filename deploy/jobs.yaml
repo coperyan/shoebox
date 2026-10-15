@@ -15,6 +15,10 @@
 #
 # Nothing is ever deleted: removing or renaming an entry leaves the old Cloud
 # Run job and Scheduler job in GCP until you delete them by hand.
+#
+# `services:` (at the bottom) are Cloud Run *services* -- long-running HTTP
+# servers, not scheduled jobs. Today that is the listing-queue API the iOS app
+# talks to (docs/api.md).
 
 defaults:
   # GCP project. Left out on purpose (this repo is public): the script takes
@@ -155,3 +159,27 @@ jobs:
     schedule: "*/15 8-21 * * *"
     timeout: 840s
     memory: 512Mi
+
+# Cloud Run services. Same `defaults:` (image, runner identity, env, secret
+# mounts, labels); `timeout` is the per-request limit. Deployed with the jobs
+# by Cloud Build (`--jobs-only`), or alone with `--services-only`.
+services:
+  # The listing-queue HTTP API behind the iOS app: serves the checklist /
+  # parallels dropdowns from BigQuery, enriches and writes the queue to
+  # paths.queue_uri in GCS, and stores phone photos under uploads/ in the
+  # image bucket. `public: true` adds an allUsers invoker binding (applied in
+  # the IAM phase, from a workstation); the X-API-Key header is the auth, read
+  # from the SHOEBOX_API_KEY env var that env_secrets maps to Secret Manager.
+  # The uploaded app.yaml must set paths.queue_uri. See docs/api.md.
+  - name: shoebox-api
+    run: api
+    description: Listing-queue API for the iOS app (docs/api.md).
+    timeout: 300s
+    memory: 1Gi
+    port: 8080
+    concurrency: 8
+    min_instances: 0
+    max_instances: 2
+    public: true
+    env_secrets:
+      SHOEBOX_API_KEY: shoebox-api-key:latest

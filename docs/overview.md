@@ -36,6 +36,7 @@ The package follows a layered layout under `shoebox/`:
 | Pipelines | `pipelines/` | End-to-end runnable workflows (one per CLI command, roughly) |
 | Services | `services/` | Workflows and long-running components: `ListingService` (create / relist / retitle / recategorize listings across the eBay APIs), the Slack command bot, the orders-awaiting-shipment display/messenger |
 | UI | `ui/` | Streamlit app for building the listing queue |
+| API | `api/` | FastAPI service behind the iOS app: metadata, enrichment, queue/draft writes to GCS, photo uploads ([api.md](api.md)) |
 | Utils | `utils/` | Slack messaging (`slack.py`, `slack_formatting.py`), pricing math and reply parsing (`pricing.py`), SKU hashing, JSONL helpers, ad-campaign routing, team-name shortening, rich-table rendering |
 | Storage | `storage/` | `TableAsset` — the CSV → JSONL → GCS → BigQuery loading abstraction used by metadata sync |
 | Settings | `settings.py` | Pydantic-validated config loaded from `configs/app.yaml` (cached accessor `get_settings()`) |
@@ -59,8 +60,11 @@ flowchart TD
 
     BQMETA -->|dropdown data + enrichment| UI[Streamlit UI]
     BQMETA -->|enrichment| XL[create-queue-excel\ndata/Inputs Param.xlsm]
+    BQMETA -->|GET /metadata| API[shoebox api on Cloud Run\n+ iOS app]
     UI --> QUEUE[exports/jsonl/listing_queue_enriched.jsonl]
     XL --> QUEUE
+    API -->|PUT /queue| QUEUEGCS[gs://…/queue/listing_queue_enriched.jsonl]
+    QUEUEGCS -->|paths.queue_uri| LIST
 
     SCANS[scans_dir images] -->|ImageLogClient\ncache + dedup| GCSIMG[(GCS image_bucket)]
     GCSIMG -->|public URLs| LIST
@@ -85,12 +89,13 @@ flowchart TD
 each sync fully replaces the tables). BigQuery views `cards.v_checklist` and
 `cards.v_parallels` sit on top and are what the UI and enrichment actually query.
 
-**Listing flow.** Two interchangeable entry points produce the same file:
-the Streamlit UI (`shoebox ui`) or the Excel loader (`create-queue-excel`,
-reading `data/Inputs (Param).xlsm`). Both join user input against the metadata
-views via `transforms/queue_enrichment.build_enriched_json` and write
-`exports/jsonl/listing_queue_enriched.jsonl`. `create-listings` then consumes
-that file row by row: optionally scrapes comparable prices (130point.com) and
+**Listing flow.** Three interchangeable entry points produce the same rows:
+the Streamlit UI (`shoebox ui`), the Excel loader (`create-queue-excel`,
+reading `data/Inputs (Param).xlsm`), or the iOS app through `shoebox api`.
+All join user input against the metadata views via
+`transforms/queue_enrichment.build_enriched_json` and write
+`listing_queue_enriched.jsonl` (locally, or at `paths.queue_uri` in GCS for the
+API). `create-listings` then consumes that file row by row: optionally scrapes comparable prices (130point.com) and
 asks for confirmation in Slack, uploads front/back scans through the image log,
 builds the inventory-item and offer payloads (`transforms/listing_builder`),
 and drives `ListingService.create_listing` (upsert inventory

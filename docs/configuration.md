@@ -26,6 +26,8 @@ named in `paths`.
 | `SHOEBOX_TITLE_CROSSWALK` | Path to the team/title crosswalk (default `configs/title_crosswalk.yaml`) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | Standard ADC override, used when `gcp.service_account_json` doesn't exist |
 | `SHOEBOX_LOG_DIR` | Directory for the per-run log file (default `logs`). `-` or empty logs to the console only, which is what a container wants: the platform collects stdout and discards the filesystem. See [deployment.md](deployment.md) |
+| `SHOEBOX_API_KEY` | The `X-API-Key` value `shoebox api` requires on every request. The API refuses to start without it. See [api.md](api.md) |
+| `PORT` | Listen port for `shoebox api` (default 8080; Cloud Run sets it) |
 
 ## Settings schema
 
@@ -76,12 +78,15 @@ All local working directories; created by `ensure_runtime_dirs()`.
 | `searches_file` | `configs/searches.yaml` | Saved eBay search definitions (a **file**, not a directory — not created by `ensure_dirs()`). May be a `gs://bucket/object` URI, re-read every run; that is how the Cloud Run job reads the copy a push to the searches repo deploys ([deployment.md](deployment.md#saved-searches-watch-searches)) |
 | `searches_git_pull` | `false` | `git pull --ff-only` next to `searches_file` before every `watch-searches` run. Ignored when `searches_file` is a `gs://` URI |
 | `searches_state_uri` | unset | Where `watch-searches` keeps its seen-caches, run state, lock and hits buffer. Unset: `<exports_dir>/jsonl/searches/`. A `gs://bucket/prefix` URI keeps them in GCS, which the Cloud Run job requires; every host naming the same URI shares one state and one lock |
+| `queue_uri` | unset | The listing queue as a GCS **object**, `gs://bucket/prefix/listing_queue_enriched.jsonl`. The iOS app's API (`shoebox api`) writes it; with it set, `create-listings` reads it instead of `exports/jsonl/listing_queue_enriched.jsonl` (`--queue` overrides per run). Set the same value on the Cloud Run service and the workstation. See [api.md](api.md) |
 
 A bare scan number typed in the UI or listed in the queue workbook is resolved
 to `scans_dir/<scan_prefix><zero-padded number><scan_extension>` — e.g. with the
 defaults, `123` → `scans/SCAN_0123.jpg`; with `scan_prefix: IMG`,
 `scan_number_padding: 5`, `scan_extension: .png`, `123` → `scans/IMG00123.png`.
-An entry that is already an existing file path is used as-is.
+An entry that is already an existing file path is used as-is, and a `gs://`
+URI (a photo uploaded from the iOS app) is downloaded to
+`scans_dir/app_uploads/` by `create-listings` first.
 
 ### `ebay`
 

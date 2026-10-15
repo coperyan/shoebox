@@ -53,6 +53,11 @@ paths:
   # a workstation so both hosts share one state and one lock. searches_file
   # may likewise be a gs:// object. See docs/deployment.md, "Saved searches".
   # searches_state_uri: gs://my-project-shoebox-searches/state
+  # The listing queue as a GCS object, written by the iOS app's API (`shoebox api`
+  # on Cloud Run) and read by `create-listings` instead of the local
+  # exports/jsonl/listing_queue_enriched.jsonl. Set the same URI on both hosts.
+  # See docs/api.md.
+  # queue_uri: gs://my-ebay-bucket/queue/listing_queue_enriched.jsonl
 
 ebay:
   # application/user/header name the entries to use in ebay_rest.json

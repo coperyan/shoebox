@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pandas as pd
@@ -16,6 +15,7 @@ from shoebox.transforms.queue_enrichment import (
 from shoebox.transforms.queue_enrichment import (
     load_checklist_and_parallels as _load_checklist_and_parallels,
 )
+from shoebox.transforms.queue_indexes import build_indexes
 from shoebox.ui.helpers import handle_image_path
 from shoebox.utils.jsonl import read_jsonl, write_jsonl
 
@@ -65,72 +65,6 @@ def pick_file_windows(title: str) -> str | None:
 # -----------------------------
 # BigQuery: load ONCE (cached)
 # -----------------------------
-
-
-def build_indexes(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, object]:
-    """
-    Precompute lookups so dropdowns are fast and in-memory.
-    Sort Card # by derived_card_number (numbers first as ints, then text),
-    but display/return the actual card_number.
-    """
-
-    def _cardno_sort_key(derived: object) -> tuple:
-        if derived is None or (isinstance(derived, float) and pd.isna(derived)):
-            return (2, float("inf"), "")
-        s = str(derived).strip()
-        if not s:
-            return (2, float("inf"), "")
-        if re.fullmatch(r"\d+", s):
-            return (0, int(s), "")
-        return (1, float("inf"), s.upper())
-
-    # Sets from checklist (authoritative)
-    sets = sorted([x for x in cdf["set_name"].dropna().unique().tolist()])
-
-    subsets_by_set: dict[str, list[str]] = {}
-    cardnos_by_set_subset: dict[tuple[str, str], list[str]] = {}
-    parallels_by_set_subset: dict[tuple[str, str], list[str]] = {}
-
-    # Subsets from checklist
-    for s, g in cdf.groupby("set_name", dropna=False):
-        if pd.isna(s):
-            continue
-        subsets_by_set[str(s)] = sorted([x for x in g["subset_name"].dropna().unique().tolist()])
-
-    # Card numbers: sort by derived_card_number, return/display card_number
-    for (s, sub), g in cdf.groupby(["set_name", "subset_name"], dropna=False):
-        if pd.isna(s) or pd.isna(sub):
-            continue
-        key = (str(s), str(sub))
-
-        tmp = (
-            g.loc[:, ["card_number", "derived_card_number"]]
-            .dropna(subset=["card_number"])
-            .drop_duplicates(subset=["card_number"])
-        )
-
-        pairs = list(
-            zip(tmp["derived_card_number"].tolist(), tmp["card_number"].tolist(), strict=False)
-        )
-        pairs.sort(key=lambda t: _cardno_sort_key(t[0]))
-
-        cardnos_by_set_subset[key] = [card_no for _, card_no in pairs]
-
-    # Parallels come from parallels view
-    for (s, sub), g in pdf.groupby(["set_name", "subset_name"], dropna=False):
-        if pd.isna(s) or pd.isna(sub):
-            continue
-        key = (str(s), str(sub))
-        parallels_by_set_subset[key] = sorted(
-            [x for x in g["parallel_variety"].dropna().unique().tolist()]
-        )
-
-    return {
-        "sets": sets,
-        "subsets_by_set": subsets_by_set,
-        "cardnos_by_set_subset": cardnos_by_set_subset,
-        "parallels_by_set_subset": parallels_by_set_subset,
-    }
 
 
 def reset_dependents(row: ListingQueueRow, changed: str) -> ListingQueueRow:

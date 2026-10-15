@@ -1,4 +1,6 @@
+import pytest
 import yaml
+from pydantic import ValidationError
 
 from shoebox.settings import Settings, get_settings
 
@@ -35,3 +37,25 @@ def test_unknown_top_level_key_is_rejected():
     except Exception:
         return
     raise AssertionError("extra top-level key should have been rejected")
+
+
+def test_queue_uri_default_none():
+    assert Settings(**_example_raw()).paths.queue_uri is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["gs://bucket/queue/listing_queue_enriched.jsonl", "gs://b/x.jsonl"],
+)
+def test_queue_uri_accepts_object_uri(value):
+    raw = _example_raw()
+    raw["paths"]["queue_uri"] = value
+    assert Settings(**raw).paths.queue_uri == value
+
+
+@pytest.mark.parametrize("value", ["gs://bucket", "gs://bucket/", "exports/x.jsonl", "gs:///x"])
+def test_queue_uri_rejects_non_object(value):
+    raw = _example_raw()
+    raw["paths"]["queue_uri"] = value
+    with pytest.raises(ValidationError):
+        Settings(**raw)

@@ -23,9 +23,10 @@ source → normalize → local JSONL (exports/jsonl/…) → GCS staging object 
 
 | Bucket setting | Contents | Written by |
 |---|---|---|
-| `image_bucket` | `images/<set>/<subset>/<parallel|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies | `ImageLogClient.upload_image`, relist pipelines |
+| `image_bucket` | `images/<set>/<subset>/<parallel|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies; `uploads/<yyyy-mm>/<id>.jpg` photos staged from the iOS app (give these a 30-day lifecycle rule) | `ImageLogClient.upload_image`, relist pipelines, `POST /images` |
 | `metadata_bucket` | `metadata/checklist/…`, `metadata/parallels/…` staging JSONL | `sync-metadata` (`TableAsset`) |
 | `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/watch_list/…`, `logs/ebay_listings/…`, `logs/search_hits/…` staging JSONL | monitoring pipelines, listing-result sync, saved-search watcher |
+| (bucket in `paths.queue_uri`) | `…/listing_queue_enriched.jsonl` (the queue `create-listings` reads) and `…/listing_queue_draft.json` (raw rows of the last save) | `shoebox api` ([api.md](api.md)) |
 | `image_log_bucket` | `logs/image_log/…` staging JSONL | `ImageLogClient.flush_append_log` |
 
 Card images are made public (their public URLs go into eBay listings).
@@ -68,7 +69,7 @@ by the shipped SQL views/queries:
 
 | Path | Lifecycle | Purpose |
 |---|---|---|
-| `exports/jsonl/listing_queue_enriched.jsonl` | Persistent until next queue build | The listing queue (UI or Excel produced) |
+| `exports/jsonl/listing_queue_enriched.jsonl` | Persistent until next queue build | The listing queue (UI or Excel produced). With `paths.queue_uri` set, `create-listings` reads the GCS object instead |
 | `exports/jsonl/ebay_listings.jsonl` | Deleted after successful GCS+BQ sync | Listing results buffer |
 | `exports/jsonl/image_cache.jsonl` | Persistent | Image dedup index — cache key → `ImageLogEntry`; prevents re-uploads across runs |
 | `exports/jsonl/image_log_append.jsonl` | Flushed after successful GCS+BQ sync | Net-new uploads awaiting BigQuery |
@@ -89,13 +90,16 @@ uploads the changed ones after every search. See
 | `data/Inputs (Param).xlsm` | User-maintained | Excel queue input |
 | `scans_dir/<scan_prefix><id><scan_extension>` | User-maintained | Source card scans (naming set by `scan_prefix`/`scan_number_padding`/`scan_extension`) |
 | `scans_dir/GCS/<object path>` | Persistent | Local mirror of every uploaded image |
+| `scans_dir/app_uploads/<name>` | Until listed (deleted like a scan) | Phone photos downloaded from `gs://…/uploads/` by `create-listings` |
 | `logs/<timestamp>.log` | Per run | File logging via `utils.logging_setup.setup_logging()` |
 
 ## Key clients
 
 ### `clients/gcs.py` — `GCSClient`
 `upload_text`, `upload_file` (optional `make_public` → returns public URL),
-`make_public`. Service-account JSON if present, else ADC.
+`upload_bytes` (returns the `gs://` URI), `read_text`, `make_public`; module
+helpers `read_gs_text` / `download_gs_file` for `gs://` URIs. Service-account
+JSON if present, else ADC.
 
 ### `clients/bigquery.py` — `BigQueryClient`
 `run_query(sql_filename, params)` → DataFrame (reads the SQL file from

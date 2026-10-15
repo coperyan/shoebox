@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import UTC, datetime
@@ -7,16 +8,17 @@ from pathlib import Path
 
 from shoebox.clients.bigquery import BigQueryClient
 from shoebox.clients.ebay.client import EbayClient
-from shoebox.clients.gcs import GCSClient
+from shoebox.clients.gcs import GCSClient, is_gs_uri, read_gs_text
 from shoebox.clients.image_log import ImageLogClient
 from shoebox.clients.price_scraper import PriceScraper, search_helper
 from shoebox.models.ebay_listing import EbayListingResult
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.pipelines.load_listing_queue_from_excel import create_queue_file
 from shoebox.services.listings import ListingService
-from shoebox.settings import ensure_runtime_dirs, get_settings
+from shoebox.settings import Settings, ensure_runtime_dirs, get_settings
 from shoebox.transforms.listing_builder import build_draft
 from shoebox.utils.ad_campaign import get_ad_campaign
+from shoebox.utils.image_refs import materialize_image
 from shoebox.utils.jsonl import append_jsonl, read_jsonl
 from shoebox.utils.pricing import parse_price_reply, round_up_to_nine
 from shoebox.utils.sku import build_sku_50
@@ -29,10 +31,41 @@ def _utc_ts() -> str:
     return datetime.now(UTC).strftime("%Y-%m-%dT%H-%M-%SZ")
 
 
-def read_queue(path: Path) -> list[ListingQueueRow]:
-    if not path.exists():
-        raise FileNotFoundError(f"Listing queue not found: {path}")
-    return [ListingQueueRow(**r) for r in read_jsonl(path)]
+QUEUE_FILENAME = "listing_queue_enriched.jsonl"
+
+
+def default_queue_source(settings: Settings) -> str | Path:
+    """Where the queue is read from unless ``--queue`` says otherwise: the
+    ``paths.queue_uri`` GCS object when set (the iOS app's API writes it),
+    else the local file the Streamlit UI / Excel loader write."""
+    if settings.paths.queue_uri:
+        return settings.paths.queue_uri
+    return Path(settings.paths.exports_dir) / "jsonl" / QUEUE_FILENAME
+
+
+def read_queue(source: str | Path) -> list[ListingQueueRow]:
+    """Load queue rows from a local JSONL path or a ``gs://`` object.
+
+    Rows carrying an ``error`` key (``build_enriched_json``'s "No checklist
+    match" records) are rejected up front: as ``ListingQueueRow`` they would
+    have no ids or player and only fail deep inside the eBay calls.
+    """
+    if is_gs_uri(source):
+        text = read_gs_text(str(source))
+        records = [json.loads(line) for line in text.splitlines() if line.strip()]
+    else:
+        path = Path(source)
+        if not path.exists():
+            raise FileNotFoundError(f"Listing queue not found: {path}")
+        records = read_jsonl(path)
+
+    bad = [i for i, r in enumerate(records) if not isinstance(r, dict) or "error" in r]
+    if bad:
+        raise ValueError(
+            f"{len(bad)} queue row(s) carry an enrichment error (rows {bad[:10]}); "
+            "fix the queue before listing"
+        )
+    return [ListingQueueRow(**r) for r in records]
 
 
 def sync_results_to_bq(
@@ -149,7 +182,7 @@ def _create_one_listing(
     if q.image_front:
         image_urls.append(
             img_client.upload_image(
-                file_path=Path(q.image_front),
+                file_path=materialize_image(q.image_front),
                 set_name=q.set_name,
                 subset_name=q.subset_name,
                 card_number=q.card_number,
@@ -160,7 +193,7 @@ def _create_one_listing(
     if q.image_back:
         image_urls.append(
             img_client.upload_image(
-                file_path=Path(q.image_back),
+                file_path=materialize_image(q.image_back),
                 set_name=q.set_name,
                 subset_name=q.subset_name,
                 card_number=q.card_number,
@@ -227,6 +260,7 @@ def _create_one_listing(
 def run_listings(
     *,
     queue_items: list[ListingQueueRow] | None = None,
+    queue: str | Path | None = None,
     publish: bool = True,
     dry_run: bool = False,
     schedule: bool = True,
@@ -235,9 +269,9 @@ def run_listings(
     settings = get_settings()
 
     if queue_items is None:
-        queue_items = read_queue(
-            Path(settings.paths.exports_dir) / "jsonl" / "listing_queue_enriched.jsonl"
-        )
+        source = queue or default_queue_source(settings)
+        logger.info("Reading listing queue from %s", source)
+        queue_items = read_queue(source)
 
     img_client = ImageLogClient(settings=settings)
     price_scrape_client = PriceScraper()

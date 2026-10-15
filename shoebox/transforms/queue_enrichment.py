@@ -31,7 +31,7 @@ def normalize_nulls(d: dict) -> dict:
     null_tokens = {"", "none", "null", "nan", "<na>", "na", "n/a"}
     out: dict = {}
     for k, v in d.items():
-        if v is None:
+        if v is None or v is pd.NA:
             out[k] = None
         elif isinstance(v, float) and pd.isna(v):
             out[k] = None

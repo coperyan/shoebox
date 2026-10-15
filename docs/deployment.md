@@ -27,10 +27,15 @@ deploy/searches-cloudbuild.yaml  Cloud Build: validate searches.yaml -> copy it 
 | `sync-orders`, `sync-active-listings`, `sync-active-listing-details`, `sync-watch-list`, `end-oos-listings` | **Cloud Run job** | API → JSONL → GCS → BigQuery. No browser, no local input, no state between runs |
 | `watch-searches` | **Cloud Run job** | Seen-caches, run state and lock live in GCS (`paths.searches_state_uri`); `searches.yaml` is deployed to GCS on every push to the searches repo. See [Saved searches](#saved-searches-watch-searches) |
 | `send-offers` | **Cloud Run job** | eBay Negotiation/Trading API + Slack only. Interactive replies arrive over Socket Mode, an outbound connection that works from a container. See [send-offers](#send-offers) |
+| `shoebox-api` (`shoebox api`) | **Cloud Run service** | The iOS app's backend: BigQuery metadata, enrichment, queue + photo writes to GCS. HTTP, so a service rather than a job. See [Services](#services) and [api.md](api.md) |
 | `slack-bot` | Workstation (for now) | Long-running Socket Mode listener; would be a Cloud Run *service*, not a job |
 | `create-listings`, `create-variation-listings`, `relist-listings`, `send-offers` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
 | `sync-topps-calendar`, `tcdb-search` | Workstation | Drive a real Chrome via `undetected-chromedriver` |
 | `ui` (Streamlit), `sync-metadata`, `orders-awaiting-shipment --display` | Workstation | Interactive, or need the master workbook |
+
+The iOS app's queue reaches the workstation through GCS: the API writes
+`paths.queue_uri`, and `create-listings` (still on the workstation, for the
+scans, Chrome and Slack) reads it from there.
 
 The line is simple: pipelines that talk only to APIs move; pipelines that need
 a browser, a local file, or a human in the loop stay.
@@ -121,6 +126,62 @@ why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`
 | `watch-searches` | every 5 minutes (**paused** until [cutover](#cutover)) | `shoebox watch-searches` (15m timeout) | `watch-searches` |
 | `send-offers` | every 15 minutes, 08:00–21:45 | `shoebox send-offers --timeout-s 600` (14m timeout, 512Mi) | — (was run by hand) |
 
+### Services
+
+`services:` in `deploy/jobs.yaml` declares Cloud Run **services** alongside
+the jobs. There is one, `shoebox-api`, the HTTP backend of the iOS app
+([api.md](api.md)):
+
+```yaml
+services:
+  - name: shoebox-api
+    run: api                 # `shoebox api`; listens on $PORT
+    timeout: 300s            # per request
+    port: 8080
+    concurrency: 8
+    min_instances: 0         # scale to zero; a cold start is a few seconds
+    max_instances: 2
+    public: true             # allUsers -> roles/run.invoker; the X-API-Key header is the auth
+    env_secrets:
+      SHOEBOX_API_KEY: shoebox-api-key:latest
+```
+
+Services share `defaults:` (image, runner identity, env, secret mounts,
+labels) and take `env_secrets:` of their own — Secret Manager secrets exposed
+as environment variables rather than files, so the key never sits in
+`app.yaml`. The deploy script renders `gcloud run deploy` in the jobs phase
+(so Cloud Build's `--jobs-only` rolls the service with the jobs) and, for
+`public: true`, a `gcloud run services add-iam-policy-binding … --member
+allUsers` in the IAM phase, which runs from a workstation like the scheduler
+invoker bindings; the build identity never sets IAM policy. `--services-only`
+deploys just the services; `--only shoebox-api` works as for jobs.
+
+One-time setup, after the [one-time setup](#one-time-setup) above:
+
+```bash
+# 1. The API key. Treat it like a password; rotate by adding a version.
+openssl rand -hex 32 | gcloud secrets create shoebox-api-key --replication-policy=automatic --data-file=-
+gcloud secrets add-iam-policy-binding shoebox-api-key \
+  --member serviceAccount:$RUNNER --role roles/secretmanager.secretAccessor
+
+# 2. Where the queue lives. Add to configs/app.cloud.yaml AND the workstation's configs/app.yaml:
+#      paths.queue_uri: gs://BUCKET/queue/listing_queue_enriched.jsonl
+gcloud secrets versions add shoebox-app-yaml --data-file=configs/app.cloud.yaml
+
+# 3. Expire staged phone photos (uploads/ in the image bucket) after 30 days.
+echo '{"rule": [{"action": {"type": "Delete"}, "condition": {"age": 30, "matchesPrefix": ["uploads/"]}}]}' > lifecycle.json
+gcloud storage buckets update gs://IMAGE_BUCKET --lifecycle-file=lifecycle.json && rm lifecycle.json
+
+# 4. Deploy (first the service, then its public binding) and smoke-test.
+python scripts/deploy_cloud_run.py --only shoebox-api
+URL=$(gcloud run services describe shoebox-api --region us-central1 --format 'value(status.url)')
+curl -s $URL/healthz
+curl -s -H "X-API-Key: $(gcloud secrets versions access latest --secret shoebox-api-key)" $URL/metadata | head -c 300
+```
+
+Put `$URL` and the key into the app's Settings screen. The runner identity
+needs nothing new: it already reads BigQuery and writes the buckets.
+
 ### send-offers
 
 `send-offers` runs interactively every 15 minutes from 08:00 to 21:45 Pacific
@@ -174,6 +235,7 @@ paths:
   searches_file: gs://BUCKET/config/searches.yaml   # watch-searches; see "Saved searches"
   searches_state_uri: gs://BUCKET/state              # watch-searches refuses to run in Cloud Run without it
   searches_git_pull: false                           # the image has no git; the file is pushed, not pulled
+  queue_uri: gs://BUCKET/queue/listing_queue_enriched.jsonl   # shoebox-api writes it; set the same on the workstation
 
 ebay:
   path: /secrets/ebay-rest                 # redundant with EBAY_REST_CONFIG_PATH, harmless
@@ -728,6 +790,10 @@ gcloud run jobs delete alert-test --region us-central1 --quiet
 | Cloud Scheduler complains about a missing App Engine app | Rare on current projects; `gcloud app create --region=us-central` once and re-run |
 | Rows appear twice in BigQuery for one `file_date` day | Both hosts ran; step 13 |
 | `watch-searches is running in Cloud Run with local state` | The uploaded `app.yaml` has no `paths.searches_state_uri` (S5) |
+| `shoebox-api` exits at start: `SHOEBOX_API_KEY is not set` | The `shoebox-api-key` secret is missing or the runner cannot read it ([Services](#services) step 1) |
+| `shoebox-api` exits at start: `paths.queue_uri is not set` | The uploaded `app.yaml` lacks `paths.queue_uri` ([Services](#services) step 2) |
+| The phone gets `403` from the API URL (not `401`) | The `allUsers` invoker binding was never applied: run `python scripts/deploy_cloud_run.py --scheduler-only --only shoebox-api` from a workstation |
+| `create-listings`: `Missing object: gs://…/listing_queue_enriched.jsonl` | Nothing submitted from the app yet, or the two `queue_uri` values differ |
 | `watch-searches`: `Missing object: gs://.../searches.yaml` | Nothing deployed yet (S3), or `paths.searches_file` and the trigger's `_DEST_URI` disagree |
 | `watch-searches`: 403 on `storage.objects.create` or `.get` | The runner lacks `roles/storage.objectUser` on the searches bucket (S2) |
 | Every tick logs "Another watch-searches run holds the lock" | A run is still going, or one died holding it. It expires after 20 minutes; `gcloud storage cat gs://BUCKET/state/.lock` shows the holder |

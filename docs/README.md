@@ -15,7 +15,8 @@ for notifications, price approvals, and remote command execution.
 | [search.md](search.md) | The saved eBay search feature end to end: setup, YAML, filters, tuning, scheduling, state, troubleshooting |
 | [tcdb.md](tcdb.md) | Trading Card Database automation: the interactive advanced search, adding cards to your collection (`tcdb-add`), manual-login model, config, and how to add more TCDB actions |
 | [scheduling.md](scheduling.md) | The Windows scheduled tasks: `scripts/tasks.yaml`, generating and registering them, troubleshooting |
-| [deployment.md](deployment.md) | Running the daily sync pipelines as Cloud Run jobs: `deploy/jobs.yaml`, the deploy script, secrets, Cloud Build, cutover from Windows |
+| [deployment.md](deployment.md) | Running the daily sync pipelines as Cloud Run jobs and the listing-queue API as a Cloud Run service: `deploy/jobs.yaml`, the deploy script, secrets, Cloud Build, cutover from Windows |
+| [api.md](api.md) | The listing-queue HTTP API behind the iOS app (`shoebox api`): auth, endpoints, queue vs draft, image uploads, the workstation side |
 | [metadata.md](metadata.md) | Field-by-field definitions of the checklist & parallel metadata |
 | [slack.md](slack.md) | The Slack notification system: messaging, approval buttons, threading, the command bot, and design decisions |
 | [data-storage.md](data-storage.md) | GCS buckets, BigQuery datasets/tables/views, local JSONL files, and how data moves between them |
@@ -27,8 +28,9 @@ for notifications, price approvals, and remote command execution.
 - **Run something**: the console script is `shoebox` (equivalently
   `python -m shoebox.cli`). `shoebox --help` lists all commands —
   see [cli.md](cli.md).
-- **Day-to-day flow**: build a listing queue in the Streamlit UI (`shoebox ui`)
-  or from Excel (`create-queue-excel`), then publish with `create-listings`.
+- **Day-to-day flow**: build a listing queue in the Streamlit UI (`shoebox ui`),
+  from Excel (`create-queue-excel`), or on your phone (the iOS app in `ios/`
+  talking to `shoebox api`), then publish with `create-listings`.
   Monitoring pipelines (`sync-orders`, `sync-active-listings`, …) snapshot eBay
   state into BigQuery. Slack receives status notifications and hosts the
   interactive price-approval flow.

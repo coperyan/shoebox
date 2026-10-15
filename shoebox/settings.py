@@ -19,6 +19,23 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
+def _gs_uri_or_none(value: str | None, message: str, *, require_object: bool = False) -> str | None:
+    """Validate a ``gs://bucket[/object]`` setting.
+
+    Only GCS is supported; a local override is what exports_dir is for. Caught
+    at settings load so a typo fails at startup, not as a mangled local path.
+    ``None``/empty mean "unset". With ``require_object`` the URI must name an
+    object inside the bucket, not just the bucket.
+    """
+    if value in (None, ""):
+        return None
+    rest = value[len("gs://") :] if value.startswith("gs://") else ""
+    bucket, _, name = rest.partition("/")
+    if not bucket or (require_object and not name.strip("/")):
+        raise ValueError(message)
+    return value
+
+
 class GCPSettings(BaseModel):
     project_id: str
     # Path to a service-account json file. Prefer ADC/Secret Manager in production.
@@ -85,16 +102,25 @@ class PathSettings(BaseModel):
     # state and one lock -- see docs/deployment.md.
     searches_state_uri: str | None = None
 
+    # The listing queue as a GCS object: gs://bucket/prefix/listing_queue_enriched.jsonl.
+    # Set it on the Cloud Run API (which writes it) and on the workstation (so
+    # create-listings reads the phone's queue). Unset keeps the local file
+    # <exports_dir>/jsonl/listing_queue_enriched.jsonl. See docs/api.md.
+    queue_uri: str | None = None
+
     @field_validator("searches_state_uri")
     @classmethod
     def _state_uri_is_gs(cls, value: str | None) -> str | None:
-        # Only GCS is supported; a local override is what exports_dir is for.
-        # Caught here so a typo fails at startup, not as a mangled local path.
-        if value in (None, ""):
-            return None
-        if not value.startswith("gs://") or not value[len("gs://") :].split("/")[0]:
-            raise ValueError("searches_state_uri must look like gs://bucket/prefix")
-        return value
+        return _gs_uri_or_none(value, "searches_state_uri must look like gs://bucket/prefix")
+
+    @field_validator("queue_uri")
+    @classmethod
+    def _queue_uri_is_gs_object(cls, value: str | None) -> str | None:
+        return _gs_uri_or_none(
+            value,
+            "queue_uri must look like gs://bucket/prefix/listing_queue_enriched.jsonl",
+            require_object=True,
+        )
 
     def ensure_dirs(self) -> None:
         Path(self.data_dir).mkdir(parents=True, exist_ok=True)
