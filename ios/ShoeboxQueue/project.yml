@@ -18,8 +18,10 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
     CODE_SIGN_STYLE: Automatic
-    # Set your Apple Developer team here (or pick it in Xcode > Signing & Capabilities).
-    DEVELOPMENT_TEAM: ""
+    # The Apple Developer team the app is signed with. Kept here rather than in Xcode's
+    # Signing & Capabilities tab because `xcodegen generate` rewrites the project and would
+    # drop a team picked there.
+    DEVELOPMENT_TEAM: DV6F75BCU8
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_STRICT_CONCURRENCY: minimal

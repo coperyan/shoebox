@@ -34,10 +34,11 @@ changing the spec. Select the `ShoeboxQueue` scheme, pick a simulator and press 
 
 ### Signing
 
-The bundle id placeholder is `com.example.ShoeboxQueue`. For a real device set
-`PRODUCT_BUNDLE_IDENTIFIER` and `DEVELOPMENT_TEAM` in `project.yml` (or change them under
-*Signing & Capabilities* in Xcode; those edits are lost on the next `xcodegen generate`, so prefer
-the spec).
+The bundle id placeholder is `com.example.ShoeboxQueue`. `DEVELOPMENT_TEAM` in `project.yml`
+is the team the app is signed with; change it there (and `PRODUCT_BUNDLE_IDENTIFIER` if needed)
+rather than under *Signing & Capabilities* in Xcode, because those edits are lost on the next
+`xcodegen generate`. The team ID is the 10-character value in parentheses on your
+"Apple Development" certificate in Keychain Access.
 
 ## Pointing the app at the API
 
