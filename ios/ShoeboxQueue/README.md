@@ -56,18 +56,19 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
 
 ## Using the app
 
-- **Queue tab** – the Add / Edit form (set -> subset -> parallel -> card #, with the same cascade and
-  autofill as the Streamlit UI), quantity, price and the two images. *Save* appends or updates the
-  row and keeps set / subset / parallel / price for the next card (card # resets, quantity -> 1,
-  images cleared). *Cancel / New* clears everything. Tap a row to edit it, swipe to delete, use
-  *Edit* to reorder. The toolbar menu holds *Save as draft…*, *Drafts…*, *Save draft to server*,
+- **Queue tab** – *Save* / *Clear* at the top, then the Add / Edit form (set -> subset -> parallel
+  -> card #, with the same cascade and autofill as the Streamlit UI), quantity, price and the two
+  images. *Save* (*Update* while editing) appends or updates the row and keeps set / subset /
+  parallel for the next card (card # resets, quantity -> 1, price -> 0.99, images cleared).
+  *Clear* resets the whole form. Tap a row to edit it, swipe to delete, use *Edit* to reorder. The toolbar menu holds *Save as draft…*, *Drafts…*, *Save draft to server*,
   *Load last submitted queue…* and *Clear queue*.
 - **Pickers** – the Set picker is sectioned by year (newest first; the year comes from the
   metadata's `set_year`, else the set name's leading digits). Subsets list *Base* first, then
   A–Z. Typing in the search field and pressing **Search** selects the best match (an exact match,
   else the first option starting with the text, else the first containing it), so `12` + Search
   picks card 12, not 112.
-- **Images** – either a bare **scan number** (stored verbatim; the workstation resolves it to
+- **Images** – either a bare **scan number** typed on a number pad (*Done* above the keyboard, or
+  a scroll, closes it; stored verbatim; the workstation resolves it to
   `<scans_dir>/<scan_prefix><number><scan_extension>` exactly as today), or a **photo** from the
   library. Photos are downscaled to 2000 px / JPEG 0.85, saved locally and uploaded to
   `POST /images` immediately when the API is configured; a row whose photo is still pending shows a

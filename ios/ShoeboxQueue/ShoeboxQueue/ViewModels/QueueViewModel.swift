@@ -187,8 +187,8 @@ final class QueueViewModel {
 
     // MARK: Save / Cancel / Edit / Delete
 
-    /// "Save (Add/Update)": append or replace, then keep set / subset / parallel / price for the
-    /// next card.
+    /// "Save": append or replace, then keep set / subset / parallel for the next card (price goes
+    /// back to `QueueRow.defaultPrice`).
     @discardableResult
     func saveDraft() -> Bool {
         guard draft.isComplete else {
@@ -207,7 +207,9 @@ final class QueueViewModel {
     }
 
     /// `reset_draft_form(keep_metadata=...)`: a fresh draft, optionally keeping set / subset /
-    /// parallel / price; card # -> "", quantity -> 1, images cleared, add mode.
+    /// parallel; card # -> "", quantity -> 1, price -> `QueueRow.defaultPrice`, images cleared,
+    /// add mode. (The Streamlit form also carries the price over; the app always starts at the
+    /// default.)
     func resetDraftForm(keepMetadata: Bool) {
         let previous = draft
         var next = QueueRow()
@@ -215,14 +217,13 @@ final class QueueViewModel {
             next.setName = previous.setName
             next.subsetName = previous.subsetName
             next.parallelVariety = previous.parallelVariety
-            next.price = previous.price
         }
         applyAutofill(to: &next)
         draft = next
         editIndex = nil
     }
 
-    /// "Cancel / New": full reset.
+    /// "Clear": full reset of the form (saved rows are untouched).
     func cancelDraft() {
         resetDraftForm(keepMetadata: false)
     }

@@ -108,7 +108,7 @@ final class QueueViewModelTests: XCTestCase {
         XCTAssertFalse(vm.draft.hasParallelAutofill)
     }
 
-    func testSaveKeepsSetSubsetParallelPriceAndResetsTheRest() throws {
+    func testSaveKeepsSetSubsetParallelAndResetsTheRest() throws {
         let vm = try makeHarness().viewModel
         XCTAssertFalse(vm.saveDraft(), "an incomplete draft is not saved")
         fillDraft(vm)
@@ -123,7 +123,7 @@ final class QueueViewModelTests: XCTestCase {
         XCTAssertEqual(vm.draft.setName, Fixtures.setName)
         XCTAssertEqual(vm.draft.subsetName, Fixtures.subsetName)
         XCTAssertEqual(vm.draft.parallelVariety, "Gold Refractor")
-        XCTAssertEqual(vm.draft.price, 12.5)
+        XCTAssertEqual(vm.draft.price, QueueRow.defaultPrice, "price is not carried over")
         XCTAssertEqual(vm.draft.cardNumber, "")
         XCTAssertEqual(vm.draft.quantity, 1)
         XCTAssertEqual(vm.draft.imageFront, ImageRef.empty)
@@ -170,7 +170,7 @@ final class QueueViewModelTests: XCTestCase {
         XCTAssertEqual(vm.draft.parallelVariety, "")
         XCTAssertEqual(vm.draft.cardNumber, "")
         XCTAssertEqual(vm.draft.quantity, 1)
-        XCTAssertEqual(vm.draft.price, 0)
+        XCTAssertEqual(vm.draft.price, QueueRow.defaultPrice)
         XCTAssertEqual(vm.draft.imageFront, ImageRef.empty)
         XCTAssertNil(vm.draft.player)
         XCTAssertNil(vm.draft.printRun)

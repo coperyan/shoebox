@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **iOS form.** *Save* / *Clear* sit at the top of the Queue tab (*Save* reads
+  *Update* while editing a row); the scan-number field uses the number pad; a
+  *Done* button above the keyboard (and a scroll) dismisses it; a new row's
+  price starts at 0.99 and is no longer carried over from the previous row.
+
 ### Added
 
 - **App pickers and queue loading.** The iOS Set picker is sectioned by year

@@ -115,6 +115,12 @@ final class QueueRowTests: XCTestCase {
         XCTAssertEqual(ImageRef.fromWire("GS://bucket/x.jpg").kind, .photo)
     }
 
+    func testNewRowStartsAtTheDefaultPrice() {
+        XCTAssertEqual(QueueRow.defaultPrice, 0.99)
+        XCTAssertEqual(QueueRow().price, 0.99)
+        XCTAssertEqual(QueueRow().quantity, 1)
+    }
+
     func testDecodingInputFromServerTolerantOfMissingKeys() throws {
         let json = #"{"set_name":"S","subset_name":"B","card_number":"1","parallel_variety":null}"#
         let input = try JSONCoding.decoder.decode(QueueRowInput.self, from: Data(json.utf8))

@@ -9,6 +9,27 @@ struct RowFormView: View {
         @Bindable var queue = queue
 
         Section {
+            Button {
+                queue.saveDraft()
+            } label: {
+                Label(queue.mode == .add ? "Save" : "Update", systemImage: "checkmark.circle")
+            }
+            .disabled(!queue.canSaveDraft)
+
+            Button(role: .cancel) {
+                queue.cancelDraft()
+            } label: {
+                Label("Clear", systemImage: "arrow.uturn.backward")
+            }
+        } footer: {
+            if queue.canSaveDraft {
+                Text("Mode: \(queue.mode.title)")
+            } else {
+                Text("Mode: \(queue.mode.title). Set, subset and card # are required.")
+            }
+        }
+
+        Section {
             SearchablePicker(
                 title: "Set Name",
                 groups: queue.setGroups,
@@ -46,8 +67,6 @@ struct RowFormView: View {
             .disabled(queue.draft.subsetName.isEmpty)
         } header: {
             Text("Add / Edit Row")
-        } footer: {
-            Text("Mode: \(queue.mode.title)")
         }
 
         if queue.draft.hasCardAutofill || queue.draft.hasParallelAutofill {
@@ -93,25 +112,6 @@ struct RowFormView: View {
         Section("Images") {
             ImageFieldView(side: .front)
             ImageFieldView(side: .back)
-        }
-
-        Section {
-            Button {
-                queue.saveDraft()
-            } label: {
-                Label(queue.mode == .add ? "Save (Add)" : "Save (Update)", systemImage: "checkmark.circle")
-            }
-            .disabled(!queue.canSaveDraft)
-
-            Button(role: .cancel) {
-                queue.cancelDraft()
-            } label: {
-                Label("Cancel / New", systemImage: "arrow.uturn.backward")
-            }
-        } footer: {
-            if !queue.canSaveDraft {
-                Text("Set, subset and card # are required.")
-            }
         }
     }
 
