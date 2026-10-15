@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`variation-template`**: lists a whole subset as "You Pick" variation
+  listings from the checklist. `variation-template build "2026 Topps Update"
+  --subset Base` writes a workbook with every card (US1–US350) in card-number
+  order, split into segments (default 2) of at most 250 cards, eBay's
+  per-listing variation cap. You fill in Qty and Price per card, plus a default
+  price, ad rate and volume-discount tiers on the Listing sheet.
+  `variation-template upload` validates the workbook, reporting every problem
+  by row before anything reaches eBay, and creates one variation listing per
+  segment, titled with its card range. See `docs/cli.md`.
+
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
   paused until the cutover). New `paths.searches_state_uri: gs://bucket/prefix`
@@ -99,6 +109,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Variation listings: per-card scans are matched by card number without
+  matching longer numbers, so `US1` no longer picks up `US10`–`US199`'s
+  images. `create-variation-listings --dry-run` no longer needs eBay
+  credentials.
 - `watch-searches` no longer rejects a listing whose aspect value arrives
   comma-joined. `getItem` returns a multi-valued aspect as one string —
   `Features: "Insert, Serial Numbered, Parallel/Variety"` — rather than one

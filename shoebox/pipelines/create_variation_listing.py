@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -33,16 +34,17 @@ _GROUP_IMAGE_LIMIT = 12
 def _discover_card_images(images_dir: Path, card_number: str) -> dict[str, Path]:
     """
     Scan images_dir for front/back image files belonging to card_number.
-    Matches any filename whose stem contains the card number (case-insensitive).
+    Matches any filename whose stem contains the card number (case-insensitive)
+    not followed by another digit, so US1 does not pick up US10's scans.
     Returns {"front": Path, "back": Path} for whichever sides are found.
     """
-    cn_lower = card_number.lower()
+    pattern = re.compile(re.escape(card_number.lower()) + r"(?!\d)")
     found: dict[str, Path] = {}
-    for f in images_dir.iterdir():
+    for f in sorted(images_dir.iterdir()):
         if f.suffix.lower() not in _IMAGE_EXTENSIONS:
             continue
         stem = f.stem.lower()
-        if cn_lower not in stem:
+        if not pattern.search(stem):
             continue
         if "back" in stem:
             found.setdefault("back", f)
@@ -148,13 +150,48 @@ def run_variation_listing(
     volume_discount_tiers: list[dict[int, int]] | None = None,
 ) -> None:
     """
-    For each Subset ID group in the Excel sheet:
+    Create one variation listing per Subset ID group in the Excel sheet.
+
+    See list_variation_groups for the steps and the image options.
+    """
+    groups = load_checklist_from_excel(
+        excel_path, sheet_name=sheet_name, in_stock_only=in_stock_only
+    )
+    logger.info("Loaded %d subset group(s) from %s", len(groups), excel_path)
+
+    list_variation_groups(
+        groups,
+        publish=publish,
+        dry_run=dry_run,
+        schedule=schedule,
+        images_dir=images_dir,
+        default_image_path=default_image_path,
+        promote_rate=promote_rate,
+        volume_discount_tiers=volume_discount_tiers,
+    )
+
+
+def list_variation_groups(
+    groups: dict[str, list[ChecklistVariationRow]],
+    *,
+    publish: bool = False,
+    dry_run: bool = False,
+    schedule: bool = False,
+    images_dir: Path | None = None,
+    default_image_path: Path | None = None,
+    promote_rate: int = 20,
+    volume_discount_tiers: list[dict[int, int]] | None = None,
+) -> list[EbayListingResult]:
+    """
+    Create one variation listing per group. Group ids are hashed into the
+    eBay inventory item group key, so the same id always addresses the same
+    listing. For each group:
       1. Optionally upload a default listing image from default_image_path.
       2. Optionally discover and upload per-card images from images_dir.
       3. Create one inventory item per variation (card).
       4. Create the inventory item group linking all SKUs.
       5. Create a single offer referencing the group.
-      6. Publish and promote the listing.
+      6. Publish and promote the listing (promote_rate 0 skips promotion).
 
     default_image_path: local image file used as the item group hero image
     (shown before a buyer selects a specific variation). Uploaded once and
@@ -167,7 +204,8 @@ def run_variation_listing(
     """
     settings = get_settings()
 
-    listings = ListingService(EbayClient(settings=settings))
+    # A dry run never calls eBay, so it needs no eBay credentials either.
+    listings = None if dry_run else ListingService(EbayClient(settings=settings))
     img_client = ImageLogClient(settings=settings) if (images_dir or default_image_path) else None
     results_path = Path(settings.paths.exports_dir) / "jsonl" / "ebay_listings.jsonl"
 
@@ -176,19 +214,15 @@ def run_variation_listing(
     else:
         listing_start_date = None
 
-    groups = load_checklist_from_excel(
-        excel_path, sheet_name=sheet_name, in_stock_only=in_stock_only
-    )
-    logger.info("Loaded %d subset group(s) from %s", len(groups), excel_path)
-
+    results: list[EbayListingResult] = []
     total_groups = len(groups)
-    for group_idx, (subset_id, rows) in enumerate(groups.items(), 1):
-        group_key = build_group_key(subset_id)
+    for group_idx, (group_id, rows) in enumerate(groups.items(), 1):
+        group_key = build_group_key(group_id)
         logger.info(
             "[%d/%d] Processing '%s' — %d variation(s), group_key=%s",
             group_idx,
             total_groups,
-            subset_id,
+            group_id,
             len(rows),
             group_key,
         )
@@ -297,7 +331,7 @@ def run_variation_listing(
                 sku_offer_map=sku_offer_map,
                 item_group=item_group,
                 publish=publish,
-                promote_listing=True,
+                promote_listing=promote_rate > 0,
                 campaign_id=get_ad_campaign(
                     title=item_group["title"],
                     set_name=rows[0].set_name,
@@ -323,14 +357,17 @@ def run_variation_listing(
                 "[%d/%d] Done — group=%s listing_id=%s",
                 group_idx,
                 total_groups,
-                subset_id,
+                group_id,
                 result.listing_id,
             )
 
         append_jsonl(results_path, result.model_dump())
+        results.append(result)
 
     if img_client:
         img_client.flush_append_log()
+
+    return results
 
 
 def _derive_default_image_path(set_name: str, set_images_dir: str) -> Path | None:

@@ -113,6 +113,25 @@ Multi-variation "You Pick / Complete Your Set" listings:
 - SKUs/group keys are SHA1-derived (`build_variation_sku`, `build_group_key`)
   so re-runs address the same objects.
 
+### `pipelines/variation_template.py` (CLI: `variation-template build|upload`)
+
+Template-driven front end to the variation pipeline above, for listing a whole
+subset (e.g. US1–US350) without hand-building the inventory workbook:
+
+- **build** — `variation_template.sql` reads every `cards.v_checklist` row for
+  the set (case-insensitive) and keeps the requested subset.
+  `transforms/variation_template.build_template_records` sorts by card number
+  (`US2` before `US10`, using `derived_card_number`) and splits the cards into
+  contiguous, near-equal segments of at most 250, eBay's per-listing variation
+  cap. The workbook's Checklist sheet uses the same column names as the
+  inventory workbook, plus `Segment`.
+- **upload** — `parse_listing_settings` and `parse_template_rows` validate both
+  sheets and collect every problem before anything is sent. Rows are grouped
+  by `Subset ID|Segment`, which `build_group_key` hashes into a distinct,
+  stable eBay group key per segment. `create_variation_listing.list_variation_groups`
+  then lists each group with the sheet's promote rate and volume-discount
+  tiers.
+
 ### SKU scheme
 
 Single-card SKUs are deterministic:

@@ -151,6 +151,11 @@ shoebox create-listings [--dry-run] [--publish] [--schedule] [--scrape-prices]
 
 # Multi-variation ("You Pick") listings from an inventory workbook:
 shoebox create-variation-listings --excel-path inventory.xlsx [--dry-run] [--publish]
+
+# Or start from the checklist: build a fill-in template for a whole subset,
+# fill in Qty/Price/volume discounts, then upload one listing per segment:
+shoebox variation-template build "2026 Topps Update" --subset Base
+shoebox variation-template upload exports/variation_templates/2026_topps_update_base.xlsx --publish
 ```
 
 Every mutating pipeline (`create-listings`, `create-variation-listings`,
