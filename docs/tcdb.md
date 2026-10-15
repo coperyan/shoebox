@@ -18,6 +18,27 @@ runs with a **persistent profile** (`tcdb.profile_dir`, default
 - the Cloudflare clearance cookie, and
 - your TCDB login, if you tick *Remember* when you sign in.
 
+### Apple Silicon Macs
+
+undetected-chromedriver 3.5.5 does not support an arm64 Mac without Rosetta,
+and fails in two ways:
+
+- It always downloads the Intel (`mac-x64`) chromedriver, which fails with
+  `OSError: [Errno 86] Bad CPU type in executable`.
+- It patches the driver binary in place. That breaks the binary's code
+  signature, so macOS kills it on launch and selenium reports
+  `Service ... unexpectedly exited. Status code was: -9`.
+
+`shoebox/clients/chromedriver.py` (`fix_apple_silicon`) patches uc's `Patcher`
+before each `uc.Chrome(...)`. On an arm64 Mac it downloads `mac-arm64`
+instead, and it runs `codesign --force --sign -` on the driver after uc
+patches it. On any other machine it does nothing. The TCDB browser, the
+130point price scraper and the Topps release scraper all call it. No setup is
+needed: uc deletes and downloads the driver on every start, so an Intel
+driver left over from an earlier run under
+`~/Library/Application Support/undetected_chromedriver/` is replaced
+automatically.
+
 Credentials never pass through shoebox. When a login is needed the tool opens
 `Login.cfm` in the Chrome window, asks you to sign in there, and polls the page
 header until TCDB shows you as signed in.
@@ -250,6 +271,7 @@ collection), so re-running gives a stable set to diff against.
 | `shoebox/clients/tcdb/search.py` | Pure HTML parsing: `parse_results`, `is_logged_in`, `is_challenge_page`. Unit-tested against `tests/fixtures/tcdb_view_results.html` |
 | `shoebox/clients/tcdb/card.py` | Pure helpers for adding: `parse_card_spec`, `match_card`, `parse_card_page`, `parse_collection_widget`. Unit-tested against `tests/fixtures/tcdb_view_card.html` |
 | `shoebox/clients/tcdb/collection.py` | Pure parsing for collection views: `wantlist_url`, `parse_wantlist_page`, `parse_member`. Unit-tested against `tests/fixtures/tcdb_wantlist.html` |
+| `shoebox/clients/chromedriver.py` | `fix_apple_silicon`: makes undetected-chromedriver download and re-sign an arm64 driver on Apple Silicon. Shared with the 130point and Topps scrapers |
 | `shoebox/clients/tcdb/browser.py` | `TcdbBrowser`: Chrome lifecycle, Cloudflare wait, `ensure_logged_in`, one method per site action (`advanced_search`, `open`, `add_to_collection`, `wantlist_page`/`iter_wantlist`) |
 | `shoebox/pipelines/tcdb_search.py` | The interactive session; `parse_command` is pure and tested |
 | `shoebox/pipelines/tcdb_wantlist.py` | `tcdb-wantlist`: walks the want list's pages and writes CSV/JSONL |
@@ -285,6 +307,9 @@ test the parser against the fragment's HTML.
 - **Chrome version errors** — undetected-chromedriver reads the installed
   Chrome's major version via `chrome_version`; update Chrome or the
   `undetected-chromedriver` package if the two drift apart.
+- **`Bad CPU type in executable` or `Status code was: -9` on a Mac** — see
+  [Apple Silicon Macs](#apple-silicon-macs). If it still happens, check that
+  `codesign` is on the `PATH` (it ships with the Xcode command-line tools).
 - **`tcdb-add` says `not_found`** — the title doesn't match TCDB's exactly.
   The detail column lists what the search did return, so copy the right
   title from there, or pass the card's ViewCard link.

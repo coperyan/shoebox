@@ -13,6 +13,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from shoebox.clients.chromedriver import fix_apple_silicon
 from shoebox.models.topps_release import ToppsRelease
 
 logger = logging.getLogger(__name__)
@@ -125,6 +126,7 @@ class ToppsReleaseScraper:
     def start(self) -> None:
         if self.driver is not None:
             return
+        fix_apple_silicon()
         chrome_v = chrome_version.get_chrome_version()
         self.driver = uc.Chrome(
             headless=self.headless,
