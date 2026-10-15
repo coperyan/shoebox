@@ -18,6 +18,7 @@ dependencies = [
   "numpy",
   "openpyxl",
   "pandas",
+  "pillow",
   "pydantic",
   "slack-bolt",
   "aiohttp",

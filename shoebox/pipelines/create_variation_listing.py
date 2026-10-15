@@ -57,8 +57,9 @@ def _upload_card_images(
     images_dir: Path,
 ) -> list[str]:
     """
-    Discover and upload front/back images for one card row.
-    Returns a list of public URLs (front first, back second if present).
+    Discover and upload front/back images for one card row, plus a combined
+    front+back image when both sides are found.
+    Returns a list of public URLs (front, back, combined; whichever exist).
     """
     paths = _discover_card_images(images_dir, row.card_number)
     urls: list[str] = []
@@ -79,6 +80,19 @@ def _upload_card_images(
                 urls.append(entry.public_url)
         except Exception:
             logger.warning("Failed to upload %s image for %s", side, row.card_number, exc_info=True)
+    if len(urls) == 2 and "front" in paths and "back" in paths:
+        try:
+            entry = img_client.upload_combined_image(
+                front=paths["front"],
+                back=paths["back"],
+                set_name=row.set_name,
+                subset_name=row.subset_name,
+                card_number=row.card_number,
+            )
+            if entry.public_url:
+                urls.append(entry.public_url)
+        except Exception:
+            logger.warning("Failed to upload combined image for %s", row.card_number, exc_info=True)
     return urls
 
 

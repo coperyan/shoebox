@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from google.oauth2 import service_account
 from shoebox.clients.bigquery import BigQueryClient
 from shoebox.models.image_log import ImageLogEntry
 from shoebox.settings import Settings, get_settings
+from shoebox.utils.images import combine_front_back
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +271,38 @@ class ImageLogClient:
         self._upsert_cache_entry(entry)
         self._append_new_upload(entry)
         return entry
+
+    def upload_combined_image(
+        self,
+        *,
+        front: Path,
+        back: Path,
+        set_name: str,
+        subset_name: str,
+        card_number: str,
+        parallel_variety: str | None = None,
+    ) -> ImageLogEntry:
+        """Upload a front+back composite of two scans (side ``combined``).
+
+        Leaves both scans in place, so call it before uploading a scan with
+        ``delete_original``. The composite is named after the two scans, so a
+        re-run is answered from the cache even once the scans are gone; with
+        neither a cache entry nor both scans on disk it raises FileNotFoundError.
+        """
+        front, back = Path(front), Path(back)
+        with tempfile.TemporaryDirectory() as tmp:
+            combined = Path(tmp) / f"{front.stem}_{back.stem}.jpg"
+            if front.exists() and back.exists():
+                combined.write_bytes(combine_front_back(front, back))
+            return self.upload_image(
+                file_path=combined,
+                set_name=set_name,
+                subset_name=subset_name,
+                card_number=card_number,
+                parallel_variety=parallel_variety,
+                side="combined",
+                local_path_for_log=f"{front} + {back}",
+            )
 
     # -----------------------------
     # Append log -> GCS(log bucket) -> BigQuery

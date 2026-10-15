@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Combined front+back picture.** `create-listings` now uploads a third
+  picture, front and back side by side (`utils/images.combine_front_back`,
+  ported from `combine_images.py`), for every row with both scans. It goes
+  after the scans, so the front stays picture 1, which is the search
+  thumbnail and the image in the send-offers Slack prompts. It is built before
+  the scans upload, because uploading deletes the originals, and named after
+  the two scans so a re-run hits the upload cache. A failure here logs a
+  warning and the listing goes ahead with two pictures.
+  `create-variation-listings` does the same per card. New
+  `add-combined-images` backfills live listings: preview by default, then
+  `--apply [--limit N]`. For each single-card listing with exactly two
+  pictures, it re-hosts the live pictures in GCS the way relist does, then
+  sets front, back, and combined on the inventory item, round-tripping
+  everything else. The pictures come from `GetItem` because eBay's inventory
+  item often lists only the front. Pillow is now a declared dependency (it was
+  already installed through Streamlit).
+
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
   paused until the cutover). New `paths.searches_state_uri: gs://bucket/prefix`
@@ -98,6 +115,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaves as before (`logs/<timestamp>.log`).
 
 ### Fixed
+
+- **`enhance-listing-titles` deleted back pictures.** An inventory retitle
+  replaces the whole item, and it sent back the item's own `imageUrls`.
+  eBay's `getInventoryItem` often returns only the front, so every retitled
+  listing lost its back: all 302 listings created with two pictures that now
+  show one had been retitled. Retitles now send the live listing's pictures
+  (`GetItem`, re-hosted in GCS like relist, in the new
+  `services/listing_pictures.py`). An inventory retitle without an item ID
+  now refuses instead of writing. `inventory_item_body_with_title` is
+  removed. `add-combined-images --restore-backs` puts the backs back from
+  GCS (1,175 of the 1,181 affected listings have a stored back).
+- `relist-listings` names re-hosted pictures by position (`front`, `back`,
+  `combined`). It used to call everything after picture 1 `back`, so a third
+  picture overwrote the back in GCS and the relisted listing showed the
+  composite twice and lost the back.
 
 - `watch-searches` no longer rejects a listing whose aspect value arrives
   comma-joined. `getItem` returns a multi-valued aspect as one string —

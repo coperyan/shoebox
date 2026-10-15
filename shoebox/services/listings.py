@@ -18,9 +18,12 @@ from typing import Any
 from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.ebay.errors import EbayClientError
 from shoebox.clients.ebay.inventory import listing_id_of, offer_id_of
+from shoebox.clients.gcs import GCSClient
+from shoebox.services.listing_pictures import rehost_live_pictures
+from shoebox.settings import get_settings
 from shoebox.transforms.listing_builder import (
-    inventory_item_body_with_title,
     offer_body_with_store_categories,
+    round_trip_inventory_item_body,
 )
 
 logger = logging.getLogger(__name__)
@@ -29,8 +32,16 @@ logger = logging.getLogger(__name__)
 class ListingService:
     """Create, relist, retitle, and recategorize listings through ``EbayClient``."""
 
-    def __init__(self, ebay: EbayClient):
+    def __init__(self, ebay: EbayClient, gcs: GCSClient | None = None):
         self.ebay = ebay
+        self._gcs = gcs
+
+    @property
+    def gcs(self) -> GCSClient:
+        # Built on first use: only an inventory retitle needs it.
+        if self._gcs is None:
+            self._gcs = GCSClient()
+        return self._gcs
 
     def create_listing(
         self,
@@ -152,7 +163,8 @@ class ListingService:
 
         - **With a SKU** (created through the Sell Inventory API) the title
           lives on the inventory item, so this is a createOrReplaceInventoryItem
-          round-trip: fetch the item, swap ``product.title``, put it back.
+          round-trip: fetch the item, swap ``product.title``, put it back with
+          the live listing's pictures (which needs ``item_id``).
         - **Without one** -- listed via the Trading API or eBay's own form --
           the inventory API can't see the listing at all, so it goes through
           Trading `ReviseFixedPriceItem` by item ID.
@@ -177,7 +189,17 @@ class ListingService:
                 logger.info("Title already current for sku=%s; skipping", sku)
                 return {"sku": sku, "title": new_title, "method": "inventory", "skipped": True}
 
-            body = inventory_item_body_with_title(item, new_title)
+            if not item_id:
+                raise ValueError(
+                    f"sku={sku}: an inventory retitle needs the item_id to keep its pictures"
+                )
+            # The item is replaced whole, so its pictures must be sent too --
+            # from the live listing, not item.product.image_urls, which often
+            # lists only the front (see services/listing_pictures.py).
+            image_urls = rehost_live_pictures(
+                self.ebay, item_id=item_id, sku=sku, gcs=self.gcs, settings=get_settings()
+            )
+            body = round_trip_inventory_item_body(item, title=new_title, image_urls=image_urls)
             self.ebay.inventory.upsert_inventory_item(sku, body)
         except Exception as inventory_error:
             if not item_id:

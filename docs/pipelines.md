@@ -80,7 +80,12 @@ Per queue row:
    to accept, or reply a number to override (tolerant parsing — `$4.99` etc.).
    If scraping fails, the prompt proposes the original queue price instead.
 2. **Images** — front/back scans upload through `ImageLogClient` (dedup cache;
-   see [data-storage.md](data-storage.md)), producing public GCS URLs.
+   see [data-storage.md](data-storage.md)), producing public GCS URLs. When a
+   row has both, `ImageLogClient.upload_combined_image` first builds and
+   uploads a side-by-side composite (side `combined`). It has to go first
+   because uploading a scan deletes the local original. The composite is
+   named after the two scans, so a re-run is served from the cache. It is
+   listed third: picture order is front, back, combined.
 3. **Payload** — `transforms/listing_builder.build_draft` assembles the title
    (80-char limit with progressive element-stripping), HTML description,
    full item-specifics dict, store category, condition, package, and policy
@@ -130,7 +135,9 @@ which is what lets relist flows find existing inventory items and offers.
 - Candidate set: active non-variation listings ≥ 90 days old, price > $2,
   ≥ 100 impressions, no watchers; processed high-price-first. `--schedule`
   spreads new start dates over 1–20 days.
-- Images are copied from the live listing to GCS (`$_57` high-res variant).
+- Images are copied from the live listing to GCS (`$_57` high-res variant),
+  named by position: `front`, `back`, `combined`, then `img4`… A picture
+  never shares another picture's object name.
 - Pricing: listings > $1.99 optionally get a scraped comp price, then a
   **Slack approval** (Approve button / threaded override). Timeout or an
   unparseable reply **skips the listing** — it stays live untouched. Cheap
@@ -198,11 +205,41 @@ following a partial one only picks up what is actually left.
 - The inventory route is idempotent: it reads the item first and skips the
   write when the title is already current, so re-running after a partial sweep
   costs a GET per listing and changes nothing.
-- `inventory_item_body_with_title` keeps the item's own description, images,
-  condition, and packaging — a title edit must not rewrite the rest of a live
-  listing. The one exception is packaging with no usable weight, which eBay
-  rejects outright (errorId 25020); those fall back to the standard
+- `round_trip_inventory_item_body` keeps the item's own description,
+  condition, and packaging, because a title edit must not rewrite the rest of
+  a live listing. The one exception is packaging with no usable weight, which
+  eBay rejects outright (errorId 25020); those fall back to the standard
   single-card package.
+- Pictures come from the **live listing**, not the item:
+  `services/listing_pictures.rehost_live_pictures` reads them with `GetItem`
+  and re-hosts them in GCS like relist does. A replace is a full PUT, and
+  eBay's `getInventoryItem` often lists only the front, so sending the
+  item's own `imageUrls` back stripped the back from 302 retitled listings.
+  Because of this, the inventory route needs the item ID; without one it
+  refuses rather than write.
+
+### `pipelines/add_combined_images.py` (CLI: `add-combined-images`)
+
+- Same listing source and preview/`--apply` contract as
+  `enhance-listing-titles`. The plan marks each listing eligible or gives a
+  `skip_reason` (`variation_listing`, `no_sku`, `no_item_id`,
+  `has_<n>_pictures`), using the view's `picture_urls`.
+- Per eligible listing: Trading `GetItem`, and stop unless it *still* shows
+  exactly two pictures (the view can be a day stale). Re-host both with
+  `relist_listings.ebay_image_to_gcs`, combine the GCS copies, upload
+  `other/<sku>_combined.jpg`, then PUT the item via
+  `inventory_item_body_with_images` with all three URLs.
+- Pictures come from `GetItem`, not the inventory item. eBay's
+  `getInventoryItem` often returns only the front for a two-picture listing,
+  and round-tripping that list would strip the back.
+- `--restore-backs`: `find_stored_backs` maps each SKU to a back still in
+  GCS. It prefers the scan `create-listings` uploaded (from `ebay_listings`,
+  [`listing_back_images.sql`](../configs/bigquery/queries/listing_back_images.sql))
+  and falls back to relist's `other/<sku>_back.png`. A listing that shows
+  one picture and has a stored back is set to front, stored back, combined
+  (status `restored`).
+- A failure on one listing is recorded in the `_applied.csv` report and the
+  sweep continues. `--limit` caps listings changed, not listings checked.
 
 ### `pipelines/send_offers.py`
 

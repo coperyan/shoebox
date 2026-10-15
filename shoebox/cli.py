@@ -130,6 +130,28 @@ def main() -> None:
     )
     p_titles.add_argument("--limit", type=int, help="Cap how many listings are updated")
 
+    # Add a combined front+back picture to live listings
+    p_combined = sub.add_parser(
+        "add-combined-images",
+        help="Append a combined front+back picture to live two-picture listings",
+    )
+    p_combined.add_argument(
+        "--input",
+        help=(
+            "Listings export to read (.jsonl or .csv); "
+            "defaults to the BigQuery view ebay.v_active_listing_details"
+        ),
+    )
+    p_combined.add_argument(
+        "--apply", action="store_true", help="Push the new pictures to eBay (default: preview only)"
+    )
+    p_combined.add_argument("--limit", type=int, help="Cap how many listings are updated")
+    p_combined.add_argument(
+        "--restore-backs",
+        action="store_true",
+        help="Also restore the back on one-picture listings from the copy stored in GCS",
+    )
+
     # Plan the store category tree for live listings
     p_cats = sub.add_parser(
         "plan-store-categories",
@@ -413,6 +435,17 @@ def main() -> None:
             input_path=Path(args.input) if args.input else None,
             apply=args.apply,
             limit=args.limit,
+        )
+        return
+
+    if args.cmd == "add-combined-images":
+        from shoebox.pipelines.add_combined_images import add_combined_images
+
+        add_combined_images(
+            input_path=Path(args.input) if args.input else None,
+            apply=args.apply,
+            limit=args.limit,
+            restore_backs=args.restore_backs,
         )
         return
 
