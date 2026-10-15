@@ -29,6 +29,48 @@ enum Fixtures {
         try JSONCoding.decoder.decode(PreviewResponse.self, from: data("preview_sample"))
     }
 
+    static func listingRun() throws -> ListingRun {
+        try JSONCoding.decoder.decode(ListingRun.self, from: data("listing_run_sample"))
+    }
+
+    static func listingRuns() throws -> ListingRunsResponse {
+        try JSONCoding.decoder.decode(ListingRunsResponse.self, from: data("listing_runs_sample"))
+    }
+
+    /// A run record built in code (no fixture) for the view-model tests.
+    static func makeRun(
+        id: String = "20261015T120000Z-a1b2c3d4",
+        state: String = ListingRun.stateRequested,
+        publish: Bool = true,
+        schedule: Bool = true,
+        rowsTotal: Int = 2,
+        rowsDone: Int = 0,
+        listed: Int = 0,
+        failed: Int = 0,
+        results: [ListingRunResult] = [],
+        error: String? = nil
+    ) -> ListingRun {
+        ListingRun(
+            runId: id,
+            state: state,
+            requestedAt: "2026-10-15T12:00:00+00:00",
+            startedAt: state == ListingRun.stateRequested ? nil : "2026-10-15T12:00:07+00:00",
+            finishedAt: state == ListingRun.stateDone || state == ListingRun.stateFailed ? "2026-10-15T12:03:41+00:00" : nil,
+            publish: publish,
+            schedule: schedule,
+            queueUri: "gs://bucket/queue/listing_queue_enriched.jsonl",
+            metadataVersion: "abc123def4567890",
+            rowsTotal: rowsTotal,
+            rowsDone: rowsDone,
+            listed: listed,
+            failed: failed,
+            results: results,
+            error: error,
+            execution: nil,
+            host: nil
+        )
+    }
+
     static let setName = "2023 Topps Chrome"
     static let subsetName = "Base"
 }
@@ -163,8 +205,22 @@ final class FakeAPI: QueueAPI {
         draftUri: "gs://bucket/queue/listing_queue_draft.json"
     )
     var uploadError: Error?
+    /// Returned by `startListingRun` (with the requested flags applied) unless `startError` is set.
+    var startResponse = Fixtures.makeRun()
+    var startError: Error?
+    /// Returned by `fetchListingRuns`.
+    var runs: [ListingRun] = []
+    var runsError: Error?
+    /// Successive `fetchListingRun` calls pop from the front; when empty the last value (or
+    /// `startResponse`) is returned again, so a poller sees the final state repeatedly.
+    var runUpdates: [ListingRun] = []
+    var fetchRunError: Error?
 
     private(set) var fetchedEtags: [String?] = []
+    private(set) var startedRuns: [StartListingRunRequest] = []
+    private(set) var fetchedRunIds: [String] = []
+    private(set) var runsFetchCount = 0
+    private var lastRunUpdate: ListingRun?
     private(set) var previewedRows: [[QueueRowInput]] = []
     private(set) var submittedRows: [[QueueRowInput]] = []
     private(set) var draftRows: [[QueueRowInput]] = []
@@ -234,5 +290,35 @@ final class FakeAPI: QueueAPI {
             bytes: jpeg.count,
             contentType: "image/jpeg"
         )
+    }
+
+    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun {
+        startedRuns.append(StartListingRunRequest(publish: publish, schedule: schedule))
+        if let startError {
+            throw startError
+        }
+        var run = startResponse
+        run.publish = publish
+        run.schedule = schedule
+        return run
+    }
+
+    func fetchListingRuns() async throws -> [ListingRun] {
+        runsFetchCount += 1
+        if let runsError {
+            throw runsError
+        }
+        return runs
+    }
+
+    func fetchListingRun(id: String) async throws -> ListingRun {
+        fetchedRunIds.append(id)
+        if let fetchRunError {
+            throw fetchRunError
+        }
+        if !runUpdates.isEmpty {
+            lastRunUpdate = runUpdates.removeFirst()
+        }
+        return lastRunUpdate ?? startResponse
     }
 }

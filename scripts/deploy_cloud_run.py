@@ -128,6 +128,18 @@ def validate_job(job: dict[str, Any]) -> None:
         raise ConfigError(
             f"{name}: `schedule` must be a 5-field cron expression or {MANUAL!r}, got {schedule!r}"
         )
+    validate_bindings(job)
+
+
+def validate_bindings(entry: dict[str, Any]) -> None:
+    """``bindings:`` is a list of ``{member, role}`` extra IAM grants on the
+    job or service (e.g. letting the API's identity start a job)."""
+    bindings = entry.get("bindings") or []
+    if not isinstance(bindings, list):
+        raise ConfigError(f"{entry['name']}: `bindings` must be a list of {{member, role}}")
+    for binding in bindings:
+        if not isinstance(binding, dict) or not binding.get("member") or not binding.get("role"):
+            raise ConfigError(f"{entry['name']}: each binding needs `member` and `role`: {binding}")
 
 
 def validate_service(svc: dict[str, Any]) -> None:
@@ -146,6 +158,7 @@ def validate_service(svc: dict[str, Any]) -> None:
             raise ConfigError(
                 f"{name}: env_secrets key {key!r} is not an environment variable name"
             )
+    validate_bindings(svc)
 
 
 def setting(job: dict[str, Any], defaults: dict[str, Any], key: str, fallback: Any = None) -> Any:
@@ -427,6 +440,48 @@ def render_public_binding(
     return Command(f"make {svc['name']} publicly invokable (API key protects it)", argv)
 
 
+def render_extra_bindings(
+    entry: dict[str, Any], defaults: dict[str, Any], *, project: str, gcloud: str
+) -> list[Command]:
+    """``bindings:`` -> one ``add-iam-policy-binding`` per entry. Members and
+    roles may use the same ``{placeholders}`` as the rest of the config, plus
+    ``{runner_service_account}`` / ``{scheduler_service_account}``."""
+    where = _common(entry, defaults, project)
+    variables = {
+        "project": project,
+        "region": where["region"],
+        "runner_service_account": expand(
+            str(setting(entry, defaults, "runner_service_account", "")), **where
+        ),
+        "scheduler_service_account": expand(
+            str(setting(entry, defaults, "scheduler_service_account", "")), **where
+        ),
+    }
+    resource = "services" if is_service(entry) else "jobs"
+    commands: list[Command] = []
+    for binding in entry.get("bindings") or []:
+        member = expand(str(binding["member"]), **variables)
+        role = expand(str(binding["role"]), **variables)
+        argv = [
+            gcloud,
+            "run",
+            resource,
+            "add-iam-policy-binding",
+            entry["name"],
+            "--project",
+            project,
+            "--region",
+            where["region"],
+            "--quiet",
+            "--member",
+            member,
+            "--role",
+            role,
+        ]
+        commands.append(Command(f"grant {role} on {entry['name']} to {member}", argv))
+    return commands
+
+
 def render_invoker_binding(
     job: dict[str, Any], defaults: dict[str, Any], *, project: str, gcloud: str
 ) -> Command:
@@ -613,11 +668,14 @@ def plan(
                 binding = render_public_binding(job, defaults, project=project, gcloud=gcloud)
                 if binding is not None:
                     commands.append(binding)
+                commands += render_extra_bindings(job, defaults, project=project, gcloud=gcloud)
             continue
         if mode in ("all", "jobs"):
             commands.append(
                 render_job_deploy(job, defaults, project=project, image=image, gcloud=gcloud)
             )
+        if mode in ("all", "scheduler"):
+            commands += render_extra_bindings(job, defaults, project=project, gcloud=gcloud)
         if mode in ("all", "scheduler") and job.get("schedule", MANUAL) != MANUAL:
             commands.append(render_invoker_binding(job, defaults, project=project, gcloud=gcloud))
             known = existing or {}

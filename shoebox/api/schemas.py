@@ -152,3 +152,16 @@ class ImageUploadResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: Literal["ok"]
     version: str
+
+
+class StartListingRunRequest(BaseModel):
+    """``POST /queue/listings``: the only two choices the app offers. Prices
+    are never scraped on an app-triggered run."""
+
+    model_config = ConfigDict(extra="forbid")
+    publish: bool = True
+    schedule: bool = True
+
+
+class ListingRunsResponse(BaseModel):
+    runs: list[dict[str, Any]]

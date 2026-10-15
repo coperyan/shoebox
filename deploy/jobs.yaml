@@ -4,8 +4,10 @@
 # This is the cloud counterpart of scripts/tasks.yaml: the same idea (a
 # `defaults:` block every job may override, one entry per pipeline), rendered
 # into `gcloud` commands by scripts/deploy_cloud_run.py instead of Task
-# Scheduler XML. Windows stays the host for everything that needs Chrome, card
-# scans, Excel workbooks or a human in the loop -- see docs/deployment.md.
+# Scheduler XML. Windows stays the host for everything that needs Chrome,
+# Excel workbooks or a human in the loop -- see docs/deployment.md. Card scans
+# are no longer a reason: the `create-listings` job below fetches them from
+# OneDrive when the iOS app asks for a listing run.
 #
 #   python scripts/deploy_cloud_run.py --list
 #   python scripts/deploy_cloud_run.py --dry-run             # print gcloud commands, run nothing
@@ -159,6 +161,27 @@ jobs:
     schedule: "*/15 8-21 * * *"
     timeout: 840s
     memory: 512Mi
+
+  # The listing run the iOS app triggers (`POST /queue/listings` on shoebox-api
+  # starts one execution). No schedule: it only runs on request. Claims the
+  # newest run record under <queue_uri dir>/runs/, lists the queue with the
+  # publish/schedule choices recorded there, never scrapes prices, fetches
+  # scan numbers from OneDrive (onedrive.* in the uploaded app.yaml, token
+  # cache at onedrive.token_cache_uri) and phone photos from GCS. The runner
+  # identity needs run.invoker on this job so the API can start it; the
+  # binding below is applied in the IAM phase from a workstation. The container
+  # filesystem is RAM, so memory covers the scans plus their GCS mirror.
+  # ACTIVE_STALE_AFTER in services/listing_runs.py (70 min) must stay above
+  # this timeout.
+  - name: create-listings
+    run: create-listings --run-request
+    description: List the queue the iOS app submitted (scans from OneDrive).
+    schedule: manual
+    timeout: 3600s
+    memory: 2Gi
+    bindings:
+      - member: "serviceAccount:{runner_service_account}"
+        role: roles/run.invoker
 
 # Cloud Run services. Same `defaults:` (image, runner identity, env, secret
 # mounts, labels); `timeout` is the per-request limit. Deployed with the jobs

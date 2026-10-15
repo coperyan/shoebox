@@ -121,9 +121,17 @@ final class APIClientTests: XCTestCase {
         let uploadBody = Data(
             #"{"uri":"gs://b/uploads/2026-10/abcdefgh.jpg","side":"front","client_id":"abcdefgh","bytes":3,"content_type":"image/jpeg"}"#.utf8
         )
+        let runFixture = try Fixtures.data("listing_run_sample")
+        let runsFixture = try Fixtures.data("listing_runs_sample")
         StubURLProtocol.handler = { request in
             let path = request.url?.path ?? ""
             switch (request.httpMethod ?? "", path) {
+            case ("POST", "/queue/listings"):
+                return try StubURLProtocol.reply(request, status: 202, body: runFixture)
+            case ("GET", "/queue/listings"):
+                return try StubURLProtocol.reply(request, status: 200, body: runsFixture)
+            case ("GET", "/queue/listings/20261015T120000Z-a1b2c3d4"):
+                return try StubURLProtocol.reply(request, status: 200, body: runFixture)
             case ("GET", "/healthz"):
                 return try StubURLProtocol.reply(request, status: 200, body: healthBody)
             case ("GET", "/metadata"):
@@ -148,15 +156,24 @@ final class APIClientTests: XCTestCase {
         _ = try await client.saveDraft([sampleInput()])
         _ = try await client.fetchLastQueue()
         _ = try await client.uploadImage(jpeg: Data([0xFF, 0xD8, 0xFF]), side: .front, clientId: "abcdefgh", progress: nil)
+        _ = try await client.startListingRun(publish: false, schedule: true)
+        _ = try await client.fetchListingRuns()
+        _ = try await client.fetchListingRun(id: "20261015T120000Z-a1b2c3d4")
 
-        XCTAssertEqual(StubURLProtocol.recorded.count, 7)
+        XCTAssertEqual(StubURLProtocol.recorded.count, 10)
         for request in StubURLProtocol.recorded {
             XCTAssertEqual(request.value(forHTTPHeaderField: "X-API-Key"), "secret-key", "\(request.url?.path ?? "?")")
         }
-        XCTAssertEqual(StubURLProtocol.recorded.map { $0.httpMethod ?? "" }, ["GET", "GET", "POST", "PUT", "PUT", "GET", "POST"])
+        XCTAssertEqual(
+            StubURLProtocol.recorded.map { $0.httpMethod ?? "" },
+            ["GET", "GET", "POST", "PUT", "PUT", "GET", "POST", "POST", "GET", "GET"]
+        )
         XCTAssertEqual(
             StubURLProtocol.recorded.map { $0.url?.path ?? "" },
-            ["/healthz", "/metadata", "/queue/preview", "/queue", "/queue/draft", "/queue", "/images"]
+            [
+                "/healthz", "/metadata", "/queue/preview", "/queue", "/queue/draft", "/queue", "/images",
+                "/queue/listings", "/queue/listings", "/queue/listings/20261015T120000Z-a1b2c3d4",
+            ]
         )
     }
 
@@ -219,6 +236,165 @@ final class APIClientTests: XCTestCase {
         XCTAssertNil(last.rows[0].parallelVariety)
         XCTAssertEqual(last.rows[0].cardNumber, "")
         XCTAssertEqual(last.rows[0].imageBack, "gs://b/uploads/2026-10/x.jpg")
+    }
+
+    // MARK: Listing runs
+
+    func testStartListingRunSendsFlagsAndDecodesRun() async throws {
+        let client = try makeClient()
+        let fixture = try Fixtures.data("listing_run_sample")
+        StubURLProtocol.handler = { request in
+            try StubURLProtocol.reply(request, status: 202, body: fixture)
+        }
+
+        let run = try await client.startListingRun(publish: false, schedule: true)
+
+        let request = try XCTUnwrap(StubURLProtocol.recorded.first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.path, "/queue/listings")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        let encoded = try jsonObject(try JSONCoding.encoder.encode(StartListingRunRequest(publish: false, schedule: true)))
+        XCTAssertEqual(Set(encoded.keys), ["publish", "schedule"], "no scrape_prices flag: the job never scrapes")
+        XCTAssertEqual(encoded["publish"] as? Bool, false)
+        XCTAssertEqual(encoded["schedule"] as? Bool, true)
+        // The stub sees request bodies as a stream; check the wire body when it is available.
+        if let data = StubURLProtocol.body(of: request), !data.isEmpty {
+            let body = try jsonObject(data)
+            XCTAssertEqual(body["publish"] as? Bool, false)
+            XCTAssertEqual(body["schedule"] as? Bool, true)
+        }
+
+        XCTAssertEqual(run.runId, "20261015T120000Z-a1b2c3d4")
+        XCTAssertEqual(run.id, run.runId)
+        XCTAssertEqual(run.state, "done")
+        XCTAssertTrue(run.isFinished)
+        XCTAssertFalse(run.isFailed)
+        XCTAssertEqual(run.requestedAt, "2026-10-15T12:00:00+00:00")
+        XCTAssertEqual(run.startedAt, "2026-10-15T12:00:07+00:00")
+        XCTAssertEqual(run.finishedAt, "2026-10-15T12:03:41+00:00")
+        XCTAssertFalse(run.publish)
+        XCTAssertTrue(run.schedule)
+        XCTAssertEqual(run.queueUri, "gs://bucket/queue/listing_queue_enriched.jsonl")
+        XCTAssertEqual(run.metadataVersion, "abc123def4567890")
+        XCTAssertEqual(run.rowsTotal, 2)
+        XCTAssertEqual(run.rowsDone, 2)
+        XCTAssertEqual(run.listed, 1)
+        XCTAssertEqual(run.failed, 1)
+        XCTAssertEqual(run.progress, 1, accuracy: 0.0001)
+        XCTAssertNil(run.error)
+        XCTAssertEqual(run.host, "create-listings-x7k2q-task0")
+        XCTAssertEqual(run.results.count, 2)
+        XCTAssertEqual(run.results[0].sku, "2023TC-B-GR-1")
+        XCTAssertTrue(run.results[0].success)
+        XCTAssertEqual(run.results[0].listingId, "1234567890")
+        XCTAssertEqual(run.results[0].offerId, "98765432")
+        XCTAssertNil(run.results[0].error)
+        XCTAssertFalse(run.results[1].success)
+        XCTAssertNil(run.results[1].listingId)
+        XCTAssertEqual(run.results[1].error, "OneDrive: Pictures/Card Scans/SCAN_0234.jpg not found")
+    }
+
+    func testFetchListingRunsDefaultsMissingResults() async throws {
+        let client = try makeClient()
+        let fixture = try Fixtures.data("listing_runs_sample")
+        StubURLProtocol.handler = { request in
+            try StubURLProtocol.reply(request, status: 200, body: fixture)
+        }
+
+        let runs = try await client.fetchListingRuns()
+
+        let request = try XCTUnwrap(StubURLProtocol.recorded.first)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertEqual(request.url?.path, "/queue/listings")
+        XCTAssertEqual(runs.count, 2)
+        XCTAssertEqual(runs.map { $0.runId }, ["20261015T140000Z-ffee1122", "20261015T120000Z-a1b2c3d4"])
+        let running = runs[0]
+        XCTAssertEqual(running.state, "running")
+        XCTAssertFalse(running.isFinished)
+        XCTAssertEqual(running.results, [], "no results key -> empty list")
+        XCTAssertNil(running.finishedAt)
+        XCTAssertEqual(running.progress, 0.25, accuracy: 0.0001)
+        XCTAssertEqual(runs[1].results, [])
+        XCTAssertTrue(runs[1].isFinished)
+    }
+
+    func testFetchListingRunByIdAndNotFound() async throws {
+        let client = try makeClient()
+        let fixture = try Fixtures.data("listing_run_sample")
+        StubURLProtocol.handler = { request in
+            if request.url?.path == "/queue/listings/20261015T120000Z-a1b2c3d4" {
+                return try StubURLProtocol.reply(request, status: 200, body: fixture)
+            }
+            return try StubURLProtocol.reply(request, status: 404, body: Data(#"{"detail":"unknown run"}"#.utf8))
+        }
+
+        let run = try await client.fetchListingRun(id: "20261015T120000Z-a1b2c3d4")
+        XCTAssertEqual(run.runId, "20261015T120000Z-a1b2c3d4")
+        XCTAssertEqual(StubURLProtocol.recorded.first?.httpMethod, "GET")
+
+        do {
+            _ = try await client.fetchListingRun(id: "nope")
+            XCTFail("expected an error")
+        } catch let error as APIError {
+            guard case .http(let status, let message) = error else {
+                return XCTFail("expected .http, got \(error)")
+            }
+            XCTAssertEqual(status, 404)
+            XCTAssertTrue(message.contains("nope"))
+            XCTAssertFalse(message.contains("base URL"), "an unknown run id is not a wrong base URL")
+        }
+    }
+
+    func testStartListingRunConflictSurfacesServerMessage() async throws {
+        let client = try makeClient()
+        StubURLProtocol.handler = { request in
+            try StubURLProtocol.reply(
+                request,
+                status: 409,
+                body: Data(#"{"detail":{"message":"a run is in progress","run_id":"20261015T140000Z-ffee1122"}}"#.utf8)
+            )
+        }
+        do {
+            _ = try await client.startListingRun(publish: true, schedule: true)
+            XCTFail("expected an error")
+        } catch let error as APIError {
+            guard case .http(let status, let message) = error else {
+                return XCTFail("expected .http, got \(error)")
+            }
+            XCTAssertEqual(status, 409)
+            XCTAssertTrue(message.contains("a run is in progress"), message)
+        }
+    }
+
+    func testStartListingRunRejectedWithoutSubmittedQueue() async throws {
+        let client = try makeClient()
+        StubURLProtocol.handler = { request in
+            try StubURLProtocol.reply(request, status: 409, body: Data(#"{"detail":{"message":"submit the queue first"}}"#.utf8))
+        }
+        do {
+            _ = try await client.startListingRun(publish: true, schedule: true)
+            XCTFail("expected an error")
+        } catch let error as APIError {
+            XCTAssertEqual(error.status, 409)
+            XCTAssertTrue((error.errorDescription ?? "").contains("submit the queue first"))
+        }
+    }
+
+    func testStartListingRunJobFailureIs502() async throws {
+        let client = try makeClient()
+        StubURLProtocol.handler = { request in
+            try StubURLProtocol.reply(request, status: 502, body: Data(#"{"detail":"could not start create-listings: PERMISSION_DENIED"}"#.utf8))
+        }
+        do {
+            _ = try await client.startListingRun(publish: false, schedule: false)
+            XCTFail("expected an error")
+        } catch let error as APIError {
+            guard case .http(let status, let message) = error else {
+                return XCTFail("expected .http, got \(error)")
+            }
+            XCTAssertEqual(status, 502)
+            XCTAssertTrue(message.contains("PERMISSION_DENIED"))
+        }
     }
 
     // MARK: Multipart

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -22,7 +24,7 @@ from shoebox.utils.image_refs import materialize_image
 from shoebox.utils.jsonl import append_jsonl, read_jsonl
 from shoebox.utils.pricing import parse_price_reply, round_up_to_nine
 from shoebox.utils.sku import build_sku_50
-from shoebox.utils.slack import notify_and_wait
+from shoebox.utils.slack import notify_and_wait, notify_best_effort
 
 logger = logging.getLogger(__name__)
 
@@ -301,6 +303,26 @@ def _create_one_listing(
     )
 
 
+@dataclass
+class RunSummary:
+    """What a run did: one entry per queue row, in order."""
+
+    listed: int = 0
+    failed: int = 0
+    results: list[EbayListingResult] = field(default_factory=list)
+    failures: list[dict[str, str]] = field(default_factory=list)
+
+
+def _quick_title(q: ListingQueueRow) -> str:
+    return (
+        f"{q.set_name} "
+        + f"{q.subset_name} "
+        + (f"{q.parallel_variety} " if q.parallel_variety else "")
+        + f"{q.player} "
+        + f"{q.card_number}"
+    )
+
+
 def run_listings(
     *,
     queue_items: list[ListingQueueRow] | None = None,
@@ -309,7 +331,12 @@ def run_listings(
     dry_run: bool = False,
     schedule: bool = True,
     scrape_prices: bool = False,
-) -> None:
+    reporter=None,
+) -> RunSummary:
+    """List every queue row. ``reporter`` (``services.listing_runs.RunRecordReporter``
+    or anything with ``start(total)`` / ``row(**kw)``) is told about progress;
+    the image log flush and the results sync run even when the loop is
+    interrupted, so a SIGTERM at the job timeout loses nothing already listed."""
     settings = get_settings()
 
     if queue_items is None:
@@ -326,44 +353,57 @@ def run_listings(
     if scrape_prices:
         price_scrape_client.start()
 
-    failures: list[dict[str, str]] = []
+    summary = RunSummary()
+    failures = summary.failures
+    if reporter is not None:
+        reporter.start(len(queue_items))
 
-    for q in queue_items:
-        quick_title = (
-            f"{q.set_name} "
-            + f"{q.subset_name} "
-            + (f"{q.parallel_variety} " if q.parallel_variety else "")
-            + f"{q.player} "
-            + f"{q.card_number}"
-        )
-        logger.info("Starting to create listing for %s", quick_title)
-        sku = build_sku_50(q)
+    try:
+        for q in queue_items:
+            quick_title = _quick_title(q)
+            logger.info("Starting to create listing for %s", quick_title)
+            sku = build_sku_50(q)
 
-        try:
-            result = _create_one_listing(
-                q,
-                sku=sku,
-                quick_title=quick_title,
-                listings=listings,
-                img_client=img_client,
-                price_scrape_client=price_scrape_client,
-                publish=publish,
-                dry_run=dry_run,
-                schedule=schedule,
-                scrape_prices=scrape_prices,
-            )
-        except Exception as e:
-            # One bad item must not abort the whole batch — note it and move on.
-            # Failures are surfaced in the CLI summary below, not written to BigQuery.
-            logger.exception(
-                "Failed to create listing for %s (sku=%s); skipping to next item",
-                quick_title,
-                sku,
-            )
-            failures.append({"sku": sku, "title": quick_title, "error": str(e)})
-            continue
+            try:
+                result = _create_one_listing(
+                    q,
+                    sku=sku,
+                    quick_title=quick_title,
+                    listings=listings,
+                    img_client=img_client,
+                    price_scrape_client=price_scrape_client,
+                    publish=publish,
+                    dry_run=dry_run,
+                    schedule=schedule,
+                    scrape_prices=scrape_prices,
+                )
+            except Exception as e:
+                # One bad item must not abort the whole batch — note it and move on.
+                # Failures are surfaced in the CLI summary below, not written to BigQuery.
+                logger.exception(
+                    "Failed to create listing for %s (sku=%s); skipping to next item",
+                    quick_title,
+                    sku,
+                )
+                failures.append({"sku": sku, "title": quick_title, "error": str(e)})
+                summary.failed += 1
+                if reporter is not None:
+                    reporter.row(sku=sku, title=quick_title, success=False, error=str(e))
+                continue
 
-        append_jsonl(results_path, result.model_dump())
+            append_jsonl(results_path, result.model_dump())
+            summary.results.append(result)
+            summary.listed += 1
+            if reporter is not None:
+                reporter.row(
+                    sku=sku,
+                    title=quick_title,
+                    success=True,
+                    listing_id=result.listing_id,
+                    offer_id=result.offer_id,
+                )
+    finally:
+        _finish_run(settings, img_client=img_client, results_path=results_path)
 
     if failures:
         logger.warning(
@@ -374,8 +414,11 @@ def run_listings(
         )
     else:
         logger.info("All %d listings processed with no failures", len(queue_items))
+    return summary
 
-    # Persist image log
+
+def _finish_run(settings, *, img_client: ImageLogClient, results_path: Path) -> None:
+    """Persist the image log and ship the results that exist so far."""
     img_client.flush_append_log()
 
     if not results_path.exists():
@@ -401,6 +444,72 @@ def run_listings(
         settings.bigquery.ebay_dataset,
         "ebay_listings",
     )
+
+
+def run_listing_request(*, store=None, settings=None) -> int:
+    """Cloud Run job mode (``create-listings --run-request``): list the queue
+    the iOS app asked for.
+
+    Claims the newest ``requested`` run record, reads publish/schedule from it
+    (prices are never scraped here), reports progress to it, and posts the
+    usual start/finish messages to Slack. Returns the process exit code: 0
+    when there was nothing to do or everything ran; a failure re-raises so the
+    job-failed alert fires.
+    """
+    from shoebox.clients.search_state_gcs import _sigterm_as_exit
+    from shoebox.services.listing_runs import ListingRunStore, RunRecordReporter
+
+    settings = settings or get_settings()
+    in_cloud = bool(os.environ.get("CLOUD_RUN_JOB"))
+    if not settings.paths.queue_uri:
+        raise RuntimeError("create-listings --run-request needs paths.queue_uri (the queue in GCS)")
+    if in_cloud and settings.onedrive.enabled and not settings.onedrive.token_cache_uri:
+        raise RuntimeError(
+            "create-listings is running in Cloud Run with a local OneDrive token cache; "
+            "set onedrive.token_cache_uri (see docs/deployment.md, Listing from the app)"
+        )
+    if store is None:
+        store = ListingRunStore.from_settings(settings, gcs=GCSClient(settings=settings))
+
+    run = store.active()
+    if run is None or run.state != "requested":
+        logger.info("No requested listing run under %s; nothing to do", store.uri)
+        return 0
+    found = store.read(run.run_id)
+    if found is None:
+        return 0
+    run, generation = found
+    if not store.claim(run, generation):
+        return 0
+
+    reporter = RunRecordReporter(store, run)
+    channel = settings.slack.notify_channel
+    notify_best_effort(
+        channel,
+        f"Starting create-listings (app run {run.run_id}, {run.rows_total} rows, "
+        f"publish={'on' if run.publish else 'off'}, schedule={'on' if run.schedule else 'off'})..",
+    )
+    try:
+        with _sigterm_as_exit():
+            summary = run_listings(
+                queue=run.queue_uri,
+                publish=run.publish,
+                schedule=run.schedule,
+                scrape_prices=False,
+                dry_run=False,
+                reporter=reporter,
+            )
+    except BaseException as exc:
+        reporter.fail(f"{type(exc).__name__}: {exc}")
+        notify_best_effort(channel, f"create-listings (app run {run.run_id}) failed: {exc}")
+        raise
+    reporter.finish()
+    notify_best_effort(
+        channel,
+        f"Completed create-listings (app run {run.run_id}): "
+        f"{summary.listed} listed, {summary.failed} failed..",
+    )
+    return 0
 
 
 def main(generate_from_excel: bool = False, **listing_kwargs) -> None:

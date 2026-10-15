@@ -1,16 +1,20 @@
 import SwiftUI
 
-/// Preview tab: `POST /queue/preview` per-row results and `PUT /queue`.
+/// Preview tab: `POST /queue/preview` per-row results, `PUT /queue`, and the "List on eBay"
+/// section that starts a `create-listings` run in the cloud (`POST /queue/listings`).
 @MainActor
 struct PreviewView: View {
     @Environment(QueueViewModel.self) private var queue
     @Environment(PreviewViewModel.self) private var preview
+    @Environment(ListingRunViewModel.self) private var listing
     @Environment(AppSettings.self) private var settings
 
     @State private var showSubmitConfirm = false
+    @State private var showListingConfirm = false
+    @State private var path: [ListingRoute] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 if queue.rows.isEmpty {
                     Section {
@@ -24,8 +28,46 @@ struct PreviewView: View {
                     }
                     outcomeSection
                 }
+                if showsListingSection {
+                    listingSection
+                }
             }
             .navigationTitle("Preview")
+            .navigationDestination(for: ListingRoute.self) { route in
+                switch route {
+                case .runs:
+                    ListingRunsView()
+                case .run(let run):
+                    ListingRunView(run: run)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        path.append(.runs)
+                    } label: {
+                        Label("Runs", systemImage: "list.bullet.rectangle")
+                    }
+                    .disabled(!settings.isConfigured)
+                }
+            }
+            .confirmationDialog(
+                "Create \(listingRowCount) listings on eBay?",
+                isPresented: $showListingConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("List on eBay") {
+                    Task { await startListing() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Publish: \(listing.publish ? "on" : "off") · Schedule: \(listing.schedule ? "on" : "off"). Runs create-listings in the cloud on the last submitted queue; no prices are scraped.")
+            }
+            .alert("Listing error", isPresented: listingErrorBinding) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(listing.errorMessage ?? "")
+            }
             .confirmationDialog(
                 "Submit \(queue.rows.count) rows?",
                 isPresented: $showSubmitConfirm,
@@ -62,6 +104,36 @@ struct PreviewView: View {
                 }
             }
         )
+    }
+
+    private var listingErrorBinding: Binding<Bool> {
+        Binding(
+            get: { listing.errorMessage != nil },
+            set: { presented in
+                if !presented {
+                    listing.errorMessage = nil
+                }
+            }
+        )
+    }
+
+    /// The last successful `PUT /queue` of this session, if any.
+    private var submittedResponse: QueueWriteResponse? {
+        if case .success(let response) = preview.outcome {
+            return response
+        }
+        return nil
+    }
+
+    /// Shown after a successful submit, or whenever there are rows and the API is configured
+    /// (the server lists whatever was last submitted with PUT /queue).
+    private var showsListingSection: Bool {
+        settings.isConfigured && (submittedResponse != nil || !queue.rows.isEmpty)
+    }
+
+    /// Rows the run will list: the submitted count when we have it, else the local queue size.
+    private var listingRowCount: Int {
+        submittedResponse?.counts.rows ?? queue.rows.count
     }
 
     // MARK: Sections
@@ -175,7 +247,7 @@ struct PreviewView: View {
                                 .font(.caption)
                         }
                     }
-                    Text("On the workstation: shoebox create-listings --queue <queue uri>")
+                    Text("Next: List on eBay below, or on the workstation: shoebox create-listings --queue <queue uri>")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -209,6 +281,36 @@ struct PreviewView: View {
         }
     }
 
+    private var listingSection: some View {
+        @Bindable var listing = listing
+        return Section {
+            Toggle("Publish offers", isOn: $listing.publish)
+            Toggle("Schedule start time", isOn: $listing.schedule)
+            Button {
+                showListingConfirm = true
+            } label: {
+                Label(
+                    listing.isStarting ? "Starting…" : "List on eBay (\(listingRowCount) rows)",
+                    systemImage: "cart.badge.plus"
+                )
+            }
+            .disabled(listing.isStarting || preview.isBusy)
+            if submittedResponse == nil {
+                Label("Lists the queue last submitted with PUT /queue. Submit first if the rows here changed.", systemImage: "info.circle")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if !preview.isCurrent(for: queue) {
+                Label("The queue changed since it was submitted — submit again before listing.", systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+        } header: {
+            Text("List on eBay")
+        } footer: {
+            Text("Runs shoebox create-listings in the cloud: scans are fetched from OneDrive and no prices are scraped, so the PC is not needed. With Publish off the offers are created unpublished (check them in Seller Hub first).")
+        }
+    }
+
     // MARK: Helpers
 
     private func title(for index: Int) -> String {
@@ -232,5 +334,15 @@ struct PreviewView: View {
             return
         }
         await preview.submit(queue: queue, api: api)
+    }
+
+    private func startListing() async {
+        guard let api = settings.makeClient() else {
+            listing.errorMessage = APIError.notConfigured.localizedDescription
+            return
+        }
+        if let run = await listing.start(api: api) {
+            path.append(.run(run))
+        }
     }
 }

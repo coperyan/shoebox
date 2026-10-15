@@ -142,6 +142,10 @@ class GCSClient:
         """Download one object as text; a missing object raises FileNotFoundError."""
         return read_gs_text(f"{GS_SCHEME}{bucket}/{object_name}", client=self)
 
+    def list_names(self, *, bucket: str, prefix: str) -> list[str]:
+        """Object names under ``prefix``, sorted."""
+        return sorted(b.name for b in self.client.list_blobs(bucket, prefix=prefix))
+
     def make_public(self, *, bucket: str, object_name: str) -> str:
         blob = self.client.bucket(bucket).blob(object_name)
         blob.make_public()

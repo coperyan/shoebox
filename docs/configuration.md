@@ -129,6 +129,28 @@ default, so the section is optional. See [tcdb.md](tcdb.md).
 | `login_timeout_s` | int | Seconds to wait for you to log in by hand in the browser before the run fails (default 300) |
 | `search_defaults` | dict[str, str] | Advanced-search fields applied to every search unless overridden by a CLI flag or `set field=value` in the session. Keys: `category`, `year`, `set_name`, `set_type`, `card_number`, `name`, `team`, `note` |
 
+### `onedrive`
+
+Card scans from OneDrive (Microsoft Graph) for the Cloud Run `create-listings`
+job the iOS app starts. Optional; nothing happens until `client_id` and
+`scans_folder` are set. On the workstation local files are still used first.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `client_id` | `""` | Application (client) ID of the Azure app registration (public client, personal accounts) |
+| `authority` | `https://login.microsoftonline.com/consumers` | `consumers` for a personal account; a tenant ID for work/school |
+| `scans_folder` | `""` | Folder under the OneDrive root holding the scans, e.g. `Pictures/Card Scans` |
+| `scopes` | `["Files.Read"]` | Delegated Graph scopes |
+| `token_cache_path` | `configs/onedrive_token_cache.json` | MSAL token cache on the workstation (gitignored), written by `scripts/onedrive_login.py` |
+| `token_cache_uri` | unset | `gs://` object holding the cache for the cloud job; used whenever set and refreshed by the job (refresh tokens rotate) |
+
+### `cloud_run`
+
+| Key | Default | Meaning |
+|---|---|---|
+| `region` | `us-central1` | Region of the jobs the API starts |
+| `listings_job` | `create-listings` | Name of the job `POST /queue/listings` runs |
+
 ### `store`
 
 Store-specific identity and eBay-account values used when building listings.

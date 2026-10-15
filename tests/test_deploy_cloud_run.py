@@ -558,3 +558,88 @@ class TestServices:
         assert deploy.main() == 0
         out = capsys.readouterr().out
         assert "shoebox-api" in out and "(public)" in out
+
+
+# ---------------------------------------------------------------------------
+# Extra IAM bindings (`bindings:`) and the create-listings job
+# ---------------------------------------------------------------------------
+
+LISTINGS_JOB = {
+    "name": "create-listings",
+    "kind": "job",
+    "run": "create-listings --run-request",
+    "schedule": "manual",
+    "timeout": "3600s",
+    "memory": "2Gi",
+    "bindings": [
+        {"member": "serviceAccount:{runner_service_account}", "role": "roles/run.invoker"}
+    ],
+}
+
+
+class TestBindings:
+    def test_real_config_has_the_listings_job(self):
+        _, entries = deploy.load_config(REPO_ROOT / "deploy" / "jobs.yaml")
+        job = next(e for e in entries if e["name"] == "create-listings")
+        assert job["schedule"] == "manual"
+        assert job["bindings"][0]["role"] == "roles/run.invoker"
+        assert "run-request" in job["run"]
+
+    def test_binding_rendered_with_runner_placeholder(self):
+        cmds = deploy.render_extra_bindings(LISTINGS_JOB, DEFAULTS, project=PROJECT, gcloud=GCLOUD)
+        assert len(cmds) == 1
+        argv = cmds[0].argv
+        assert argv[1:5] == ["run", "jobs", "add-iam-policy-binding", "create-listings"]
+        assert flag(argv, "--member") == "serviceAccount:runner@proj.iam.gserviceaccount.com"
+        assert flag(argv, "--role") == "roles/run.invoker"
+
+    def test_service_binding_uses_services_resource(self):
+        svc = {**SERVICE, "bindings": [{"member": "user:a@b.c", "role": "roles/run.invoker"}]}
+        cmds = deploy.render_extra_bindings(svc, DEFAULTS, project=PROJECT, gcloud=GCLOUD)
+        assert cmds[0].argv[1:4] == ["run", "services", "add-iam-policy-binding"]
+
+    @pytest.mark.parametrize(
+        "mode,expected",
+        [
+            ("all", ["run jobs deploy", "run jobs add-iam-policy-binding"]),
+            ("jobs", ["run jobs deploy"]),
+            ("scheduler", ["run jobs add-iam-policy-binding"]),
+        ],
+    )
+    def test_manual_job_with_binding_in_each_mode(self, mode, expected):
+        commands = deploy.plan(
+            [LISTINGS_JOB],
+            DEFAULTS,
+            project=PROJECT,
+            image=None,
+            mode=mode,
+            existing={},
+            gcloud=GCLOUD,
+        )
+        assert verbs(commands) == expected
+
+    def test_scheduled_job_bindings_come_before_the_schedule(self):
+        job = {**JOB, "bindings": [{"member": "user:a@b.c", "role": "roles/run.viewer"}]}
+        commands = deploy.plan(
+            [job],
+            DEFAULTS,
+            project=PROJECT,
+            image=None,
+            mode="scheduler",
+            existing={},
+            gcloud=GCLOUD,
+        )
+        assert verbs(commands) == [
+            "run jobs add-iam-policy-binding",
+            "run jobs add-iam-policy-binding",
+            "scheduler jobs create",
+        ]
+        assert flag(commands[0].argv, "--role") == "roles/run.viewer"
+
+    def test_bad_bindings_rejected(self, tmp_path):
+        path = write_config(tmp_path, "jobs:\n  - {name: a, run: a, bindings: {member: x}}\n")
+        with pytest.raises(deploy.ConfigError, match="bindings"):
+            deploy.load_config(path)
+        path = write_config(tmp_path, "jobs:\n  - {name: a, run: a, bindings: [{member: x}]}\n")
+        with pytest.raises(deploy.ConfigError, match="member"):
+            deploy.load_config(path)

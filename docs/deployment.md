@@ -29,7 +29,8 @@ deploy/searches-cloudbuild.yaml  Cloud Build: validate searches.yaml -> copy it 
 | `send-offers` | **Cloud Run job** | eBay Negotiation/Trading API + Slack only. Interactive replies arrive over Socket Mode, an outbound connection that works from a container. See [send-offers](#send-offers) |
 | `shoebox-api` (`shoebox api`) | **Cloud Run service** | The iOS app's backend: BigQuery metadata, enrichment, queue + photo writes to GCS. HTTP, so a service rather than a job. See [Services](#services) and [api.md](api.md) |
 | `slack-bot` | Workstation (for now) | Long-running Socket Mode listener; would be a Cloud Run *service*, not a job |
-| `create-listings`, `create-variation-listings`, `relist-listings`, `send-offers` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
+| `create-listings` **from the iOS app** | **Cloud Run job** (`create-listings`, manual) | Started by `shoebox-api` on `POST /queue/listings`. Scans come from OneDrive, phone photos from GCS, no price scraping. See [Listing from the app](#listing-from-the-app) |
+| `create-listings` by hand, `create-variation-listings`, `relist-listings` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
 | `sync-topps-calendar`, `tcdb-search` | Workstation | Drive a real Chrome via `undetected-chromedriver` |
 | `ui` (Streamlit), `sync-metadata`, `orders-awaiting-shipment --display` | Workstation | Interactive, or need the master workbook |
 
@@ -182,6 +183,73 @@ curl -s -H "X-API-Key: $(gcloud secrets versions access latest --secret shoebox-
 Put `$URL` and the key into the app's Settings screen. The runner identity
 needs nothing new: it already reads BigQuery and writes the buckets.
 
+### Listing from the app
+
+`POST /queue/listings` on `shoebox-api` writes a run record to GCS and starts
+the `create-listings` **job** (`run: create-listings --run-request`, no
+schedule). The job fetches scan numbers from OneDrive through Microsoft Graph
+and phone photos from GCS, lists the queue with the publish/schedule choices
+recorded, never scrapes prices, and updates the record the app polls. The PC
+is not involved. Setup, in order (`$RUNNER` as above):
+
+**L1. Azure app registration** (portal.azure.com → App registrations → New):
+
+- Name: `shoebox`. Supported account types: **Personal Microsoft accounts
+  only** (the OneDrive is a personal account).
+- Redirect URI: platform **Mobile and desktop applications**, URI
+  `https://login.microsoftonline.com/common/oauth2/nativeclient`.
+- Authentication → Advanced settings → **Allow public client flows: Yes**.
+- API permissions → Add → Microsoft Graph → Delegated → `Files.Read`.
+- Copy the **Application (client) ID**. No client secret is needed.
+
+**L2. Configure both `app.yaml` files** (workstation and `configs/app.cloud.yaml`):
+
+```yaml
+onedrive:
+  client_id: <Application (client) ID>
+  scans_folder: Pictures/Card Scans            # under the OneDrive root
+  token_cache_uri: gs://BUCKET/queue/onedrive_token_cache.json
+```
+
+Deploy the new image **before** uploading this `app.yaml` as a secret version:
+`Settings` rejects unknown sections, so an older image would refuse to start.
+
+**L3. Sign in once, from the workstation**, then verify a scan and push the
+token cache to GCS (MSAL rotates refresh tokens, so the cache must be writable;
+that is why it is an object and not a secret):
+
+```bash
+python scripts/onedrive_login.py --login      # prints a code and a URL; sign in with the OneDrive account
+python scripts/onedrive_login.py --verify 234 # downloads SCAN_0234.jpg from scans_folder
+python scripts/onedrive_login.py --upload     # copies the cache to onedrive.token_cache_uri
+gcloud secrets versions add shoebox-app-yaml --data-file=configs/app.cloud.yaml
+```
+
+**L4. Deploy** the job (and its binding: the runner identity needs
+`roles/run.invoker` on it so the API can start it), then roll the service:
+
+```bash
+python scripts/deploy_cloud_run.py --only create-listings
+python scripts/deploy_cloud_run.py --only shoebox-api
+```
+
+**L5. Smoke-test** with Publish **off** first (offers are created unpublished
+and show in Seller Hub as drafts): submit a small queue from the app, tap
+"List on eBay", watch the run view and the Slack notify channel. Or by hand:
+
+```bash
+curl -s -H "X-API-Key: $KEY" -H 'content-type: application/json' -X POST $URL/queue/listings -d '{"publish": false, "schedule": true}'
+curl -s -H "X-API-Key: $KEY" $URL/queue/listings | head -c 400
+gcloud run jobs executions list --job create-listings --region us-central1 --limit 3
+```
+
+Things worth knowing: the refresh token expires after about 90 days without
+use (re-run `--login --reset` and `--upload`); the image dedup cache is
+per-execution in the cloud, so a re-run re-uploads the same object names;
+the job's memory covers each scan twice (download plus the local mirror)
+because the container filesystem is RAM; `ACTIVE_STALE_AFTER` in
+`services/listing_runs.py` (70 min) must stay above the job timeout (60 min).
+
 ### send-offers
 
 `send-offers` runs interactively every 15 minutes from 08:00 to 21:45 Pacific
@@ -236,6 +304,15 @@ paths:
   searches_state_uri: gs://BUCKET/state              # watch-searches refuses to run in Cloud Run without it
   searches_git_pull: false                           # the image has no git; the file is pushed, not pulled
   queue_uri: gs://BUCKET/queue/listing_queue_enriched.jsonl   # shoebox-api writes it; set the same on the workstation
+
+onedrive:                                  # the cloud create-listings job reads scans from OneDrive
+  client_id: <Azure application (client) ID>
+  scans_folder: Pictures/Card Scans
+  token_cache_uri: gs://BUCKET/queue/onedrive_token_cache.json
+
+cloud_run:                                 # optional; these are the defaults
+  region: us-central1
+  listings_job: create-listings
 
 ebay:
   path: /secrets/ebay-rest                 # redundant with EBAY_REST_CONFIG_PATH, harmless
@@ -794,6 +871,10 @@ gcloud run jobs delete alert-test --region us-central1 --quiet
 | `shoebox-api` exits at start: `paths.queue_uri is not set` | The uploaded `app.yaml` lacks `paths.queue_uri` ([Services](#services) step 2) |
 | The phone gets `403` from the API URL (not `401`) | The `allUsers` invoker binding was never applied: run `python scripts/deploy_cloud_run.py --scheduler-only --only shoebox-api` from a workstation |
 | `create-listings`: `Missing object: gs://…/listing_queue_enriched.jsonl` | Nothing submitted from the app yet, or the two `queue_uri` values differ |
+| App gets `502 could not start the Cloud Run job` | The runner identity lacks `roles/run.invoker` on `create-listings`: `python scripts/deploy_cloud_run.py --scheduler-only --only create-listings`; or `cloud_run.listings_job`/`region` do not match the deployed job |
+| Job fails with `OneDriveAuthError` | No account in the token cache, or the refresh token expired (~90 days idle): `python scripts/onedrive_login.py --login --reset` then `--upload` ([L3](#listing-from-the-app)) |
+| Job fails with `OneDrive: <folder>/SCAN_0234.jpg not found` | Wrong `onedrive.scans_folder`, or the scan is not in OneDrive yet; `--verify 234` on the workstation reproduces it |
+| Job exits at start: `running in Cloud Run with a local OneDrive token cache` | The uploaded `app.yaml` lacks `onedrive.token_cache_uri` (L2) |
 | `watch-searches`: `Missing object: gs://.../searches.yaml` | Nothing deployed yet (S3), or `paths.searches_file` and the trigger's `_DEST_URI` disagree |
 | `watch-searches`: 403 on `storage.objects.create` or `.get` | The runner lacks `roles/storage.objectUser` on the searches bucket (S2) |
 | Every tick logs "Another watch-searches run holds the lock" | A run is still going, or one died holding it. It expires after 20 minutes; `gcloud storage cat gs://BUCKET/state/.lock` shows the holder |

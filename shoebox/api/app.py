@@ -2,9 +2,11 @@
 
 The phone talks only to this: it reads the dropdown metadata, previews and
 submits queue rows (enriched with the same ``build_enriched_json`` the
-Streamlit UI and Excel loader use), saves drafts, and uploads photos. The
-enriched queue lands at ``paths.queue_uri`` in GCS, where ``create-listings``
-on the workstation picks it up.
+Streamlit UI and Excel loader use), saves drafts, uploads photos, and asks for
+the queue to be listed. The enriched queue lands at ``paths.queue_uri`` in
+GCS, where ``create-listings`` picks it up: on the workstation by hand, or as
+the Cloud Run job this API starts (``POST /queue/listings``), which fetches
+scans from OneDrive and reports progress to a run record the phone polls.
 """
 
 from __future__ import annotations
@@ -38,6 +40,7 @@ from shoebox.api.schemas import (
     DraftRowIn,
     HealthResponse,
     ImageUploadResponse,
+    ListingRunsResponse,
     MetadataRefreshResponse,
     MetadataResponse,
     PreviewResponse,
@@ -46,7 +49,9 @@ from shoebox.api.schemas import (
     QueueRowsRequest,
     QueueWriteResponse,
     RowResult,
+    StartListingRunRequest,
 )
+from shoebox.services.listing_runs import ListingRun, ListingRunStore, new_run_id
 from shoebox.settings import Settings, get_settings
 from shoebox.transforms.queue_enrichment import build_enriched_json
 
@@ -131,10 +136,13 @@ def create_app(
     gcs: Any = None,
     metadata_ttl_s: int = 3600,
     clock: Clock | None = None,
+    job_runner: Any = None,
+    run_store: Any = None,
 ) -> FastAPI:
     """Build the application. Every collaborator can be injected for tests; the
     defaults are the real settings, ``SHOEBOX_API_KEY`` from the environment,
-    the BigQuery metadata loader and a lazily constructed ``GCSClient``."""
+    the BigQuery metadata loader, a lazily constructed ``GCSClient``, the
+    Cloud Run job client and the run-record store built on that GCS client."""
     settings = settings or get_settings()
     api_key = api_key if api_key is not None else os.environ.get(API_KEY_ENV, "")
     if not api_key:
@@ -180,6 +188,18 @@ def create_app(
         def read_draft(self):
             return self._get().read_draft()
 
+    def job_runner_factory() -> Any:
+        if job_runner is not None:
+            return job_runner
+        from shoebox.clients.cloud_run import CloudRunJobs
+
+        return CloudRunJobs(settings.gcp.project_id, settings.cloud_run.region)
+
+    def run_store_factory() -> Any:
+        if run_store is not None:
+            return run_store
+        return ListingRunStore.from_settings(settings, gcs=ctx.gcs)
+
     ctx = ApiContext(
         settings=settings,
         api_key=api_key,
@@ -187,6 +207,8 @@ def create_app(
         queue_store=_LazyStore(),
         gcs_factory=gcs_factory,
         clock=clock,
+        job_runner_factory=job_runner_factory,
+        run_store_factory=run_store_factory,
     )
 
     app = FastAPI(title="shoebox listing-queue API", version=_shoebox_version())
@@ -321,6 +343,61 @@ def create_app(
             queue_uri=store.queue_uri,
             draft_uri=store.draft_uri,
         )
+
+    @router.post("/queue/listings", response_model=ListingRun, status_code=202)
+    def start_listing_run(
+        body: StartListingRunRequest, ctx: Annotated[ApiContext, Depends(get_ctx)]
+    ):
+        """Ask the Cloud Run ``create-listings`` job to list the submitted queue."""
+        doc = ctx.queue_store.read_draft()
+        if not doc or doc.get("kind") != "queue":
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "submit the queue first (the latest save is not a queue)"},
+            )
+        store = ctx.run_store
+        active = store.active(now=ctx.clock())
+        if active is not None:
+            raise HTTPException(
+                status_code=409,
+                detail={"message": "a run is in progress", "run_id": active.run_id},
+            )
+        now = ctx.clock()
+        counts = doc.get("counts") or {}
+        run = ListingRun(
+            run_id=new_run_id(now),
+            state="requested",
+            requested_at=now,
+            publish=body.publish,
+            schedule=body.schedule,
+            queue_uri=ctx.queue_store.queue_uri,
+            metadata_version=doc.get("metadata_version"),
+            rows_total=int(counts.get("rows") or len(doc.get("rows") or [])),
+        )
+        store.write(run)
+        try:
+            run.execution = ctx.job_runner.run_job(ctx.settings.cloud_run.listings_job)
+        except Exception as exc:
+            logger.exception("could not start the create-listings job")
+            run.state = "failed"
+            run.error = f"could not start the Cloud Run job: {exc}"
+            run.finished_at = ctx.clock()
+            store.write(run)
+            raise HTTPException(status_code=502, detail=run.error) from exc
+        if run.execution:
+            store.write(run)
+        return run
+
+    @router.get("/queue/listings", response_model=ListingRunsResponse)
+    def list_listing_runs(ctx: Annotated[ApiContext, Depends(get_ctx)]):
+        return ListingRunsResponse(runs=[r.summary() for r in ctx.run_store.list()])
+
+    @router.get("/queue/listings/{run_id}", response_model=ListingRun)
+    def get_listing_run(run_id: str, ctx: Annotated[ApiContext, Depends(get_ctx)]):
+        found = ctx.run_store.read(run_id)
+        if found is None:
+            raise HTTPException(status_code=404, detail=f"unknown run {run_id}")
+        return found[0]
 
     @router.post("/images", response_model=ImageUploadResponse, status_code=201)
     async def upload_image(

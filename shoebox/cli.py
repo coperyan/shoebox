@@ -34,6 +34,14 @@ def main() -> None:
     p_list.add_argument("--schedule", action="store_true")
     p_list.add_argument("--scrape-prices", action="store_true")
     p_list.add_argument(
+        "--run-request",
+        action="store_true",
+        help=(
+            "Cloud Run job mode: list the queue the iOS app asked for (reads publish/schedule "
+            "from the run record in GCS; never scrapes prices). Ignores the other flags."
+        ),
+    )
+    p_list.add_argument(
         "--queue",
         metavar="PATH_OR_GS_URI",
         help=(
@@ -382,8 +390,12 @@ def main() -> None:
         return
 
     if args.cmd == "create-listings":
-        from shoebox.pipelines.create_listings import run_listings
+        from shoebox.pipelines.create_listings import run_listing_request, run_listings
 
+        if args.run_request:
+            if args.scrape_prices or args.queue or args.dry_run:
+                parser.error("--run-request takes no other create-listings flags")
+            raise SystemExit(run_listing_request())
         run_listings(
             queue=args.queue,
             publish=args.publish,

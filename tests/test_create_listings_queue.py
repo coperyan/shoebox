@@ -232,3 +232,184 @@ def test_missing_gs_photo_fails_the_row_before_anything_uploads(tmp_path, monkey
             scrape_prices=False,
         )
     assert img.calls == []
+
+
+# ---- summary, reporter, run-request mode ----
+
+
+class _Reporter:
+    def __init__(self):
+        self.events = []
+
+    def start(self, total):
+        self.events.append(("start", total))
+
+    def row(self, **kw):
+        self.events.append(("row", kw))
+
+
+def _stub_run_env(monkeypatch, tmp_path, outcomes):
+    """Stub everything run_listings touches; outcomes maps card_number -> result or Exception."""
+    _point_settings_at(tmp_path, monkeypatch, exports_dir=str(tmp_path / "exports"))
+    _stub_clients(monkeypatch)
+    synced = []
+    monkeypatch.setattr(cl, "sync_results_to_bq", lambda **kw: synced.append(kw) or "obj")
+
+    def fake_one(q, **kw):
+        out = outcomes[q.card_number]
+        if isinstance(out, Exception):
+            raise out
+        return out
+
+    monkeypatch.setattr(cl, "_create_one_listing", fake_one)
+    return synced
+
+
+def _row(card):
+    return ListingQueueRow(
+        set_year="2025",
+        set_name="Topps",
+        subset_name="Base",
+        subset_type="Base",
+        card_number=card,
+        player="P",
+        quantity=1,
+        price=1.0,
+    )
+
+
+def test_run_listings_returns_summary_and_reports_rows(tmp_path, monkeypatch):
+    from shoebox.models.ebay_listing import EbayListingResult
+
+    ok = EbayListingResult(sku="SKU-1", listing_id="L1", offer_id="O1")
+    synced = _stub_run_env(monkeypatch, tmp_path, {"1": ok, "2": RuntimeError("ebay said no")})
+    rep = _Reporter()
+    summary = cl.run_listings(queue_items=[_row("1"), _row("2")], dry_run=True, reporter=rep)
+    assert (summary.listed, summary.failed) == (1, 1)
+    assert summary.results == [ok]
+    assert summary.failures[0]["error"] == "ebay said no"
+    assert rep.events[0] == ("start", 2)
+    assert rep.events[1][1]["success"] is True and rep.events[1][1]["listing_id"] == "L1"
+    assert rep.events[2][1]["success"] is False and "ebay said no" in rep.events[2][1]["error"]
+    assert len(synced) == 1  # results file existed -> synced
+
+
+def test_run_listings_syncs_in_finally(tmp_path, monkeypatch):
+    from shoebox.models.ebay_listing import EbayListingResult
+
+    ok = EbayListingResult(sku="SKU-1")
+    synced = _stub_run_env(monkeypatch, tmp_path, {"1": ok})
+
+    class Boom(BaseException):
+        pass
+
+    class Rep(_Reporter):
+        def row(self, **kw):
+            raise Boom()
+
+    with pytest.raises(Boom):
+        cl.run_listings(queue_items=[_row("1")], dry_run=True, reporter=Rep())
+    assert len(synced) == 1
+
+
+class _FakeStore:
+    uri = "gs://b/queue/runs/"
+
+    def __init__(self, run, generation=7, claim_ok=True):
+        self.run = run
+        self.generation = generation
+        self.claim_ok = claim_ok
+        self.writes = []
+
+    def active(self, now=None):
+        return self.run
+
+    def read(self, run_id):
+        return (self.run, self.generation) if self.run and self.run.run_id == run_id else None
+
+    def claim(self, run, generation, now=None):
+        assert generation == self.generation
+        if self.claim_ok:
+            run.state = "running"
+        return self.claim_ok
+
+    def write(self, run, *, if_generation_match=None):
+        self.writes.append(run.model_copy(deep=True))
+        return 1
+
+
+def _request_run(**over):
+    from shoebox.services.listing_runs import ListingRun
+
+    base = dict(
+        run_id="20261015T120000Z-aaaa0000",
+        requested_at="2026-10-15T12:00:00+00:00",
+        publish=False,
+        schedule=True,
+        queue_uri="gs://b/queue/listing_queue_enriched.jsonl",
+        rows_total=1,
+    )
+    base.update(over)
+    return ListingRun(**base)
+
+
+def test_run_listing_request_runs_with_record_flags(tmp_path, monkeypatch):
+    _point_settings_at(tmp_path, monkeypatch, queue_uri="gs://b/queue/listing_queue_enriched.jsonl")
+    monkeypatch.delenv("CLOUD_RUN_JOB", raising=False)
+    calls = []
+    notes = []
+    monkeypatch.setattr(cl, "notify_best_effort", lambda ch, msg: notes.append(msg))
+
+    def fake_run_listings(**kw):
+        calls.append(kw)
+        kw["reporter"].row(sku="S", title="t", success=True, listing_id="L")
+        return cl.RunSummary(listed=1)
+
+    monkeypatch.setattr(cl, "run_listings", fake_run_listings)
+    store = _FakeStore(_request_run())
+    assert cl.run_listing_request(store=store) == 0
+    assert calls[0]["queue"] == "gs://b/queue/listing_queue_enriched.jsonl"
+    assert calls[0]["publish"] is False and calls[0]["schedule"] is True
+    assert calls[0]["scrape_prices"] is False and calls[0]["dry_run"] is False
+    final = store.writes[-1]
+    assert final.state == "done" and final.listed == 1 and final.results[0].listing_id == "L"
+    assert notes[0].startswith("Starting create-listings (app run") and "publish=off" in notes[0]
+    assert "1 listed, 0 failed" in notes[-1]
+
+
+def test_run_listing_request_nothing_to_do(tmp_path, monkeypatch):
+    _point_settings_at(tmp_path, monkeypatch, queue_uri="gs://b/queue/listing_queue_enriched.jsonl")
+    monkeypatch.setattr(cl, "run_listings", lambda **kw: pytest.fail("must not run"))
+    assert cl.run_listing_request(store=_FakeStore(None)) == 0
+    assert cl.run_listing_request(store=_FakeStore(_request_run(state="running"))) == 0
+    assert cl.run_listing_request(store=_FakeStore(_request_run(), claim_ok=False)) == 0
+
+
+def test_run_listing_request_failure_marks_record_and_reraises(tmp_path, monkeypatch):
+    _point_settings_at(tmp_path, monkeypatch, queue_uri="gs://b/queue/listing_queue_enriched.jsonl")
+    notes = []
+    monkeypatch.setattr(cl, "notify_best_effort", lambda ch, msg: notes.append(msg))
+
+    def boom(**kw):
+        raise RuntimeError("queue missing")
+
+    monkeypatch.setattr(cl, "run_listings", boom)
+    store = _FakeStore(_request_run())
+    with pytest.raises(RuntimeError, match="queue missing"):
+        cl.run_listing_request(store=store)
+    assert store.writes[-1].state == "failed" and "queue missing" in store.writes[-1].error
+    assert "failed" in notes[-1]
+
+
+def test_run_listing_request_guards(tmp_path, monkeypatch):
+    _point_settings_at(tmp_path, monkeypatch, exports_dir="exports")
+    with pytest.raises(RuntimeError, match="queue_uri"):
+        cl.run_listing_request(store=_FakeStore(None))
+
+    _point_settings_at(tmp_path, monkeypatch, queue_uri="gs://b/q/listing_queue_enriched.jsonl")
+    monkeypatch.setenv("CLOUD_RUN_JOB", "create-listings")
+    settings = get_settings()
+    settings.onedrive.client_id = "x"
+    settings.onedrive.scans_folder = "Scans"
+    with pytest.raises(RuntimeError, match="token_cache_uri"):
+        cl.run_listing_request(store=_FakeStore(None), settings=settings)

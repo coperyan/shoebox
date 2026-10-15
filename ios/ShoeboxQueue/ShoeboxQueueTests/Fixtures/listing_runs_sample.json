@@ -1,0 +1,41 @@
+{
+  "runs": [
+    {
+      "run_id": "20261015T140000Z-ffee1122",
+      "state": "running",
+      "requested_at": "2026-10-15T14:00:00+00:00",
+      "started_at": "2026-10-15T14:00:05+00:00",
+      "finished_at": null,
+      "publish": true,
+      "schedule": false,
+      "queue_uri": "gs://bucket/queue/listing_queue_enriched.jsonl",
+      "metadata_version": "abc123def4567890",
+      "rows_total": 4,
+      "rows_done": 1,
+      "listed": 1,
+      "failed": 0,
+      "error": null,
+      "execution": "projects/example/locations/us-central1/jobs/create-listings/executions/create-listings-p9d3m",
+      "host": "create-listings-p9d3m-task0"
+    },
+    {
+      "run_id": "20261015T120000Z-a1b2c3d4",
+      "state": "done",
+      "requested_at": "2026-10-15T12:00:00+00:00",
+      "started_at": "2026-10-15T12:00:07+00:00",
+      "finished_at": "2026-10-15T12:03:41+00:00",
+      "publish": false,
+      "schedule": true,
+      "queue_uri": "gs://bucket/queue/listing_queue_enriched.jsonl",
+      "metadata_version": "abc123def4567890",
+      "rows_total": 2,
+      "rows_done": 2,
+      "listed": 1,
+      "failed": 1,
+      "results": [],
+      "error": null,
+      "execution": "projects/example/locations/us-central1/jobs/create-listings/executions/create-listings-x7k2q",
+      "host": "create-listings-x7k2q-task0"
+    }
+  ]
+}

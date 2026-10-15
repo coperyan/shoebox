@@ -112,6 +112,30 @@ tcdb:
     category: Baseball
     # name: Bonds
 
+# Card scans from OneDrive (Microsoft Graph). Optional: every key has a default
+# and nothing happens until client_id and scans_folder are both set. Lets the
+# Cloud Run `create-listings` job started from the iOS app fetch SCAN_0234.jpg
+# when it is not on local disk (on the workstation, where scans_dir is the
+# OneDrive sync folder, local files are still used first). Sign in once with
+# `python scripts/onedrive_login.py --login`, then `--upload`. See docs/api.md.
+onedrive:
+  # Application (client) ID of your Azure app registration (public client,
+  # personal Microsoft accounts, "Allow public client flows" on).
+  client_id: ""
+  # "consumers" for a personal account; your tenant ID for work/school.
+  authority: https://login.microsoftonline.com/consumers
+  # Folder under the OneDrive root holding the scans.
+  scans_folder: ""
+  # MSAL token cache: local file (workstation) and, when set, the gs:// copy the
+  # job reads and refreshes. Required for the Cloud Run job.
+  token_cache_path: configs/onedrive_token_cache.json
+  # token_cache_uri: gs://my-ebay-bucket/queue/onedrive_token_cache.json
+
+# The Cloud Run job the API starts for app-triggered listing runs.
+cloud_run:
+  region: us-central1
+  listings_job: create-listings
+
 # Store-specific identity + eBay account values used when building listings.
 # Every field has a safe placeholder default in settings.py, so this whole
 # section is optional for the app to *load* -- but you must set real values

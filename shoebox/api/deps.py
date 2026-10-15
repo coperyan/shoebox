@@ -93,13 +93,33 @@ class ApiContext:
     queue_store: Any
     gcs_factory: Callable[[], Any]
     clock: Clock = utc_now
+    job_runner_factory: Callable[[], Any] | None = None
+    run_store_factory: Callable[[], Any] | None = None
     _gcs: Any = field(default=None, repr=False)
+    _job_runner: Any = field(default=None, repr=False)
+    _run_store: Any = field(default=None, repr=False)
 
     @property
     def gcs(self) -> Any:
         if self._gcs is None:
             self._gcs = self.gcs_factory()
         return self._gcs
+
+    @property
+    def job_runner(self) -> Any:
+        if self._job_runner is None:
+            if self.job_runner_factory is None:
+                raise RuntimeError("no Cloud Run job runner configured")
+            self._job_runner = self.job_runner_factory()
+        return self._job_runner
+
+    @property
+    def run_store(self) -> Any:
+        if self._run_store is None:
+            if self.run_store_factory is None:
+                raise RuntimeError("no listing-run store configured")
+            self._run_store = self.run_store_factory()
+        return self._run_store
 
 
 def get_ctx(request: Request) -> ApiContext:

@@ -40,6 +40,9 @@ like a password: `openssl rand -hex 32`, rotate by adding a secret version.
 | `PUT /queue/draft` | `{"rows":[DraftRowIn]}` | saves raw (possibly half-filled) rows only |
 | `GET /queue` | – | the last saved rows (queue or draft), the 8 user fields only |
 | `POST /images` | multipart `file`, `side`, optional `client_id` | `201 {"uri":"gs://…","side","client_id","bytes","content_type"}` |
+| `POST /queue/listings` | `{"publish": true, "schedule": true}` | `202 ListingRun` (state `requested`); starts the Cloud Run `create-listings` job. `409` when the latest save is a draft or a run is active; `502` when the job could not be started |
+| `GET /queue/listings` | – | `{"runs": [ListingRun without results…]}`, newest first (20) |
+| `GET /queue/listings/{run_id}` | – | the full `ListingRun`; `404` if unknown |
 
 ### Row shapes
 
@@ -156,6 +159,42 @@ is deleted afterwards like any scan). Because the download happens before the
 combined front+back picture is built, a phone photo feeds that third picture too. Add a lifecycle rule that deletes
 `uploads/` objects after 30 days (see [deployment.md](deployment.md#services)).
 
+## Listing from the app
+
+`POST /queue/listings` turns the submitted queue into eBay listings without
+the PC: the API writes a **run record** and starts the Cloud Run job
+`create-listings` (`shoebox create-listings --run-request`). The job claims the
+record, lists the queue with the two choices the app offers, and updates the
+record after every row; the app polls it. Prices are **never scraped** on an
+app-triggered run (the `--scrape-prices` path needs Chrome and Slack replies).
+
+```json
+{"run_id": "20261015T190211Z-3f9a1c0b", "state": "running",
+ "requested_at": "2026-10-15T19:02:11+00:00", "started_at": "2026-10-15T19:02:40+00:00", "finished_at": null,
+ "publish": true, "schedule": true, "queue_uri": "gs://bucket/queue/listing_queue_enriched.jsonl",
+ "metadata_version": "3f9a1c0b7e2d4a65", "rows_total": 12, "rows_done": 3, "listed": 3, "failed": 0,
+ "results": [{"sku": "…", "title": "2024 Topps Chrome Base Gold Refractor Player 150",
+              "listing_id": "1264…", "offer_id": "8812…", "success": true, "error": null}],
+ "error": null, "execution": "projects/…/jobs/create-listings/executions/create-listings-x7k2q", "host": "…"}
+```
+
+States: `requested` (record written, job starting) → `running` (job claimed it)
+→ `done` or `failed` (`error` says why; the job-failed alert also fires). A
+record left `requested`/`running` for over 70 minutes is treated as dead and
+no longer blocks a new run. Records live at `<queue dir>/runs/<run_id>.json`.
+
+Rules enforced by the API: the latest save must be a **queue** (`PUT /queue`),
+not a draft; only one run at a time (`409` with the active `run_id`); a job
+that fails to start leaves a `failed` record and answers `502`.
+
+**Scans in the cloud.** The job has no OneDrive sync folder, so a bare scan
+number is fetched from OneDrive through Microsoft Graph
+(`clients/onedrive.py`) into the same path the workstation would use
+(`scans/SCAN_0234.jpg`), which keeps the image-log cache keys and GCS object
+names identical on both hosts. Phone photos come from `uploads/` as before.
+Setup (Azure app registration, device-code sign-in, token cache in GCS) is in
+[deployment.md](deployment.md#listing-from-the-app).
+
 ## The workstation side
 
 Two settings/flags tie the API to `create-listings`:
@@ -179,6 +218,8 @@ three kinds (path, scan number, `gs://`) go through
 | `413` | image over 10 MiB |
 | `415` | upload is not a JPEG or PNG |
 | `422` | schema violation (unknown key, blank set, quantity 0, more than 500 rows, bad `client_id`/`side`), or `PUT /queue` with rows that fail enrichment (`detail.rows` lists them) |
+| `409` | `POST /queue/listings`: the latest save is a draft, or a run is already active (`detail.run_id`) |
+| `502` | `POST /queue/listings`: the Cloud Run job could not be started (IAM, wrong job name); the run record is marked `failed` |
 | `503` | BigQuery metadata could not be loaded (first load only) |
 
 ## Running it locally

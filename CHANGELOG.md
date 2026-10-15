@@ -23,6 +23,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `build_enriched_json`, writes `listing_queue_enriched.jsonl` and a
   `listing_queue_draft.json` to the new `paths.queue_uri` GCS object, and
   stages phone photos under `uploads/` in the image bucket. See `docs/api.md`.
+- **Listing from the app, in the cloud.** `POST /queue/listings` on the API
+  writes a run record (`<queue dir>/runs/<run_id>.json`) and starts the new
+  Cloud Run job `create-listings` (`shoebox create-listings --run-request`),
+  which claims the record with a generation-matched write, lists the queue
+  with the publish/schedule choices the app sent, never scrapes prices, and
+  reports progress per row to the record the app polls (`GET
+  /queue/listings[/{run_id}]`). Scan numbers are fetched from OneDrive through
+  Microsoft Graph (`clients/onedrive.py`, MSAL device-code sign-in via
+  `scripts/onedrive_login.py`, token cache kept in GCS because refresh tokens
+  rotate); phone photos come from GCS as before. New settings sections
+  `onedrive` and `cloud_run`; `deploy/jobs.yaml` entries take `bindings:`
+  (extra IAM grants) so the API's identity can start the job. `run_listings`
+  returns a `RunSummary`, takes a progress `reporter`, and always flushes the
+  image log and syncs results, even when interrupted. See `docs/api.md`.
 - `create-listings` reads the queue from `paths.queue_uri` when set, or from
   `--queue PATH_OR_GS_URI`, and refuses a queue carrying enrichment error
   rows. Image references of all three kinds (path, bare scan number, `gs://`

@@ -504,3 +504,128 @@ def test_image_rejections(env):
     big = JPEG + b"\x00" * (10 * 1024 * 1024)
     assert _upload(client, big).status_code == 413
     assert gcs.objects == {}
+
+
+# ---- listing runs (POST/GET /queue/listings) ----
+
+
+class FakeJobRunner:
+    def __init__(self, fail=False):
+        self.fail = fail
+        self.started: list[str] = []
+
+    def run_job(self, name):
+        self.started.append(name)
+        if self.fail:
+            raise RuntimeError("403 run.jobs.run denied")
+        return f"projects/p/locations/r/jobs/{name}/executions/{name}-abc12"
+
+
+@pytest.fixture
+def run_env():
+    from shoebox.services.listing_runs import ListingRunStore
+    from tests.test_listing_runs import FakeBucket
+
+    gcs = FakeGCS()
+    clock = FakeClock()
+    bucket = FakeBucket()
+    runner = FakeJobRunner()
+    app = create_app(
+        settings=_settings(),
+        api_key=KEY,
+        metadata_loader=_frames,
+        gcs=gcs,
+        clock=clock,
+        job_runner=runner,
+        run_store=ListingRunStore(bucket, "queue/runs/"),
+    )
+    client = TestClient(app)
+    client.headers.update({"X-API-Key": KEY})
+    return client, gcs, clock, bucket, runner
+
+
+def test_start_run_requires_a_submitted_queue(run_env):
+    client, *_ = run_env
+    r = client.post("/queue/listings", json={"publish": True, "schedule": True})
+    assert r.status_code == 409
+    assert "submit the queue first" in r.json()["detail"]["message"]
+    client.put("/queue/draft", json={"rows": [row()]})
+    r = client.post("/queue/listings", json={})
+    assert r.status_code == 409
+
+
+def test_start_run_writes_record_and_starts_job(run_env):
+    client, gcs, clock, bucket, runner = run_env
+    client.put("/queue", json={"rows": [row(), row(card_number="2")]})
+    r = client.post("/queue/listings", json={"publish": False, "schedule": True})
+    assert r.status_code == 202, r.text
+    body = r.json()
+    assert body["state"] == "requested"
+    assert body["run_id"].startswith("20261015T120000Z-")
+    assert body["publish"] is False and body["schedule"] is True
+    assert body["rows_total"] == 2
+    assert body["queue_uri"] == QUEUE_URI
+    assert body["metadata_version"]
+    assert body["execution"].endswith("create-listings-abc12")
+    assert body["results"] == []
+    assert runner.started == ["create-listings"]
+    assert f"queue/runs/{body['run_id']}.json" in bucket.objects
+
+    # Visible through GET, and listed newest-first without results.
+    one = client.get(f"/queue/listings/{body['run_id']}").json()
+    assert one["run_id"] == body["run_id"] and one["state"] == "requested"
+    runs = client.get("/queue/listings").json()["runs"]
+    assert [x["run_id"] for x in runs] == [body["run_id"]]
+    assert "results" not in runs[0]
+    assert "scrape" not in r.text
+
+
+def test_start_run_rejected_while_one_is_active(run_env):
+    client, gcs, clock, bucket, runner = run_env
+    client.put("/queue", json={"rows": [row()]})
+    first = client.post("/queue/listings", json={}).json()
+    r = client.post("/queue/listings", json={})
+    assert r.status_code == 409
+    assert r.json()["detail"] == {"message": "a run is in progress", "run_id": first["run_id"]}
+    assert runner.started == ["create-listings"]
+
+    # After the job finished (record updated) a new run is allowed again.
+    from shoebox.services.listing_runs import ListingRun
+
+    rec = ListingRun.model_validate_json(bucket.objects[f"queue/runs/{first['run_id']}.json"][0])
+    rec.state = "done"
+    bucket.blob(f"queue/runs/{first['run_id']}.json").upload_from_string(rec.model_dump_json())
+    clock.now += timedelta(seconds=1)
+    assert client.post("/queue/listings", json={}).status_code == 202
+    # And a stale request no longer blocks.
+    clock.now += timedelta(hours=2)
+    assert client.post("/queue/listings", json={}).status_code == 202
+
+
+def test_start_run_job_failure_is_502_and_recorded(run_env):
+    client, gcs, clock, bucket, runner = run_env
+    runner.fail = True
+    client.put("/queue", json={"rows": [row()]})
+    r = client.post("/queue/listings", json={})
+    assert r.status_code == 502
+    assert "could not start the Cloud Run job" in r.json()["detail"]
+    runs = client.get("/queue/listings").json()["runs"]
+    assert runs[0]["state"] == "failed" and "403" in runs[0]["error"]
+    # A failed start does not block the next attempt.
+    runner.fail = False
+    clock.now += timedelta(seconds=1)
+    assert client.post("/queue/listings", json={}).status_code == 202
+
+
+def test_start_run_validates_body_and_unknown_run_404(run_env):
+    client, *_ = run_env
+    assert client.post("/queue/listings", json={"scrape_prices": True}).status_code == 422
+    assert client.get("/queue/listings/nope").status_code == 404
+
+
+def test_listing_routes_need_key(run_env):
+    client, *_ = run_env
+    bare = TestClient(client.app)
+    assert bare.post("/queue/listings", json={}).status_code == 401
+    assert bare.get("/queue/listings").status_code == 401
+    assert bare.get("/queue/listings/x").status_code == 401

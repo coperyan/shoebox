@@ -223,6 +223,52 @@ class TcdbSettings(BaseModel):
     search_defaults: dict[str, str] = Field(default_factory=dict)
 
 
+class OneDriveSettings(BaseModel):
+    """Card scans fetched from OneDrive (Microsoft Graph) when they are not on
+    local disk -- how the Cloud Run ``create-listings`` job started from the
+    iOS app reaches ``SCAN_0234.jpg``. All fields default, so an existing
+    config without an ``onedrive`` section still validates; ``enabled`` is
+    false until ``client_id`` and ``scans_folder`` are set. See docs/api.md.
+    """
+
+    # Application (client) ID of the Azure app registration (public client,
+    # "Personal Microsoft accounts", device-code flow). No secret needed.
+    client_id: str = ""
+    # "consumers" for a personal Microsoft account; a tenant ID for work/school.
+    authority: str = "https://login.microsoftonline.com/consumers"
+    # Folder under the OneDrive root that holds the scans, e.g. "Pictures/Card Scans".
+    scans_folder: str = ""
+    # Delegated Graph scopes; offline_access is added by MSAL.
+    scopes: list[str] = Field(default_factory=lambda: ["Files.Read"])
+    # MSAL token cache. The local file is written by scripts/onedrive_login.py;
+    # the gs:// object (written by --upload, then kept fresh by the job) is used
+    # whenever it is set, and is what Cloud Run needs: refresh tokens rotate,
+    # so the cache must be writable, which a mounted secret is not.
+    token_cache_path: str = "configs/onedrive_token_cache.json"
+    token_cache_uri: str | None = None
+
+    @field_validator("token_cache_uri")
+    @classmethod
+    def _token_cache_uri_is_gs_object(cls, value: str | None) -> str | None:
+        return _gs_uri_or_none(
+            value,
+            "onedrive.token_cache_uri must look like gs://bucket/prefix/onedrive_token_cache.json",
+            require_object=True,
+        )
+
+    @property
+    def enabled(self) -> bool:
+        return bool(self.client_id and self.scans_folder)
+
+
+class CloudRunSettings(BaseModel):
+    """Where the API finds the Cloud Run job it starts for app-triggered
+    listing runs (``POST /queue/listings``). Project is ``gcp.project_id``."""
+
+    region: str = "us-central1"
+    listings_job: str = "create-listings"
+
+
 class Settings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -235,6 +281,8 @@ class Settings(BaseModel):
     google_calendar: GoogleCalendarSettings
     store: StoreSettings = Field(default_factory=StoreSettings)
     tcdb: TcdbSettings = Field(default_factory=TcdbSettings)
+    onedrive: OneDriveSettings = Field(default_factory=OneDriveSettings)
+    cloud_run: CloudRunSettings = Field(default_factory=CloudRunSettings)
 
 
 def _resolve_config_path(config_path: str | os.PathLike[str] | None = None) -> Path:

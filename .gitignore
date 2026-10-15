@@ -7,6 +7,8 @@ configs/gcp.json
 configs/ebay_legacy.json
 # Saved eBay searches -- your buy criteria and price ceilings are private.
 configs/searches.yaml
+# OneDrive (Microsoft Graph) refresh-token cache written by scripts/onedrive_login.py.
+configs/onedrive_token_cache.json*
 
 # --- Real business data (samples are committed instead) ---
 # Keep your real workbooks locally; only the *.sample.xlsx templates are tracked.

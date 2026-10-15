@@ -50,6 +50,12 @@ production; see [api.md](api.md) and [deployment.md](deployment.md#services).
 | `--host` | Bind address (default `0.0.0.0`) |
 | `--port` | Listen port (default `$PORT`, else 8080) |
 
+### `scripts/onedrive_login.py`
+Not a `shoebox` subcommand: the one-time OneDrive sign-in for the cloud
+`create-listings` job. `--login` (device code), `--check`, `--verify 234`
+(downloads `SCAN_0234.jpg`), `--upload` (copies the token cache to
+`onedrive.token_cache_uri`). See [deployment.md](deployment.md#listing-from-the-app).
+
 ## Listing creation
 
 ### `create-listings`
@@ -70,6 +76,7 @@ locally.
 | `--schedule` | Set `listingStartDate` ≈ now + 19 days on each listing |
 | `--scrape-prices` | Scrape 130point sold comps per card, then ask the Slack pricing channel to confirm/override before listing (see [slack.md](slack.md)) |
 | `--queue PATH_OR_GS_URI` | Read this queue file instead of the default (a local JSONL or a `gs://` object) |
+| `--run-request` | Cloud Run job mode: claim the run record the iOS app's API wrote, list the queue with its publish/schedule choices, report progress to it. Never scrapes prices; takes no other flags. See [api.md](api.md#listing-from-the-app) |
 
 Offers are created **unpublished** unless `--publish` is passed.
 

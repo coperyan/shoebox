@@ -4,7 +4,8 @@ A small SwiftUI app that builds the eBay listing queue from an iPhone. It talks 
 `shoebox api` FastAPI service (see `docs/api.md` at the repo root) which serves the
 set / subset / parallel / card dropdown metadata from BigQuery, enriches rows with the same
 `build_enriched_json` the Streamlit UI uses, and writes `listing_queue_enriched.jsonl` to GCS.
-`shoebox create-listings --queue gs://...` on the workstation then consumes it unchanged.
+`shoebox create-listings --queue gs://...` on the workstation consumes it unchanged, or the app
+starts the same command as a Cloud Run job (see *Listing from the app* below).
 
 The app mirrors the single-form Streamlit flow (`shoebox/ui/app.py`): one draft form, a queue of
 saved rows, Edit / Delete / reorder, Preview (enriched JSON per row) and Submit.
@@ -74,12 +75,28 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
   phone; *Save draft to server* (`PUT /queue/draft`) and *Load last submitted queue* (`GET /queue`)
   move the 8 raw fields through the API so you can continue on another device.
 
+### Listing from the app
+
+After *Submit*, the **List on eBay** section on the Preview tab has two toggles, **Publish offers**
+and **Schedule start time** (remembered between launches), and a button that asks for confirmation
+and then calls `POST /queue/listings`. The API starts the `create-listings` Cloud Run job for the
+last submitted queue; the job pulls scan numbers from OneDrive and never scrapes prices, so the PC
+does not need to be on. The app opens the run screen and polls `GET /queue/listings/<run_id>` every
+3 seconds while the job is `requested` / `running`: state badge, progress bar, listed / failed counts
+and a per-row list with the listing id or the error. The **Runs** toolbar button shows recent runs
+(`GET /queue/listings`). A 409 means the last server save is a draft (submit first) or a run is
+already in progress; a 502 means the job could not be started (check the deployment). Start with
+**Publish off**: the offers are created unpublished so you can check them in Seller Hub, then run
+again with Publish on.
+
 ## Tests
 
 Cmd-U in Xcode (or `xcodebuild test -scheme ShoeboxQueue -destination 'platform=iOS Simulator,name=iPhone 15'`).
 The `ShoeboxQueueTests` target is pure XCTest with no network: `APIClientTests` use a stub
-`URLProtocol`, `QueueViewModelTests` use the `Fixtures/metadata_sample.json` fixture and a temporary
-`DraftStore`, and `CardNumberSortTests` checks the Swift port of `_cardno_sort_key` against the
+`URLProtocol` (including the `Fixtures/listing_run_sample.json` and `listing_runs_sample.json` run
+records), `QueueViewModelTests` use the `Fixtures/metadata_sample.json` fixture and a temporary
+`DraftStore`, `ListingRunViewModelTests` drive the start / poll loop against `FakeAPI` with a short
+poll interval, and `CardNumberSortTests` checks the Swift port of `_cardno_sort_key` against the
 server order in the fixture.
 
 ## Where things live
@@ -89,9 +106,11 @@ server order in the fixture.
 | API contract (the only place URLs / headers / multipart are built) | `ShoeboxQueue/Services/APIClient.swift` |
 | Wire shapes | `ShoeboxQueue/Models/APIModels.swift`, `Metadata.swift`, `QueueRow.swift` |
 | Session-state logic ported from `shoebox/ui/app.py` | `ShoeboxQueue/ViewModels/QueueViewModel.swift` |
+| Listing runs (start, 3 s polling, history) | `ShoeboxQueue/ViewModels/ListingRunViewModel.swift`, `Views/ListingRunView.swift` |
 | On-device data | `Application Support/ShoeboxQueue/` : `current.json`, `drafts/<uuid>.json`, `images/<uuid>.jpg`, `metadata.json`, `metadata.meta.json` |
 | API key | Keychain generic password, service `com.example.ShoeboxQueue`, account `api-key` |
 | Base URL | `UserDefaults` key `baseURL` |
+| Listing toggles | `UserDefaults` keys `listingPublish`, `listingSchedule` (default on / on) |
 
 The Python side of the contract is `shoebox/api/schemas.py`; the plan section "The API contract"
 in the repo docs (`docs/api.md`) is the human-readable version. Keep the three in sync.
@@ -109,6 +128,10 @@ in the repo docs (`docs/api.md`) is the human-readable version. Keep the three i
   the app always sends a downscaled JPEG, so this usually means a proxy in between.
 - **Metadata refresh fails with 503** – BigQuery is unreachable from the service; the app keeps the
   cached copy and shows the stale banner.
+- **List on eBay fails with 409 "submit the queue first"** – the last thing saved on the server is a
+  draft (or nothing); press *Submit queue* first. **409 "a run is in progress"** – wait for it (the
+  *Runs* screen shows it) or for it to go stale. **502** – the service could not start the Cloud Run
+  job; see the "Listing from the app" section of `docs/deployment.md`.
 - **Build errors after pulling** – run `xcodegen generate` again; new files are not in the project
   until you do.
 - **`plutil -p ShoeboxQueue/Info.plist`** should show `NSAllowsLocalNetworking` and *no*

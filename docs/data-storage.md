@@ -26,7 +26,8 @@ source → normalize → local JSONL (exports/jsonl/…) → GCS staging object 
 | `image_bucket` | `images/<set>/<subset>/<parallel|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies; `uploads/<yyyy-mm>/<id>.jpg` photos staged from the iOS app (give these a 30-day lifecycle rule) | `ImageLogClient.upload_image`, relist pipelines, `POST /images` |
 | `metadata_bucket` | `metadata/checklist/…`, `metadata/parallels/…` staging JSONL | `sync-metadata` (`TableAsset`) |
 | `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/watch_list/…`, `logs/ebay_listings/…`, `logs/search_hits/…` staging JSONL | monitoring pipelines, listing-result sync, saved-search watcher |
-| (bucket in `paths.queue_uri`) | `…/listing_queue_enriched.jsonl` (the queue `create-listings` reads) and `…/listing_queue_draft.json` (raw rows of the last save) | `shoebox api` ([api.md](api.md)) |
+| (bucket in `paths.queue_uri`) | `…/listing_queue_enriched.jsonl` (the queue `create-listings` reads), `…/listing_queue_draft.json` (raw rows of the last save), `…/runs/<run_id>.json` (app-triggered listing runs: state, progress, per-row results) | `shoebox api`, `create-listings --run-request` ([api.md](api.md)) |
+| (bucket in `onedrive.token_cache_uri`) | the MSAL token cache the cloud job uses to read scans from OneDrive; rewritten when the refresh token rotates | `scripts/onedrive_login.py --upload`, `create-listings --run-request` |
 | `image_log_bucket` | `logs/image_log/…` staging JSONL | `ImageLogClient.flush_append_log` |
 
 Card images are made public (their public URLs go into eBay listings).

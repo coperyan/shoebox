@@ -84,6 +84,19 @@ of a queue row — check the output file for `error` keys before listing.
 
 The queue comes from `paths.queue_uri` (GCS) when set, else the local JSONL;
 `--queue` overrides either. Rows carrying an `error` key abort the run up front.
+`run_listings` returns a `RunSummary` and accepts a `reporter` (progress
+hook); the image-log flush and the results sync run in a `finally`, so an
+interrupted run still ships what it listed.
+
+**`--run-request` (Cloud Run job mode).** `run_listing_request` claims the
+newest `requested` run record under `<queue dir>/runs/`
+(`services/listing_runs.py`; a generation-matched write, so two executions
+cannot list the same queue), reads publish/schedule from it, runs with
+`scrape_prices=False`, writes a result per row into the record, posts the
+usual start/finish messages to Slack, and marks the record `failed` (and
+exits non-zero) on any error. A bare scan number that is not on disk is
+fetched from OneDrive (`clients/onedrive.py`) by `materialize_image`. See
+[api.md](api.md#listing-from-the-app).
 
 Per queue row:
 
@@ -95,8 +108,9 @@ Per queue row:
    If scraping fails, the prompt proposes the original queue price instead.
 2. **Images** — each reference is first turned into a local file by
    `utils/image_refs.materialize_image` (an existing path as-is, a bare scan
-   number via the configured naming convention, a `gs://` photo from the iOS
-   app downloaded to `scans_dir/app_uploads/`). When a row has both,
+   number via the configured naming convention — fetched from OneDrive into
+   that path when it is not on disk and `onedrive.*` is configured —, a `gs://`
+   photo from the iOS app downloaded to `scans_dir/app_uploads/`). When a row has both,
    `ImageLogClient.upload_combined_image` then builds and uploads a
    side-by-side composite (side `combined`) from those two files. It has to
    go before the scans upload because uploading a scan deletes the local

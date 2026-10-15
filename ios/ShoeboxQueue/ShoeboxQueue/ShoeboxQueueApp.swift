@@ -7,6 +7,7 @@ struct ShoeboxQueueApp: App {
     @State private var uploader: ImageUploader
     @State private var queue: QueueViewModel
     @State private var preview: PreviewViewModel
+    @State private var listing: ListingRunViewModel
 
     init() {
         let store = DraftStore(baseURL: DraftStore.defaultDirectory)
@@ -24,6 +25,7 @@ struct ShoeboxQueueApp: App {
         _uploader = State(initialValue: uploader)
         _queue = State(initialValue: queue)
         _preview = State(initialValue: PreviewViewModel())
+        _listing = State(initialValue: ListingRunViewModel())
     }
 
     var body: some Scene {
@@ -34,6 +36,7 @@ struct ShoeboxQueueApp: App {
                 .environment(uploader)
                 .environment(queue)
                 .environment(preview)
+                .environment(listing)
                 .task {
                     // restore -> disk cache -> conditional refresh (cached copy stays if it fails)
                     queue.restore()

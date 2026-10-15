@@ -247,3 +247,155 @@ struct ValidationErrorItem: Codable, Hashable {
 struct ValidationErrorEnvelope: Codable, Hashable {
     var detail: [ValidationErrorItem]
 }
+
+// MARK: - Listing runs (POST /queue/listings, GET /queue/listings, GET /queue/listings/{run_id})
+
+/// One queue row's outcome inside a `ListingRun`.
+struct ListingRunResult: Codable, Hashable {
+    var sku: String
+    var title: String
+    var listingId: String?
+    var offerId: String?
+    var success: Bool
+    var error: String?
+}
+
+/// A `create-listings` run record written by the API and updated by the Cloud Run job.
+/// `state` is `requested`, `running`, `done` or `failed`; timestamps are ISO-8601 strings exactly
+/// as the server emits them. `GET /queue/listings` omits `results`, so decoding defaults it to `[]`.
+struct ListingRun: Codable, Hashable, Identifiable {
+    static let stateRequested = "requested"
+    static let stateRunning = "running"
+    static let stateDone = "done"
+    static let stateFailed = "failed"
+
+    var runId: String
+    var state: String
+    var requestedAt: String
+    var startedAt: String?
+    var finishedAt: String?
+    var publish: Bool
+    var schedule: Bool
+    var queueUri: String
+    var metadataVersion: String?
+    var rowsTotal: Int
+    var rowsDone: Int
+    var listed: Int
+    var failed: Int
+    var results: [ListingRunResult]
+    var error: String?
+    var execution: String?
+    var host: String?
+
+    var id: String {
+        runId
+    }
+
+    /// `done` or `failed`: nothing more will change, polling can stop.
+    var isFinished: Bool {
+        state == Self.stateDone || state == Self.stateFailed
+    }
+
+    var isFailed: Bool {
+        state == Self.stateFailed
+    }
+
+    /// `rows_done / rows_total` clamped to 0...1; 0 while the total is unknown.
+    var progress: Double {
+        guard rowsTotal > 0 else {
+            return 0
+        }
+        return min(1, max(0, Double(rowsDone) / Double(rowsTotal)))
+    }
+
+    // Case names only: `.convertFromSnakeCase` maps `run_id` -> `runId` and so on.
+    enum CodingKeys: String, CodingKey {
+        case runId
+        case state
+        case requestedAt
+        case startedAt
+        case finishedAt
+        case publish
+        case schedule
+        case queueUri
+        case metadataVersion
+        case rowsTotal
+        case rowsDone
+        case listed
+        case failed
+        case results
+        case error
+        case execution
+        case host
+    }
+
+    init(
+        runId: String,
+        state: String,
+        requestedAt: String,
+        startedAt: String? = nil,
+        finishedAt: String? = nil,
+        publish: Bool,
+        schedule: Bool,
+        queueUri: String,
+        metadataVersion: String? = nil,
+        rowsTotal: Int,
+        rowsDone: Int = 0,
+        listed: Int = 0,
+        failed: Int = 0,
+        results: [ListingRunResult] = [],
+        error: String? = nil,
+        execution: String? = nil,
+        host: String? = nil
+    ) {
+        self.runId = runId
+        self.state = state
+        self.requestedAt = requestedAt
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.publish = publish
+        self.schedule = schedule
+        self.queueUri = queueUri
+        self.metadataVersion = metadataVersion
+        self.rowsTotal = rowsTotal
+        self.rowsDone = rowsDone
+        self.listed = listed
+        self.failed = failed
+        self.results = results
+        self.error = error
+        self.execution = execution
+        self.host = host
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        runId = try container.decode(String.self, forKey: .runId)
+        state = try container.decode(String.self, forKey: .state)
+        requestedAt = try container.decode(String.self, forKey: .requestedAt)
+        startedAt = try container.decodeIfPresent(String.self, forKey: .startedAt)
+        finishedAt = try container.decodeIfPresent(String.self, forKey: .finishedAt)
+        publish = try container.decode(Bool.self, forKey: .publish)
+        schedule = try container.decode(Bool.self, forKey: .schedule)
+        queueUri = try container.decodeIfPresent(String.self, forKey: .queueUri) ?? ""
+        metadataVersion = try container.decodeIfPresent(String.self, forKey: .metadataVersion)
+        rowsTotal = try container.decodeIfPresent(Int.self, forKey: .rowsTotal) ?? 0
+        rowsDone = try container.decodeIfPresent(Int.self, forKey: .rowsDone) ?? 0
+        listed = try container.decodeIfPresent(Int.self, forKey: .listed) ?? 0
+        failed = try container.decodeIfPresent(Int.self, forKey: .failed) ?? 0
+        results = try container.decodeIfPresent([ListingRunResult].self, forKey: .results) ?? []
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        execution = try container.decodeIfPresent(String.self, forKey: .execution)
+        host = try container.decodeIfPresent(String.self, forKey: .host)
+    }
+}
+
+/// `GET /queue/listings`: `{"runs": [...]}`, newest first.
+struct ListingRunsResponse: Codable, Hashable {
+    var runs: [ListingRun]
+}
+
+/// Request body for `POST /queue/listings`. The job never scrapes prices, so there is no flag for it.
+struct StartListingRunRequest: Codable, Hashable {
+    var publish: Bool
+    var schedule: Bool
+}

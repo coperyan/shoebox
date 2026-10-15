@@ -16,6 +16,7 @@ dependencies = [
   "google-auth",
   "google-cloud-bigquery",
   "google-cloud-storage",
+  "msal",
   "numpy",
   "openpyxl",
   "pandas",

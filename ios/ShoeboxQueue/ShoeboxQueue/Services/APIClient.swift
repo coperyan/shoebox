@@ -70,6 +70,12 @@ protocol QueueAPI {
     func saveDraft(_ rows: [QueueRowInput]) async throws -> QueueWriteResponse
     func fetchLastQueue() async throws -> QueueGetResponse
     func uploadImage(jpeg: Data, side: ImageSide, clientId: String?, progress: UploadProgressHandler?) async throws -> UploadResponse
+    /// `POST /queue/listings`: start a `create-listings` run in the cloud for the last submitted queue.
+    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun
+    /// `GET /queue/listings`: recent runs, newest first (without their `results`).
+    func fetchListingRuns() async throws -> [ListingRun]
+    /// `GET /queue/listings/{run_id}`: one run with its per-row results.
+    func fetchListingRun(id: String) async throws -> ListingRun
 }
 
 // MARK: - Shared JSON coding (wire and disk files use the same snake_case convention)
@@ -261,6 +267,40 @@ final class APIClient: QueueAPI {
         return try decode(UploadResponse.self, from: result.0)
     }
 
+    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun {
+        let body: Data
+        do {
+            body = try JSONCoding.encoder.encode(StartListingRunRequest(publish: publish, schedule: schedule))
+        } catch {
+            throw APIError.decoding("could not encode the request: \(error.localizedDescription)")
+        }
+        let request = buildRequest(path: "queue/listings", method: "POST", body: body, contentType: "application/json")
+        let (data, response) = try await perform(request)
+        // 409 (`{"detail": {"message": ..., "run_id": ...}}`) and 502 (`{"detail": "..."}`) both land in
+        // `.http` with the server's message via `parseError`.
+        try Self.ensureSuccess(response, data: data)
+        return try decode(ListingRun.self, from: data)
+    }
+
+    func fetchListingRuns() async throws -> [ListingRun] {
+        let request = buildRequest(path: "queue/listings", method: "GET")
+        let (data, response) = try await perform(request)
+        try Self.ensureSuccess(response, data: data)
+        return try decode(ListingRunsResponse.self, from: data).runs
+    }
+
+    func fetchListingRun(id: String) async throws -> ListingRun {
+        let encodedId = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let request = buildRequest(path: "queue/listings/" + encodedId, method: "GET")
+        let (data, response) = try await perform(request)
+        if response.statusCode == 404 {
+            // Not the "wrong base URL" 404: the run id is simply unknown (or its record was pruned).
+            throw APIError.http(status: 404, message: "Run \(id) was not found on the server (404).")
+        }
+        try Self.ensureSuccess(response, data: data)
+        return try decode(ListingRun.self, from: data)
+    }
+
     // MARK: Request building (internal so the tests can inspect it)
 
     func buildRequest(
@@ -366,12 +406,16 @@ final class APIClient: QueueAPI {
             prefix = "Forbidden (403)."
         case 404:
             prefix = "Not found (404) — check the base URL."
+        case 409:
+            prefix = "Not possible right now (409)."
         case 413:
             prefix = "Image too large (413): the API accepts up to 10 MiB."
         case 415:
             prefix = "Unsupported image type (415): JPEG or PNG only."
         case 422:
             prefix = "The server rejected the request (422)."
+        case 502:
+            prefix = "The server could not complete the request (502)."
         case 503:
             prefix = "Metadata unavailable (503): the service could not reach BigQuery."
         default:
