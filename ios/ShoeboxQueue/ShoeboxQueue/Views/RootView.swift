@@ -139,7 +139,14 @@ struct RootView: View {
                 Section {
                     QueueListView()
                 } header: {
-                    Text("Queue (\(queue.rows.count))")
+                    HStack {
+                        Text("Queue (\(queue.rows.count))")
+                        Spacer()
+                        EditButton()
+                            .font(.callout)
+                            .textCase(nil)
+                            .disabled(queue.rows.isEmpty)
+                    }
                 } footer: {
                     if let savedAt = queue.lastSavedAt {
                         Text("Autosaved \(savedAt)")
@@ -150,9 +157,17 @@ struct RootView: View {
             .keyboardDismissToolbar()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    EditButton()
+                    Button("Clear") {
+                        queue.cancelDraft()
+                    }
+                    .accessibilityHint("Resets the Add / Edit form; saved rows are not touched.")
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button(queue.mode == .add ? "Save" : "Update") {
+                        queue.saveDraft()
+                    }
+                    .fontWeight(.semibold)
+                    .disabled(!queue.canSaveDraft)
                     queueMenu
                 }
             }

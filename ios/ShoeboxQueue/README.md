@@ -32,6 +32,13 @@ open ShoeboxQueue.xcodeproj
 `ShoeboxQueue/Info.plist` are git-ignored; re-run `xcodegen generate` after adding files or
 changing the spec. Select the `ShoeboxQueue` scheme, pick a simulator and press Cmd-R.
 
+### App icon
+
+`Resources/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png` is the single 1024 px icon iOS 17
+needs; the SVG sources (icon and logo) are in `design/`. To change it, edit `design/app-icon.svg`
+and re-render it opaque at 1024×1024 (for example `cairosvg design/app-icon.svg -W 1024 -H 1024
+-o .../AppIcon-1024.png`; icons may not have transparency).
+
 ### Signing
 
 The bundle id placeholder is `com.example.ShoeboxQueue`. For a real device set
@@ -56,11 +63,12 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
 
 ## Using the app
 
-- **Queue tab** – *Save* / *Clear* at the top, then the Add / Edit form (set -> subset -> parallel
-  -> card #, with the same cascade and autofill as the Streamlit UI), quantity, price and the two
-  images. *Save* (*Update* while editing) appends or updates the row and keeps set / subset /
-  parallel for the next card (card # resets, quantity -> 1, price -> 0.99, images cleared).
-  *Clear* resets the whole form. Tap a row to edit it, swipe to delete, use *Edit* to reorder. The toolbar menu holds *Save as draft…*, *Drafts…*, *Save draft to server*,
+- **Queue tab** – *Clear* and *Save* sit in the top bar, above the Add / Edit form (set -> subset
+  -> parallel -> card #, with the same cascade and autofill as the Streamlit UI), quantity, price
+  and the two images. *Save* (*Update* while editing) appends or updates the row and keeps set /
+  subset / parallel for the next card (card # resets, quantity -> 1, price -> 0.99, images
+  cleared). *Clear* resets the whole form. Tap a row to edit it, swipe to delete, use *Edit* next
+  to the queue heading to reorder. The toolbar menu holds *Save as draft…*, *Drafts…*, *Save draft to server*,
   *Load last submitted queue…* and *Clear queue*.
 - **Pickers** – the Set picker is sectioned by year (newest first; the year comes from the
   metadata's `set_year`, else the set name's leading digits). Subsets list *Base* first, then

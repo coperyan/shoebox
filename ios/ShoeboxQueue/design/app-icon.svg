@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+<rect width="1024" height="1024" fill="#0E1B2C"/>
+<g fill="none" stroke="#172A41">
+<path d="M-170 -60 Q560 512 -170 1084" stroke-width="9"/><path d="M-170 -60 Q560 512 -170 1084" stroke-width="44" stroke-dasharray="9 30"/>
+<path d="M1194 -60 Q464 512 1194 1084" stroke-width="9"/><path d="M1194 -60 Q464 512 1194 1084" stroke-width="44" stroke-dasharray="9 30"/>
+</g>
+<g transform="translate(102 102) scale(8.2)"><defs><clipPath id="sftBall"><circle cx="50" cy="50" r="45"/></clipPath></defs>
+<circle cx="50" cy="50" r="48" fill="#F3ECDD" stroke="#E2572F" stroke-width="3"/>
+<g clip-path="url(#sftBall)">
+<path d="M16 4 Q40 50 16 96" fill="none" stroke="#E2572F" stroke-width="1.6"/>
+<path d="M16 4 Q40 50 16 96" fill="none" stroke="#E2572F" stroke-width="6" stroke-dasharray="1.3 3.6"/>
+<path d="M84 4 Q60 50 84 96" fill="none" stroke="#E2572F" stroke-width="1.6"/>
+<path d="M84 4 Q60 50 84 96" fill="none" stroke="#E2572F" stroke-width="6" stroke-dasharray="1.3 3.6"/>
+<path d="M0 76 L16 62 L26 69 L38 57 L50 66 L63 55 L76 67 L86 61 L100 72 L100 100 L0 100 Z" fill="#3A5A78"/>
+<path d="M45 21 Q36 58 4 64" fill="none" stroke="#E2572F" stroke-width="1.5"/>
+<path d="M55 21 Q64 58 96 64" fill="none" stroke="#E2572F" stroke-width="1.5"/>
+<rect x="43" y="18" width="4" height="62" fill="#E2572F"/>
+<rect x="53" y="18" width="4" height="62" fill="#E2572F"/>
+<rect x="43" y="26" width="14" height="3" fill="#E2572F"/>
+<rect x="43" y="37" width="14" height="3" fill="#E2572F"/>
+<rect x="43" y="49" width="14" height="3" fill="#E2572F"/>
+<rect x="0" y="64" width="100" height="3.5" fill="#E2572F"/>
+<path d="M17 58 L9 72 L13 72 L6 84 L11 84 L4 96 L30 96 L23 84 L28 84 L21 72 L25 72 Z" fill="#0E1B2C"/>
+<path d="M83 58 L75 72 L79 72 L72 84 L77 84 L70 96 L96 96 L89 84 L94 84 L87 72 L91 72 Z" fill="#0E1B2C"/>
+<path d="M31 70 L26 79 L29 79 L24 88 L38 88 L33 79 L36 79 Z" fill="#0E1B2C"/>
+<path d="M69 70 L64 79 L67 79 L62 88 L76 88 L71 79 L74 79 Z" fill="#0E1B2C"/>
+<rect x="0" y="90" width="100" height="10" fill="#0E1B2C"/>
+</g></g></svg>

@@ -1,33 +1,13 @@
 import SwiftUI
 
 /// "Add / Edit Row" — the single form from the Streamlit UI. Place it inside a `List` / `Form`.
+/// Save and Clear live in the navigation bar (`RootView`), not in the form.
 @MainActor
 struct RowFormView: View {
     @Environment(QueueViewModel.self) private var queue
 
     var body: some View {
         @Bindable var queue = queue
-
-        Section {
-            Button {
-                queue.saveDraft()
-            } label: {
-                Label(queue.mode == .add ? "Save" : "Update", systemImage: "checkmark.circle")
-            }
-            .disabled(!queue.canSaveDraft)
-
-            Button(role: .cancel) {
-                queue.cancelDraft()
-            } label: {
-                Label("Clear", systemImage: "arrow.uturn.backward")
-            }
-        } footer: {
-            if queue.canSaveDraft {
-                Text("Mode: \(queue.mode.title)")
-            } else {
-                Text("Mode: \(queue.mode.title). Set, subset and card # are required.")
-            }
-        }
 
         Section {
             SearchablePicker(
@@ -67,6 +47,12 @@ struct RowFormView: View {
             .disabled(queue.draft.subsetName.isEmpty)
         } header: {
             Text("Add / Edit Row")
+        } footer: {
+            if queue.canSaveDraft {
+                Text("Mode: \(queue.mode.title). Save and Clear are in the top bar.")
+            } else {
+                Text("Mode: \(queue.mode.title). Set, subset and card # are required.")
+            }
         }
 
         if queue.draft.hasCardAutofill || queue.draft.hasParallelAutofill {
