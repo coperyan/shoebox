@@ -119,12 +119,6 @@ def main() -> None:
     p_vt_up.add_argument("--dry-run", action="store_true", help="Validate and build payloads only")
     p_vt_up.add_argument("--publish", action="store_true")
     p_vt_up.add_argument("--schedule", action="store_true")
-    p_vt_up.add_argument(
-        "--include-out-of-stock",
-        action="store_true",
-        help="Also list cards with no Qty, as sold-out variations (each still needs a price)",
-    )
-    p_vt_up.add_argument("--images-dir", help="Directory of per-card scans (optional)")
     p_vt_up.add_argument("--default-image-path", help="Hero image for the listings (optional)")
 
     # Relist listings
@@ -429,8 +423,6 @@ def main() -> None:
                 publish=args.publish,
                 dry_run=args.dry_run,
                 schedule=args.schedule,
-                include_out_of_stock=args.include_out_of_stock,
-                images_dir=Path(args.images_dir) if args.images_dir else None,
                 default_image_path=(
                     Path(args.default_image_path) if args.default_image_path else None
                 ),

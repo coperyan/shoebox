@@ -108,9 +108,12 @@ The workbook has three sheets; yellow headers/cells are the ones to edit:
 **2. `variation-template upload TEMPLATE`** validates the filled-in workbook
 and creates one variation listing per segment through the
 `create-variation-listings` pipeline (inventory items, item group, per-card
-offers, promotion, volume discount). Only cards with `Qty` above 0 are listed,
-and each segment's title shows its range, e.g.
-`2026 Topps Update #US1-US175 You Pick, Complete Your Set!`.
+offers, promotion, volume discount). **Every card is listed**, so the dropdown
+always covers the whole checklist: a blank or 0 `Qty` shows as sold out until
+restocked, and every card needs a `Price` or the Default Price. Each segment's
+title shows its range, e.g.
+`2026 Topps Update #US1-US175 You Pick, Complete Your Set!`. Variations have
+no per-card images; the listing's only image is the hero image.
 
 ```bash
 shoebox variation-template upload exports/variation_templates/2026_topps_update_base.xlsx --dry-run
@@ -119,11 +122,9 @@ shoebox variation-template upload exports/variation_templates/2026_topps_update_
 
 | Flag | Effect |
 |---|---|
-| `--dry-run` | Validate and build payloads; no eBay calls and no image uploads |
+| `--dry-run` | Validate and build payloads; no eBay calls and no image upload |
 | `--publish` | Publish after creation (otherwise created unpublished) |
 | `--schedule` | Set `listingStartDate` ≈ now + 19 days |
-| `--include-out-of-stock` | Also list cards with no `Qty`, as sold-out variations (each still needs a price) |
-| `--images-dir DIR` | Directory of per-card scans named by card number |
 | `--default-image-path PATH` | Hero image; defaults to `<set_images_dir>/<set_name>.png` when that file exists |
 
 Nothing is sent to eBay unless the whole template is valid. Otherwise the

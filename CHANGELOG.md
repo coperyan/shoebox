@@ -17,7 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   price, ad rate and volume-discount tiers on the Listing sheet.
   `variation-template upload` validates the workbook, reporting every problem
   by row before anything reaches eBay, and creates one variation listing per
-  segment, titled with its card range. See `docs/cli.md`.
+  segment, titled with its card range. Every card is listed, with a blank Qty
+  showing as sold out, so the dropdown always covers the full checklist. See
+  `docs/cli.md`.
 
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped

@@ -126,7 +126,9 @@ subset (e.g. US1–US350) without hand-building the inventory workbook:
   cap. The workbook's Checklist sheet uses the same column names as the
   inventory workbook, plus `Segment`.
 - **upload** — `parse_listing_settings` and `parse_template_rows` validate both
-  sheets and collect every problem before anything is sent. Rows are grouped
+  sheets and collect every problem before anything is sent. Every card is
+  listed (blank `Qty` = 0, a sold-out variation), and no per-card images are
+  uploaded. Rows are grouped
   by `Subset ID|Segment`, which `build_group_key` hashes into a distinct,
   stable eBay group key per segment. `create_variation_listing.list_variation_groups`
   then lists each group with the sheet's promote rate and volume-discount

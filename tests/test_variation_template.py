@@ -173,28 +173,28 @@ def test_parse_listing_settings_reports_every_bad_value():
 # --- Checklist rows ---------------------------------------------------------
 
 
-def test_parse_template_rows_groups_by_segment_and_skips_unstocked():
+def test_parse_template_rows_groups_by_segment_and_keeps_out_of_stock_cards():
     records = [
         _record(1, 1, qty=2, price=1.5),
-        _record(2, 1, qty=None),  # not stocked: skipped
+        _record(2, 1, qty=None),  # not stocked: listed as sold out
         _record(3, 2, qty=1, price=None),  # falls back to default price
-        _record(4, 2, qty=0),
+        _record(4, 2, qty=0, price=None),
     ]
     groups = parse_template_rows(records, default_price=0.99)
 
     assert list(groups) == ["2026TU-BASE|1", "2026TU-BASE|2"]
     seg1, seg2 = groups.values()
-    assert [(r.card_number, r.qty, r.price) for r in seg1] == [("US1", 2, 1.5)]
-    assert [(r.card_number, r.price) for r in seg2] == [("US3", 0.99)]
+    assert [(r.card_number, r.qty, r.price) for r in seg1] == [("US1", 2, 1.5), ("US2", 0, 1.0)]
+    assert [(r.card_number, r.qty, r.price) for r in seg2] == [("US3", 1, 0.99), ("US4", 0, 0.99)]
     assert build_group_key("2026TU-BASE|1") != build_group_key("2026TU-BASE|2")
 
 
-def test_parse_template_rows_include_out_of_stock_needs_prices():
+def test_parse_template_rows_out_of_stock_cards_still_need_a_price():
     records = [_record(1, qty=None, price=None)]
     with pytest.raises(TemplateError, match="needs a Price"):
-        parse_template_rows(records, include_out_of_stock=True)
+        parse_template_rows(records)
 
-    groups = parse_template_rows(records, default_price=1.0, include_out_of_stock=True)
+    groups = parse_template_rows(records, default_price=1.0)
     (rows,) = groups.values()
     assert rows[0].qty == 0
 
@@ -223,9 +223,9 @@ def test_parse_template_rows_rejects_segment_over_ebay_cap():
         parse_template_rows(records)
 
 
-def test_parse_template_rows_with_nothing_stocked_says_so():
-    with pytest.raises(TemplateError, match="No cards to list"):
-        parse_template_rows([_record(1, qty=None)])
+def test_parse_template_rows_with_no_cards_says_so():
+    with pytest.raises(TemplateError, match="No cards in the Checklist sheet"):
+        parse_template_rows([_record(1, **{"Card Number": None})])
 
 
 def test_parse_template_rows_display_name_defaults_to_card_number():
@@ -306,12 +306,14 @@ def test_build_writes_template_and_upload_dry_run_makes_two_listings(
     assert len(results) == 2
     titles = [r.request.data["item_group"]["title"] for r in results]
     assert titles == [
-        f"{SET} #US1-US174 You Pick, Complete Your Set!",
-        f"{SET} #US176-US349 You Pick, Complete Your Set!",
+        f"{SET} #US1-US175 You Pick, Complete Your Set!",
+        f"{SET} #US176-US350 You Pick, Complete Your Set!",
     ]
     first = results[0].request.data
-    assert len(first["sku_offers"]) == 140  # 175 cards minus every 5th
-    prices = sorted(o["pricingSummary"]["price"]["value"] for o in first["sku_offers"].values())
+    offers = list(first["sku_offers"].values())
+    assert len(offers) == 175  # every card, stocked or not
+    assert sum(o["availableQuantity"] == 0 for o in offers) == 35  # every 5th card
+    prices = sorted(o["pricingSummary"]["price"]["value"] for o in offers)
     assert prices[0] == 0.99 and prices[-1] == 4.99
     assert results[0].inventory_item_group_key != results[1].inventory_item_group_key
     assert (tmp_path / "exports" / "jsonl" / "ebay_listings.jsonl").exists()
@@ -334,7 +336,10 @@ def test_upload_reports_template_problems_before_touching_ebay(
     _fill(out, {}, {"Promote Rate (%)": 150})  # now both sheets have a problem
     with pytest.raises(TemplateError) as exc:
         upload_variation_template(out, publish=True)
-    assert [p.split(":")[0] for p in exc.value.problems] == ["Listing sheet", "Row 2 (US1)"]
+    problems = exc.value.problems
+    assert problems[0].startswith("Listing sheet:")
+    assert problems[1].startswith("Row 2 (US1): needs a Price")
+    assert len(problems) == 351  # every card needs a price, stocked or not
 
 
 def test_build_unknown_subset_lists_the_ones_available(tmp_path, update_base_bq):

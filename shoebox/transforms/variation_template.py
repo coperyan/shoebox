@@ -248,13 +248,12 @@ def parse_template_rows(
     records: list[dict[str, Any]],
     *,
     default_price: float | None = None,
-    include_out_of_stock: bool = False,
 ) -> dict[str, list[ChecklistVariationRow]]:
-    """Validate filled-in Checklist rows and group the ones to list by segment.
+    """Validate filled-in Checklist rows and group them by segment.
 
-    A card is listed when its Qty is above 0, or always with
-    include_out_of_stock (its variation then shows as sold out until
-    restocked). A listed card needs a Price or the sheet's Default Price.
+    Every card is listed so the listing covers the whole checklist; a blank or
+    0 Qty shows as a sold-out variation until restocked. Every card therefore
+    needs a Price or the sheet's Default Price.
     Raises TemplateError naming every problem, so one pass fixes the sheet.
     """
     problems: list[str] = []
@@ -274,8 +273,6 @@ def parse_template_rows(
             continue
         if qty < 0:
             problems.append(f"{where}: Qty cannot be negative")
-            continue
-        if qty == 0 and not include_out_of_stock:
             continue
 
         try:
@@ -341,10 +338,7 @@ def parse_template_rows(
                 f"Segment {seg} has {len(rows)} cards; eBay allows {MAX_VARIATIONS} per listing"
             )
     if not problems and not groups:
-        problems.append(
-            "No cards to list: fill in Qty for the cards you have"
-            + ("" if include_out_of_stock else " (or pass --include-out-of-stock)")
-        )
+        problems.append("No cards in the Checklist sheet")
     if problems:
         raise TemplateError(problems)
 

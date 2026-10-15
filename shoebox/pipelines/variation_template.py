@@ -275,11 +275,14 @@ def upload_variation_template(
     publish: bool = False,
     dry_run: bool = False,
     schedule: bool = False,
-    include_out_of_stock: bool = False,
-    images_dir: Path | None = None,
     default_image_path: Path | None = None,
 ) -> list[EbayListingResult]:
-    """Create one variation listing per segment of a filled-in template."""
+    """Create one variation listing per segment of a filled-in template.
+
+    Every card in the template is listed, in stock or not. Variations carry no
+    per-card images; the only image is the listing's hero (default_image_path,
+    else <set_images_dir>/<set_name>.png when that file exists).
+    """
     records, listing_rows = read_template(path)
 
     # Check both sheets before stopping, so one pass fixes every problem.
@@ -293,7 +296,6 @@ def upload_variation_template(
         groups = parse_template_rows(
             records,
             default_price=settings.default_price if settings else None,
-            include_out_of_stock=include_out_of_stock,
         )
     except TemplateError as e:
         problems += e.problems
@@ -309,9 +311,10 @@ def upload_variation_template(
     )
     for gid, rows in groups.items():
         logger.info(
-            "  segment %s: %d cards, total qty %d, $%.2f-$%.2f | %s",
+            "  segment %s: %d cards, %d in stock, total qty %d, $%.2f-$%.2f | %s",
             gid.rsplit("|", 1)[1],
             len(rows),
+            sum(1 for r in rows if r.qty > 0),
             sum(r.qty for r in rows),
             min(r.price for r in rows),
             max(r.price for r in rows),
@@ -320,9 +323,9 @@ def upload_variation_template(
 
     if dry_run:
         # Image uploads write to GCS; a dry run should leave nothing behind.
-        if images_dir or default_image_path:
-            logger.info("Dry run: skipping image uploads")
-        images_dir = default_image_path = None
+        if default_image_path:
+            logger.info("Dry run: skipping the hero image upload")
+        default_image_path = None
     elif default_image_path is None:
         first = next(iter(groups.values()))[0]
         default_image_path = _derive_default_image_path(
@@ -334,7 +337,6 @@ def upload_variation_template(
         publish=publish,
         dry_run=dry_run,
         schedule=schedule,
-        images_dir=images_dir,
         default_image_path=default_image_path,
         promote_rate=settings.promote_rate,
         volume_discount_tiers=settings.volume_discount_tiers or None,
