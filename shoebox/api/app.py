@@ -220,7 +220,11 @@ def create_app(
     app.state.ctx = ctx
     app.add_middleware(GZipMiddleware, minimum_size=1024)
 
-    @app.get("/healthz", response_model=HealthResponse)
+    # /health is the one to use from outside: on a run.app URL the Google front
+    # end answers /healthz itself with its own 404 before the container sees it.
+    # /healthz stays for local runs and anything already pointed at it.
+    @app.get("/health", response_model=HealthResponse)
+    @app.get("/healthz", response_model=HealthResponse, include_in_schema=False)
     def healthz() -> HealthResponse:
         return HealthResponse(status="ok", version=_shoebox_version())
 

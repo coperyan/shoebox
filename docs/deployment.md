@@ -176,7 +176,7 @@ gcloud storage buckets update gs://IMAGE_BUCKET --lifecycle-file=lifecycle.json 
 # 4. Deploy (first the service, then its public binding) and smoke-test.
 python scripts/deploy_cloud_run.py --only shoebox-api
 URL=$(gcloud run services describe shoebox-api --region us-central1 --format 'value(status.url)')
-curl -s $URL/healthz
+curl -s $URL/health
 curl -s -H "X-API-Key: $(gcloud secrets versions access latest --secret shoebox-api-key)" $URL/metadata | head -c 300
 ```
 

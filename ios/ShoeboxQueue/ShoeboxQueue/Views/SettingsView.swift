@@ -43,7 +43,7 @@ struct SettingsView: View {
                 } header: {
                     Text("API")
                 } footer: {
-                    Text("Use http://localhost:8080 for `shoebox api` in the simulator, or the https Cloud Run URL. Test connection calls /healthz (no key); Refresh metadata checks the key.")
+                    Text("Use http://localhost:8080 for `shoebox api` in the simulator, or the https Cloud Run URL. Test connection calls /health (no key); Refresh metadata checks the key.")
                 }
 
                 Section("Metadata") {

@@ -119,7 +119,7 @@ final class AppSettings {
         return APIClient(config: config)
     }
 
-    /// A client for `/healthz`, which needs no key; `nil` when the URL is not usable.
+    /// A client for `/health`, which needs no key; `nil` when the URL is not usable.
     func makeUnauthenticatedClient() -> APIClient? {
         guard let url = Self.normalizedURL(baseURLString) else {
             return nil

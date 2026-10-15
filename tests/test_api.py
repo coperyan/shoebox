@@ -193,9 +193,10 @@ def test_create_app_reads_key_from_env(monkeypatch):
 # ---- auth ----
 
 
-def test_healthz_needs_no_key(env):
+@pytest.mark.parametrize("path", ["/health", "/healthz"])
+def test_health_needs_no_key(env, path):
     client, *_ = env
-    r = TestClient(client.app).get("/healthz")
+    r = TestClient(client.app).get(path)
     assert r.status_code == 200
     assert r.json()["status"] == "ok"
 

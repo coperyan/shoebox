@@ -18,7 +18,7 @@ workstation: shoebox create-listings   (reads paths.queue_uri; downloads gs:// p
 
 ## Authentication
 
-Every route except `/healthz` requires the header `X-API-Key: <key>`. The key
+Every route except `/health` requires the header `X-API-Key: <key>`. The key
 is the `SHOEBOX_API_KEY` environment variable (in Cloud Run, mounted from the
 `shoebox-api-key` secret; see [deployment.md](deployment.md#services)). A
 missing or wrong key is a `401`. The server refuses to start without the
@@ -32,7 +32,7 @@ like a password: `openssl rand -hex 32`, rotate by adding a secret version.
 
 | Method, path | Body | Returns |
 |---|---|---|
-| `GET /healthz` | – | `{"status":"ok","version":"0.2.0"}` (no auth) |
+| `GET /health` | – | `{"status":"ok","version":"0.2.0"}` (no auth). `/healthz` is an alias that only works locally: on a `run.app` URL Google's front end answers `/healthz` itself with a 404 |
 | `GET /metadata` | optional `If-None-Match` | the dropdown data (below); `ETag: W/"<version>"`; `304` when unchanged |
 | `POST /metadata/refresh` | – | reloads from BigQuery now; `{"version","generated_at","counts"}` |
 | `POST /queue/preview` | `{"rows":[QueueRowIn]}` | enrichment per row, nothing written |
@@ -228,7 +228,7 @@ three kinds (path, scan number, `gs://`) go through
 # needs ADC (gcloud auth application-default login) and an app.yaml with paths.queue_uri
 SHOEBOX_API_KEY=dev shoebox api --port 8080
 
-curl -s localhost:8080/healthz
+curl -s localhost:8080/health
 curl -s -H 'X-API-Key: dev' --compressed localhost:8080/metadata | head -c 400
 curl -s -H 'X-API-Key: dev' -H 'content-type: application/json' \
   -X POST localhost:8080/queue/preview \
