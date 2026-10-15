@@ -101,6 +101,68 @@ individual cards; per-card scans and a hero image are optional.
 | `--images-dir DIR` | Directory of per-card scans named by card number |
 | `--default-image-path PATH` | Hero image shown before a variation is selected |
 
+### `variation-template`
+Lists a whole subset (e.g. 2026 Topps Update Base, US1–US350) as "You Pick"
+listings in two steps. eBay caps a listing at 250 variations, so the subset is
+split into segments, each its own listing.
+
+**1. `variation-template build SET_NAME`** pulls the subset from
+`cards.v_checklist` and writes a workbook to fill in:
+
+```bash
+shoebox variation-template build "2026 Topps Update" --subset Base
+# -> exports/variation_templates/2026_topps_update_base.xlsx
+#    segment 1: US1-US175 (175 cards), segment 2: US176-US350 (175 cards)
+```
+
+| Flag | Effect |
+|---|---|
+| `--subset NAME` | Subset to list (default `Base`; case-insensitive). An unknown name lists the set's subsets |
+| `--segments N` | Listings to split into (default 2). Raised automatically if a segment would pass 250 cards |
+| `--out PATH` | Workbook to write (default `exports/variation_templates/<set>_<subset>.xlsx`) |
+| `--force` | Overwrite an existing template (any quantities and prices in it are lost) |
+
+The workbook has three sheets; yellow headers/cells are the ones to edit:
+
+- **Checklist** — one row per card, in card-number order: `Segment`, card info,
+  `Display Name` (the dropdown text, prefilled as `US1 Player Name`, with ` RC`
+  for rookies), and blank **`Qty`** and **`Price`**. Change `Segment` to move a
+  card between listings.
+- **Listing** — **Default Price** (used where `Price` is blank), **Promote
+  Rate (%)** (default 20; 0 or blank skips promotion) and the **Volume
+  Discounts** table (`Min Qty` → `% Off`; rows with a blank % are skipped). The
+  same settings apply to every segment.
+- **Summary** — each segment's card range, with live in-stock and total-quantity
+  counts as you fill in `Qty`.
+
+**2. `variation-template upload TEMPLATE`** validates the filled-in workbook
+and creates one variation listing per segment through the
+`create-variation-listings` pipeline (inventory items, item group, per-card
+offers, promotion, volume discount). **Every card is listed**, so the dropdown
+always covers the whole checklist: a blank or 0 `Qty` shows as sold out until
+restocked, and every card needs a `Price` or the Default Price. Each segment's
+title shows its range, e.g.
+`2026 Topps Update #US1-US175 You Pick, Complete Your Set!`. Variations have
+no per-card images; the listing's only image is the hero image.
+
+```bash
+shoebox variation-template upload exports/variation_templates/2026_topps_update_base.xlsx --dry-run
+shoebox variation-template upload exports/variation_templates/2026_topps_update_base.xlsx --publish
+```
+
+| Flag | Effect |
+|---|---|
+| `--dry-run` | Validate and build payloads; no eBay calls and no image upload |
+| `--publish` | Publish after creation (otherwise created unpublished) |
+| `--schedule` | Set `listingStartDate` ≈ now + 19 days |
+| `--default-image-path PATH` | Hero image; defaults to `<set_images_dir>/<set_name>.png` when that file exists |
+
+Nothing is sent to eBay unless the whole template is valid. Otherwise the
+command lists every problem by row (missing price, non-numeric quantity,
+duplicate display name, a segment over 250 cards, a bad Listing setting) and
+exits. Re-running an upload updates the same listings: SKUs come from
+Subset ID + card number and group keys from Subset ID + segment.
+
 ## Lifecycle
 
 ### `relist-listings`

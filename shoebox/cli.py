@@ -117,6 +117,39 @@ def main() -> None:
     p_var.add_argument("--images-dir", help="Directory of per-card scans (optional)")
     p_var.add_argument("--default-image-path", help="Hero image for the listing (optional)")
 
+    # Checklist -> fill-in template -> segmented variation listings
+    p_vt = sub.add_parser(
+        "variation-template",
+        help="Build a fill-in workbook for a set's You Pick listings, then upload it",
+    )
+    vt_sub = p_vt.add_subparsers(dest="vt_cmd", required=True)
+    p_vt_build = vt_sub.add_parser(
+        "build",
+        help="Write a template with every card in a subset (e.g. US1-US350), split into segments",
+    )
+    p_vt_build.add_argument(
+        "set_name", help='Set name as in the checklist, e.g. "2026 Topps Update"'
+    )
+    p_vt_build.add_argument("--subset", default="Base", help="Subset name (default Base)")
+    p_vt_build.add_argument(
+        "--segments",
+        type=int,
+        default=2,
+        help="Listings to split the subset into (default 2; raised to keep each <= 250 cards)",
+    )
+    p_vt_build.add_argument(
+        "--out", help="Workbook to write (default exports/variation_templates/<set>_<subset>.xlsx)"
+    )
+    p_vt_build.add_argument("--force", action="store_true", help="Overwrite an existing template")
+    p_vt_up = vt_sub.add_parser(
+        "upload", help="Create one variation listing per segment of a filled-in template"
+    )
+    p_vt_up.add_argument("template", help="Filled-in template workbook (.xlsx)")
+    p_vt_up.add_argument("--dry-run", action="store_true", help="Validate and build payloads only")
+    p_vt_up.add_argument("--publish", action="store_true")
+    p_vt_up.add_argument("--schedule", action="store_true")
+    p_vt_up.add_argument("--default-image-path", help="Hero image for the listings (optional)")
+
     # Relist listings
     p_relist = sub.add_parser(
         "relist-listings", help="Relist aged listings with Slack price confirmation"
@@ -424,6 +457,40 @@ def main() -> None:
             images_dir=Path(args.images_dir) if args.images_dir else None,
             default_image_path=(Path(args.default_image_path) if args.default_image_path else None),
         )
+        return
+
+    if args.cmd == "variation-template":
+        from shoebox.pipelines.variation_template import (
+            build_variation_template,
+            upload_variation_template,
+        )
+        from shoebox.transforms.variation_template import TemplateError
+
+        if args.vt_cmd == "build":
+            try:
+                build_variation_template(
+                    args.set_name,
+                    args.subset,
+                    segments=args.segments,
+                    out=Path(args.out) if args.out else None,
+                    force=args.force,
+                )
+            except (TemplateError, FileExistsError) as e:
+                raise SystemExit(str(e)) from None
+            return
+
+        try:
+            upload_variation_template(
+                Path(args.template),
+                publish=args.publish,
+                dry_run=args.dry_run,
+                schedule=args.schedule,
+                default_image_path=(
+                    Path(args.default_image_path) if args.default_image_path else None
+                ),
+            )
+        except TemplateError as e:
+            raise SystemExit(f"Template has problems; nothing was listed:\n{e}") from None
         return
 
     if args.cmd == "orders-awaiting-shipment":
