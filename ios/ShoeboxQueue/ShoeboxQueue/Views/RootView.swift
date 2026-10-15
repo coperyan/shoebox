@@ -147,6 +147,7 @@ struct RootView: View {
                 }
             }
             .navigationTitle("Shoebox Queue")
+            .keyboardDismissToolbar()
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     EditButton()

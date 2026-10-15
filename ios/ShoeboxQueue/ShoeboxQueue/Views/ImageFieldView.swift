@@ -75,6 +75,7 @@ struct ImageFieldView: View {
             )
             .keyboardType(.numberPad)
             .autocorrectionDisabled()
+            .onSubmit { KeyboardDismissModifier.hideKeyboard() }
             Text(scanCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)

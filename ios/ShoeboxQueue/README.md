@@ -67,7 +67,8 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
   A–Z. Typing in the search field and pressing **Search** selects the best match (an exact match,
   else the first option starting with the text, else the first containing it), so `12` + Search
   picks card 12, not 112.
-- **Images** – either a bare **scan number** typed on a number pad (stored verbatim; the workstation resolves it to
+- **Images** – either a bare **scan number** typed on a number pad (*Done* above the keyboard, or
+  a scroll, closes it; stored verbatim; the workstation resolves it to
   `<scans_dir>/<scan_prefix><number><scan_extension>` exactly as today), or a **photo** from the
   library. Photos are downscaled to 2000 px / JPEG 0.85, saved locally and uploaded to
   `POST /images` immediately when the API is configured; a row whose photo is still pending shows a
