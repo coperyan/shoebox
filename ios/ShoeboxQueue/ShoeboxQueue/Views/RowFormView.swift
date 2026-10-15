@@ -11,7 +11,7 @@ struct RowFormView: View {
         Section {
             SearchablePicker(
                 title: "Set Name",
-                options: queue.setOptions,
+                groups: queue.setGroups,
                 selection: Binding(
                     get: { queue.draft.setName },
                     set: { queue.selectSet($0) }

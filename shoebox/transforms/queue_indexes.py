@@ -31,9 +31,29 @@ def cardno_sort_key(derived: object) -> tuple:
     return (1, float("inf"), s.upper())
 
 
+def subset_sort_key(name: object) -> tuple[int, str]:
+    """Sort key for subset names: ``Base`` first, then the rest alphabetically.
+    Mirrored in the iOS app (``MetadataIndex``); change both together."""
+    s = str(name)
+    return (0 if s.strip().lower() == "base" else 1, s)
+
+
+def set_year_for(set_name: str, g: pd.DataFrame) -> str | None:
+    """The year a set is filed under: the checklist's ``set_year`` (first non-null
+    value in the set), else the leading four digits of the set name."""
+    if "set_year" in g.columns:
+        for value in g["set_year"].tolist():
+            year = json_scalar(value)
+            if year is not None:
+                return str(year)
+    m = re.match(r"\s*(\d{4})\b", set_name)
+    return m.group(1) if m else None
+
+
 def build_indexes(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, object]:
     """
     Precompute lookups so dropdowns are fast and in-memory.
+    Subsets list ``Base`` first, then alphabetically.
     Sort Card # by derived_card_number (numbers first as ints, then text),
     but display/return the actual card_number.
     """
@@ -49,7 +69,9 @@ def build_indexes(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, object]:
     for s, g in cdf.groupby("set_name", dropna=False):
         if pd.isna(s):
             continue
-        subsets_by_set[str(s)] = sorted([x for x in g["subset_name"].dropna().unique().tolist()])
+        subsets_by_set[str(s)] = sorted(
+            [x for x in g["subset_name"].dropna().unique().tolist()], key=subset_sort_key
+        )
 
     # Card numbers: sort by derived_card_number, return/display card_number
     for (s, sub), g in cdf.groupby(["set_name", "subset_name"], dropna=False):
@@ -140,12 +162,20 @@ CARD_FIELDS = (
 def build_metadata_payload(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, Any]:
     """The ``GET /metadata`` body: sets -> subsets -> cards + parallels, JSON-safe.
 
-    Ordering is exactly ``build_indexes``' (sets, subsets and parallels sorted;
-    cards numeric-first by ``derived_card_number``), and the per-card detail is
-    the first checklist row for that card number, matching the UI's
-    ``cg.iloc[0]`` autofill. Clients keep this order; they never re-sort.
+    Ordering is exactly ``build_indexes``' (sets and parallels sorted, subsets
+    ``Base`` first then sorted; cards numeric-first by ``derived_card_number``),
+    and the per-card detail is the first checklist row for that card number,
+    matching the UI's ``cg.iloc[0]`` autofill. Clients keep this order; they
+    never re-sort. Each set carries a ``set_year`` (``set_year_for``) so the app
+    can group the Set picker by year.
     """
     idx = build_indexes(cdf, pdf)
+
+    year_by_set: dict[str, str | None] = {}
+    for s, g in cdf.groupby("set_name", dropna=False):
+        if pd.isna(s):
+            continue
+        year_by_set[str(s)] = set_year_for(str(s), g)
 
     card_detail: dict[tuple[str, str], dict[str, dict[str, Any]]] = {}
     for (s, sub), g in cdf.groupby(["set_name", "subset_name"], dropna=False):
@@ -197,7 +227,9 @@ def build_metadata_payload(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, An
                 if n in parallels_by_name
             ]
             subsets_out.append({"subset_name": subset_name, "cards": cards, "parallels": parallels})
-        sets_out.append({"set_name": set_name, "subsets": subsets_out})
+        sets_out.append(
+            {"set_name": set_name, "set_year": year_by_set.get(set_name), "subsets": subsets_out}
+        )
 
     return {
         "counts": {

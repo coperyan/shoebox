@@ -18,7 +18,16 @@ struct MetadataCounts: Codable, Hashable {
 
 struct MetadataSet: Codable, Hashable {
     var setName: String
+    /// The year the set is filed under (`set_year_for` on the server). Older cached payloads have
+    /// none; `MetadataIndex` then falls back to the cards' `set_year` and the name's leading digits.
+    var setYear: String?
     var subsets: [MetadataSubset]
+
+    init(setName: String, setYear: String? = nil, subsets: [MetadataSubset]) {
+        self.setName = setName
+        self.setYear = setYear
+        self.subsets = subsets
+    }
 }
 
 struct MetadataSubset: Codable, Hashable {
@@ -82,9 +91,20 @@ struct MetadataParallel: Codable, Hashable {
 
 // MARK: - In-memory index (the Swift twin of build_indexes)
 
-/// Fast lookups for the pickers. Everything stays in **server order**: sets, subsets and parallels
-/// arrive sorted, and cards arrive in `build_indexes` order (numeric derived numbers first, then
-/// text, blanks last). The client never re-sorts; `CardSort` exists only as a parity check.
+/// The Set picker's sections: one per year, newest first, sets in server order within a year.
+struct SetYearGroup: Hashable {
+    /// Section title for sets with no year at all.
+    static let unknownYear = "Other"
+
+    let year: String
+    let setNames: [String]
+}
+
+/// Fast lookups for the pickers. Everything stays in **server order**: sets and parallels arrive
+/// sorted, subsets arrive `Base` first then sorted, and cards arrive in `build_indexes` order
+/// (numeric derived numbers first, then text, blanks last). The client never re-sorts, with one
+/// exception mirrored from `subset_sort_key`: a `Base` subset is hoisted to the front so a cached
+/// payload from before that rule reads the same. `CardSort` exists only as a parity check.
 struct MetadataIndex {
     struct Key: Hashable {
         let set: String
@@ -92,19 +112,23 @@ struct MetadataIndex {
     }
 
     let setNames: [String]
+    /// `setNames` segmented by year for the Set picker (`SetYearGroup`), newest year first.
+    let setGroups: [SetYearGroup]
     private let subsetsBySet: [String: [String]]
     private let cardsByKey: [Key: [MetadataCard]]
     private let parallelsByKey: [Key: [MetadataParallel]]
 
-    static let empty = MetadataIndex(setNames: [], subsetsBySet: [:], cardsByKey: [:], parallelsByKey: [:])
+    static let empty = MetadataIndex(setNames: [], setGroups: [], subsetsBySet: [:], cardsByKey: [:], parallelsByKey: [:])
 
     private init(
         setNames: [String],
+        setGroups: [SetYearGroup],
         subsetsBySet: [String: [String]],
         cardsByKey: [Key: [MetadataCard]],
         parallelsByKey: [Key: [MetadataParallel]]
     ) {
         self.setNames = setNames
+        self.setGroups = setGroups
         self.subsetsBySet = subsetsBySet
         self.cardsByKey = cardsByKey
         self.parallelsByKey = parallelsByKey
@@ -113,6 +137,7 @@ struct MetadataIndex {
     init(metadata: Metadata) {
         var setNames: [String] = []
         var seenSets = Set<String>()
+        var yearBySet: [String: String?] = [:]
         var subsetsBySet: [String: [String]] = [:]
         var cardsByKey: [Key: [MetadataCard]] = [:]
         var parallelsByKey: [Key: [MetadataParallel]] = [:]
@@ -124,6 +149,7 @@ struct MetadataIndex {
             }
             seenSets.insert(setName)
             setNames.append(setName)
+            yearBySet[setName] = Self.year(of: set)
 
             var subsetNames: [String] = []
             var seenSubsets = Set<String>()
@@ -160,14 +186,94 @@ struct MetadataIndex {
                 }
                 parallelsByKey[key] = parallels
             }
-            subsetsBySet[setName] = subsetNames
+            subsetsBySet[setName] = Self.baseFirst(subsetNames)
         }
 
-        self.init(setNames: setNames, subsetsBySet: subsetsBySet, cardsByKey: cardsByKey, parallelsByKey: parallelsByKey)
+        self.init(
+            setNames: setNames,
+            setGroups: Self.groupByYear(setNames, year: { yearBySet[$0] ?? nil }),
+            subsetsBySet: subsetsBySet,
+            cardsByKey: cardsByKey,
+            parallelsByKey: parallelsByKey
+        )
     }
 
     var isEmpty: Bool {
         setNames.isEmpty
+    }
+
+    // MARK: Ordering rules shared with the server
+
+    /// `subset_sort_key` (shoebox/transforms/queue_indexes.py): `Base` (any case) first, the rest
+    /// untouched. Stable, so a payload that already honours the rule is a fixed point.
+    static func baseFirst(_ subsets: [String]) -> [String] {
+        let isBase: (String) -> Bool = { $0.trimmingCharacters(in: .whitespaces).lowercased() == "base" }
+        return subsets.filter(isBase) + subsets.filter { !isBase($0) }
+    }
+
+    /// `set_year_for`: the server's `set_year`, else the first card year in the set, else the
+    /// four digits the name starts with.
+    static func year(of set: MetadataSet) -> String? {
+        if let year = set.setYear?.trimmingCharacters(in: .whitespaces), !year.isEmpty {
+            return year
+        }
+        for subset in set.subsets {
+            for card in subset.cards {
+                if let year = card.setYear?.trimmingCharacters(in: .whitespaces), !year.isEmpty {
+                    return year
+                }
+            }
+        }
+        return yearPrefix(of: set.setName)
+    }
+
+    /// `re.match(r"\s*(\d{4})\b", name)`: exactly four leading digits followed by a non-word
+    /// character or the end.
+    static func yearPrefix(of name: String) -> String? {
+        let trimmed = name.drop { $0.isWhitespace }
+        let digits = trimmed.prefix { $0.isASCII && $0.isNumber }
+        guard digits.count == 4 else {
+            return nil
+        }
+        let rest = trimmed.dropFirst(4)
+        if let next = rest.first, next.isLetter || next.isNumber || next == "_" {
+            return nil
+        }
+        return String(digits)
+    }
+
+    /// Sections for the Set picker: years descending (numeric years first, then any other text,
+    /// then `SetYearGroup.unknownYear`), set names in their incoming order within each.
+    static func groupByYear(_ setNames: [String], year: (String) -> String?) -> [SetYearGroup] {
+        var order: [String] = []
+        var members: [String: [String]] = [:]
+        for name in setNames {
+            let key = year(name) ?? SetYearGroup.unknownYear
+            if members[key] == nil {
+                order.append(key)
+                members[key] = []
+            }
+            members[key, default: []].append(name)
+        }
+        let sortedYears = order.sorted { lhs, rhs in
+            switch (Int(lhs), Int(rhs)) {
+            case (let l?, let r?):
+                return l > r
+            case (_?, nil):
+                return true
+            case (nil, _?):
+                return false
+            case (nil, nil):
+                if lhs == SetYearGroup.unknownYear {
+                    return false
+                }
+                if rhs == SetYearGroup.unknownYear {
+                    return true
+                }
+                return lhs > rhs
+            }
+        }
+        return sortedYears.map { SetYearGroup(year: $0, setNames: members[$0] ?? []) }
     }
 
     func subsets(for set: String) -> [String] {

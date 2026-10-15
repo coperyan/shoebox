@@ -124,6 +124,7 @@ class SubsetMeta(BaseModel):
 
 class SetMeta(BaseModel):
     set_name: str
+    set_year: str | None = None
     subsets: list[SubsetMeta]
 
 

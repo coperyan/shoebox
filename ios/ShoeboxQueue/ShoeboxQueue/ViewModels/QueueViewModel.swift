@@ -79,6 +79,11 @@ final class QueueViewModel {
         metadata.index.setNames
     }
 
+    /// The Set picker's sections: one per year, newest first.
+    var setGroups: [PickerGroup] {
+        metadata.index.setGroups.map { PickerGroup(title: $0.year, options: $0.setNames) }
+    }
+
     var subsetOptions: [String] {
         guard !draft.setName.isEmpty else {
             return []
@@ -160,6 +165,15 @@ final class QueueViewModel {
             row.parallelNote = parallel.otherNote
         } else {
             row.clearParallelAutofill()
+        }
+    }
+
+    /// Copies of `rows` with the autofill applied (for previews that must not touch the queue).
+    func autofilled(_ rows: [QueueRow]) -> [QueueRow] {
+        rows.map { row in
+            var copy = row
+            applyAutofill(to: &copy)
+            return copy
         }
     }
 
@@ -265,8 +279,15 @@ final class QueueViewModel {
     }
 
     func clearQueue() {
-        rows = []
+        replaceQueue(with: [])
+    }
+
+    /// Replace the working queue (a named draft or the server copy was loaded): full form reset,
+    /// autofill re-run against the current metadata, saved right away.
+    func replaceQueue(with newRows: [QueueRow]) {
+        rows = newRows
         resetDraftForm(keepMetadata: false)
+        refreshAutofill()
         saveNow()
     }
 
@@ -450,15 +471,17 @@ final class QueueViewModel {
         store.listDrafts()
     }
 
+    /// A named draft in full, for the preview shown before it replaces the queue.
+    func namedDraft(id: UUID) -> NamedDraft? {
+        store.loadDraft(id: id)
+    }
+
     /// Replace the working queue with a named draft.
     func openDraft(id: UUID) throws {
         guard let named = store.loadDraft(id: id) else {
             throw QueueError.draftNotFound
         }
-        rows = named.rows
-        resetDraftForm(keepMetadata: false)
-        refreshAutofill()
-        saveNow()
+        replaceQueue(with: named.rows)
     }
 
     func deleteDraft(id: UUID) {
@@ -472,15 +495,23 @@ final class QueueViewModel {
         try await api.saveDraft(rows.map { $0.toInput() })
     }
 
-    /// `GET /queue`: like the Streamlit "Load last saved JSONL", only the 8 user fields come back;
-    /// autofill is re-run against the current metadata.
+    /// `GET /queue` without touching the working queue; the preview sheet shows the result and
+    /// `replaceQueue(with: rows(from:))` applies it once confirmed.
+    func fetchLastSubmitted(api: any QueueAPI) async throws -> QueueGetResponse {
+        try await api.fetchLastQueue()
+    }
+
+    /// The server's rows as queue rows with the autofill applied (only the 8 user fields travel).
+    func rows(from response: QueueGetResponse) -> [QueueRow] {
+        autofilled(response.rows.map { QueueRow.fromInput($0) })
+    }
+
+    /// `GET /queue` and replace: like the Streamlit "Load last saved JSONL", only the 8 user fields
+    /// come back; autofill is re-run against the current metadata.
     @discardableResult
     func loadLastSubmitted(api: any QueueAPI) async throws -> QueueGetResponse {
-        let response = try await api.fetchLastQueue()
-        rows = response.rows.map { QueueRow.fromInput($0) }
-        resetDraftForm(keepMetadata: false)
-        refreshAutofill()
-        saveNow()
+        let response = try await fetchLastSubmitted(api: api)
+        replaceQueue(with: rows(from: response))
         return response
     }
 }

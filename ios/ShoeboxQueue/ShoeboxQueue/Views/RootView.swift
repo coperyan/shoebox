@@ -4,7 +4,6 @@ import SwiftUI
 struct RootView: View {
     enum PendingAction: Hashable, Identifiable {
         case clearQueue
-        case loadLastSubmitted
 
         var id: Self { self }
 
@@ -12,8 +11,6 @@ struct RootView: View {
             switch self {
             case .clearQueue:
                 return "Clear the queue?"
-            case .loadLastSubmitted:
-                return "Replace the current queue?"
             }
         }
 
@@ -21,8 +18,6 @@ struct RootView: View {
             switch self {
             case .clearQueue:
                 return "Removes every row on this phone. Named drafts and the server copy are not touched."
-            case .loadLastSubmitted:
-                return "Loads the rows last saved on the server (queue or draft) and replaces what is here."
             }
         }
 
@@ -30,9 +25,20 @@ struct RootView: View {
             switch self {
             case .clearQueue:
                 return "Clear queue"
-            case .loadLastSubmitted:
-                return "Replace"
             }
+        }
+    }
+
+    /// `GET /queue` fetched for the preview sheet; the queue is only replaced on confirm.
+    struct ServerQueue: Identifiable {
+        let id = UUID()
+        let response: QueueGetResponse
+        let rows: [QueueRow]
+
+        var description: String {
+            let kind = response.kind ?? "queue"
+            let when = response.submittedAt ?? "an unknown time"
+            return "Last \(kind) saved on the server at \(when)."
         }
     }
 
@@ -46,6 +52,7 @@ struct RootView: View {
     @State private var showSaveAsDraft = false
     @State private var draftName = ""
     @State private var pendingAction: PendingAction?
+    @State private var serverQueue: ServerQueue?
     @State private var isBusy = false
 
     var body: some View {
@@ -151,6 +158,16 @@ struct RootView: View {
             .sheet(isPresented: $showDrafts) {
                 DraftsView()
             }
+            .sheet(item: $serverQueue) { fetched in
+                QueuePreviewSheet(
+                    title: "Last submitted queue",
+                    subtitle: fetched.description,
+                    rows: fetched.rows,
+                    currentCount: queue.rows.count
+                ) {
+                    applyServerQueue(fetched)
+                }
+            }
             .alert("Save as draft", isPresented: $showSaveAsDraft) {
                 TextField("Draft name", text: $draftName)
                 Button("Save") { saveAsDraft() }
@@ -231,9 +248,9 @@ struct RootView: View {
             .disabled(!settings.isConfigured || queue.rows.isEmpty || isBusy)
 
             Button {
-                pendingAction = .loadLastSubmitted
+                Task { await fetchLastSubmitted() }
             } label: {
-                Label("Load last submitted queue", systemImage: "icloud.and.arrow.down")
+                Label("Load last submitted queue…", systemImage: "icloud.and.arrow.down")
             }
             .disabled(!settings.isConfigured || isBusy)
 
@@ -267,8 +284,6 @@ struct RootView: View {
         case .clearQueue:
             queue.clearQueue()
             preview.reset()
-        case .loadLastSubmitted:
-            Task { await loadLastSubmitted() }
         }
     }
 
@@ -296,7 +311,8 @@ struct RootView: View {
         }
     }
 
-    private func loadLastSubmitted() async {
+    /// Fetch the server copy and show its first rows; nothing changes until the sheet is confirmed.
+    private func fetchLastSubmitted() async {
         guard let api = settings.makeClient() else {
             queue.errorMessage = APIError.notConfigured.localizedDescription
             return
@@ -304,17 +320,22 @@ struct RootView: View {
         isBusy = true
         defer { isBusy = false }
         do {
-            let response = try await queue.loadLastSubmitted(api: api)
-            preview.reset()
+            let response = try await queue.fetchLastSubmitted(api: api)
             if response.rows.isEmpty {
                 queue.infoMessage = "The server has no saved queue or draft yet."
             } else {
-                let kind = response.kind ?? "queue"
-                let when = response.submittedAt ?? "an unknown time"
-                queue.infoMessage = "Loaded \(response.rows.count) rows (\(kind) saved \(when))."
+                serverQueue = ServerQueue(response: response, rows: queue.rows(from: response))
             }
         } catch {
             queue.errorMessage = error.localizedDescription
         }
+    }
+
+    private func applyServerQueue(_ fetched: ServerQueue) {
+        queue.replaceQueue(with: fetched.rows)
+        preview.reset()
+        let kind = fetched.response.kind ?? "queue"
+        let when = fetched.response.submittedAt ?? "an unknown time"
+        queue.infoMessage = "Loaded \(fetched.rows.count) rows (\(kind) saved \(when))."
     }
 }
