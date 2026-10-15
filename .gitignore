@@ -15,6 +15,9 @@ configs/onedrive_token_cache.json*
 tools/checklist_parallel_metadata.xlsm
 tools/inputs.xlsm
 
+
+temp/*
+
 # --- Python build/artifacts ---
 *.egg-info/
 __pycache__/
