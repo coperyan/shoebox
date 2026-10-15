@@ -629,3 +629,14 @@ def test_listing_routes_need_key(run_env):
     assert bare.post("/queue/listings", json={}).status_code == 401
     assert bare.get("/queue/listings").status_code == 401
     assert bare.get("/queue/listings/x").status_code == 401
+
+
+def test_api_key_whitespace_is_ignored(monkeypatch):
+    # The secret stored with a trailing newline (openssl | gcloud --data-file=-) must still match.
+    monkeypatch.setenv("SHOEBOX_API_KEY", "from-env\n")
+    app = create_app(settings=_settings(), metadata_loader=_frames, gcs=FakeGCS())
+    c = TestClient(app)
+    assert c.get("/queue", headers={"X-API-Key": "from-env"}).status_code == 200
+    monkeypatch.setenv("SHOEBOX_API_KEY", "  \n")
+    with pytest.raises(RuntimeError, match="SHOEBOX_API_KEY"):
+        create_app(settings=_settings(), metadata_loader=_frames, gcs=FakeGCS())

@@ -145,6 +145,11 @@ def create_app(
     Cloud Run job client and the run-record store built on that GCS client."""
     settings = settings or get_settings()
     api_key = api_key if api_key is not None else os.environ.get(API_KEY_ENV, "")
+    # A secret created with `openssl rand -hex 32 | gcloud secrets create --data-file=-`
+    # carries a trailing newline, and Cloud Run hands it to the env var verbatim
+    # while a shell's $(...) strips it from the client side. Keys never contain
+    # whitespace, so drop it here rather than make every operator remember `tr -d`.
+    api_key = api_key.strip()
     if not api_key:
         raise RuntimeError(f"{API_KEY_ENV} is not set; the API refuses to start without a key")
     if not settings.paths.queue_uri:

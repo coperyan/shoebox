@@ -161,7 +161,7 @@ One-time setup, after the [one-time setup](#one-time-setup) above:
 
 ```bash
 # 1. The API key. Treat it like a password; rotate by adding a version.
-openssl rand -hex 32 | gcloud secrets create shoebox-api-key --replication-policy=automatic --data-file=-
+openssl rand -hex 32 | tr -d '\n' | gcloud secrets create shoebox-api-key --replication-policy=automatic --data-file=-
 gcloud secrets add-iam-policy-binding shoebox-api-key \
   --member serviceAccount:$RUNNER --role roles/secretmanager.secretAccessor
 
