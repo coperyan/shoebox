@@ -1,0 +1,156 @@
+{
+  "version": "abc123def4567890",
+  "generated_at": "2026-10-15T12:00:00+00:00",
+  "ttl_s": 3600,
+  "counts": {
+    "checklist_rows": 8,
+    "parallel_rows": 3,
+    "sets": 2
+  },
+  "sets": [
+    {
+      "set_name": "2023 Topps Chrome",
+      "subsets": [
+        {
+          "subset_name": "Base",
+          "cards": [
+            {
+              "card_number": "1",
+              "derived_card_number": "1",
+              "card_id": "2023 Topps Chrome|Base|1",
+              "subset_id": "2023 Topps Chrome|Base",
+              "set_year": "2023",
+              "subset_type": "Base",
+              "player": "Player One",
+              "team": "Team A",
+              "note": null,
+              "note_check": null
+            },
+            {
+              "card_number": "2",
+              "derived_card_number": "2",
+              "card_id": "2023 Topps Chrome|Base|2",
+              "subset_id": "2023 Topps Chrome|Base",
+              "set_year": "2023",
+              "subset_type": "Base",
+              "player": "Player Two",
+              "team": "Team B",
+              "note": "RC",
+              "note_check": "ok"
+            },
+            {
+              "card_number": "10",
+              "derived_card_number": "10",
+              "card_id": "2023 Topps Chrome|Base|10",
+              "subset_id": "2023 Topps Chrome|Base",
+              "set_year": "2023",
+              "subset_type": "Base",
+              "player": "Player Ten",
+              "team": "Team C",
+              "note": null,
+              "note_check": null
+            },
+            {
+              "card_number": "1A",
+              "derived_card_number": "1A",
+              "card_id": "2023 Topps Chrome|Base|1A",
+              "subset_id": "2023 Topps Chrome|Base",
+              "set_year": "2023",
+              "subset_type": "Base",
+              "player": "Player One Variation",
+              "team": "Team A",
+              "note": "SP",
+              "note_check": null
+            },
+            {
+              "card_number": "A",
+              "derived_card_number": "A",
+              "card_id": "2023 Topps Chrome|Base|A",
+              "subset_id": "2023 Topps Chrome|Base",
+              "set_year": "2023",
+              "subset_type": "Base",
+              "player": "Player A",
+              "team": null,
+              "note": null,
+              "note_check": null
+            },
+            {
+              "card_number": "NNO",
+              "derived_card_number": null,
+              "card_id": "2023 Topps Chrome|Base|NNO",
+              "subset_id": "2023 Topps Chrome|Base",
+              "set_year": "2023",
+              "subset_type": "Base",
+              "player": "Checklist",
+              "team": null,
+              "note": null,
+              "note_check": null
+            }
+          ],
+          "parallels": [
+            {
+              "parallel_variety": "Gold Refractor",
+              "parallel_id": "2023 Topps Chrome|Base|Gold Refractor",
+              "print_run": 50,
+              "other_note": "/50"
+            },
+            {
+              "parallel_variety": "Refractor",
+              "parallel_id": "2023 Topps Chrome|Base|Refractor",
+              "print_run": null,
+              "other_note": null
+            }
+          ]
+        },
+        {
+          "subset_name": "Rookie Autographs",
+          "cards": [
+            {
+              "card_number": "RA-1",
+              "derived_card_number": "1",
+              "card_id": "2023 Topps Chrome|Rookie Autographs|RA-1",
+              "subset_id": "2023 Topps Chrome|Rookie Autographs",
+              "set_year": "2023",
+              "subset_type": "Insert",
+              "player": "Rookie One",
+              "team": "Team A",
+              "note": "Auto",
+              "note_check": null
+            }
+          ],
+          "parallels": []
+        }
+      ]
+    },
+    {
+      "set_name": "2024 Bowman",
+      "subsets": [
+        {
+          "subset_name": "Prospects",
+          "cards": [
+            {
+              "card_number": "BP-5",
+              "derived_card_number": "5",
+              "card_id": "2024 Bowman|Prospects|BP-5",
+              "subset_id": "2024 Bowman|Prospects",
+              "set_year": "2024",
+              "subset_type": "Insert",
+              "player": "Prospect Five",
+              "team": "Team D",
+              "note": null,
+              "note_check": null
+            }
+          ],
+          "parallels": [
+            {
+              "parallel_variety": "Blue",
+              "parallel_id": "2024 Bowman|Prospects|Blue",
+              "print_run": 150,
+              "other_note": null
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

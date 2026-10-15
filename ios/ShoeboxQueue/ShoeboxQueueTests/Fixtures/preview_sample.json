@@ -1,0 +1,49 @@
+{
+  "rows": [
+    {
+      "index": 0,
+      "ok": true,
+      "enriched": {
+        "card_id": "2023 Topps Chrome|Base|Gold Refractor|1",
+        "checklist_id": "2023 Topps Chrome|Base|1",
+        "subset_id": "2023 Topps Chrome|Base",
+        "parallel_id": "2023 Topps Chrome|Base|Gold Refractor",
+        "set_year": "2023",
+        "set_name": "2023 Topps Chrome",
+        "subset_name": "Base",
+        "subset_type": "Base",
+        "parallel_variety": "Gold Refractor",
+        "derived_card_number": "1",
+        "card_number": "1",
+        "player": "Player One",
+        "team": "Team A",
+        "note": null,
+        "note_check": null,
+        "print_run": 50,
+        "parallel_note": "/50",
+        "quantity": 2,
+        "price": 12.5,
+        "image_front": "123",
+        "image_back": "gs://my-image-bucket/uploads/2026-10/0f1e2d3c4b5a69788796a5b4c3d2e1f0.jpg"
+      },
+      "error": null,
+      "warnings": []
+    },
+    {
+      "index": 1,
+      "ok": false,
+      "enriched": null,
+      "error": "No checklist match",
+      "warnings": [
+        "image_front missing",
+        "image_back missing"
+      ]
+    }
+  ],
+  "counts": {
+    "rows": 2,
+    "ok": 1,
+    "errors": 1
+  },
+  "metadata_version": "abc123def4567890"
+}
