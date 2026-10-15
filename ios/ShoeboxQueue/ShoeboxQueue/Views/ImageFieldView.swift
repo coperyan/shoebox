@@ -73,8 +73,7 @@ struct ImageFieldView: View {
                     set: { queue.setScanNumber($0, side: side) }
                 )
             )
-            .keyboardType(.numbersAndPunctuation)
-            .textInputAutocapitalization(.characters)
+            .keyboardType(.numberPad)
             .autocorrectionDisabled()
             Text(scanCaption)
                 .font(.caption)

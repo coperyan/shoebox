@@ -94,6 +94,10 @@ struct ImageRef: Codable, Hashable {
 /// One queue row as the phone sees it: the 8 user-entered fields plus display-only autofill
 /// fields copied from the metadata (the server recomputes them on preview / submit).
 struct QueueRow: Codable, Hashable, Identifiable {
+    /// Every new row starts at this price (the usual auction start); it is never carried over
+    /// from the previous row.
+    static let defaultPrice = 0.99
+
     var id: UUID = UUID()
 
     // --- the 8 user fields (QueueRowIn) ---
@@ -102,7 +106,7 @@ struct QueueRow: Codable, Hashable, Identifiable {
     var parallelVariety: String = ""
     var cardNumber: String = ""
     var quantity: Int = 1
-    var price: Double = 0
+    var price: Double = QueueRow.defaultPrice
     var imageFront: ImageRef = .empty
     var imageBack: ImageRef = .empty
 
