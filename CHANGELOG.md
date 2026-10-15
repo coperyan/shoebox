@@ -12,7 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **iOS form.** *Clear* and *Save* sit in the Queue tab's top bar (*Save* reads
   *Update* while editing a row; *Edit* for reordering moved next to the queue
   heading); the app has an icon; the scan-number field uses the number pad; a
-  *Done* button above the keyboard (and a scroll) dismisses it; a new row's
+  *Done* button above the keyboard (and a scroll, or Return on the Settings
+  fields) dismisses it; a new row's
   price starts at 0.99 and is no longer carried over from the previous row.
 
 ### Added
