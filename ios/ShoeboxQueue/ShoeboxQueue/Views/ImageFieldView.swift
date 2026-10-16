@@ -2,21 +2,19 @@ import PhotosUI
 import SwiftUI
 import UIKit
 
-/// One image slot of the form: a scan number typed like on the workstation, or a photo from the
-/// library that is uploaded through the API.
+/// One image slot of the form on a single row: a scan number typed like on the workstation, with
+/// a small photo button beside it that picks from the library instead (uploaded through the API).
+/// An attached photo replaces the text field with its thumbnail and upload status.
 @MainActor
 struct ImageFieldView: View {
-    enum Mode: String, CaseIterable, Hashable {
-        case scan = "Scan #"
-        case photo = "Photo"
-    }
-
     let side: ImageSide
+    let focus: FocusState<RowFormView.Field?>.Binding
 
     @Environment(QueueViewModel.self) private var queue
     @Environment(ImageUploader.self) private var uploader
 
-    @State private var mode: Mode = .scan
+    /// Local text so keystrokes do not touch the draft (see `QueueViewModel.stageScanNumber`).
+    @State private var text = ""
     @State private var pickerItem: PhotosPickerItem?
     @State private var thumbnail: UIImage?
 
@@ -24,155 +22,129 @@ struct ImageFieldView: View {
         queue.imageRef(for: side)
     }
 
+    private var field: RowFormView.Field {
+        .image(side)
+    }
+
+    private var isBlank: Bool {
+        ref.kind == .photo ? false : text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Image \(side.title)")
-                    .font(.headline)
-                Spacer()
-                if !ref.isBlank {
-                    Button("Remove", role: .destructive) {
-                        queue.removeImage(side: side)
-                        pickerItem = nil
-                        thumbnail = nil
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text(side.title)
+                    .frame(width: 48, alignment: .leading)
+                if ref.kind == .photo {
+                    photoSummary
+                    Spacer(minLength: 0)
+                } else {
+                    TextField("Scan #", text: $text)
+                        .keyboardType(.numberPad)
+                        .autocorrectionDisabled()
+                        .focused(focus, equals: field)
+                }
+                if !isBlank {
+                    Button {
+                        remove()
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
                     }
                     .buttonStyle(.borderless)
-                    .font(.callout)
+                    .accessibilityLabel("Remove \(side.title.lowercased()) image")
                 }
-            }
-            Picker("Source", selection: $mode) {
-                ForEach(Mode.allCases, id: \.self) { mode in
-                    Text(mode.rawValue).tag(mode)
+                PhotosPicker(selection: $pickerItem, matching: .images) {
+                    Image(systemName: "photo.on.rectangle")
+                        .imageScale(.large)
                 }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(ref.kind == .photo ? "Replace \(side.title.lowercased()) photo" : "Choose \(side.title.lowercased()) photo")
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-
-            switch mode {
-            case .scan:
-                scanField
-            case .photo:
-                photoField
+            uploadFailure
+        }
+        .onAppear { reloadText() }
+        .onChange(of: text) { queue.stageScanNumber(text, side: side) }
+        .onChange(of: ref) { reloadText() }
+        .onChange(of: queue.draft.id) { reloadText() }
+        .onChange(of: focus.wrappedValue == field) { _, isFocused in
+            if !isFocused {
+                queue.commitStagedScans()
             }
         }
-        .padding(.vertical, 4)
-        .onAppear { syncMode() }
-        .onChange(of: ref.kind) { syncMode() }
         .onChange(of: pickerItem) { handlePickerChange() }
         .task(id: ref.localFileName) { await loadThumbnail() }
     }
 
-    // MARK: Scan number
-
-    private var scanField: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            TextField(
-                "Scan number (e.g. 123)",
-                text: Binding(
-                    get: { ref.kind == .scan ? ref.scanNumber : "" },
-                    set: { queue.setScanNumber($0, side: side) }
-                )
-            )
-            .keyboardType(.numberPad)
-            .autocorrectionDisabled()
-            .onSubmit { KeyboardDismissModifier.hideKeyboard() }
-            Text(scanCaption)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private var scanCaption: String {
-        let number = ref.kind == .scan ? ref.scanNumber.trimmingCharacters(in: .whitespacesAndNewlines) : ""
-        if number.isEmpty {
-            return "Sent verbatim; the workstation resolves it under scans/ with its scan_prefix / padding / extension, e.g. scans/SCAN_0123.jpg."
-        }
-        return "-> scans/\(Self.exampleFileName(for: number)) on the workstation (prefix and padding come from app.yaml)."
-    }
-
-    /// Illustrative only: mirrors `handle_image_path` with the default `SCAN_` / 4 digits / `.jpg`.
-    static func exampleFileName(for number: String) -> String {
-        let stem = number.split(separator: ".", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? number
-        let padded = stem.count < 4 ? String(repeating: "0", count: 4 - stem.count) + stem : stem
-        return "SCAN_\(padded).jpg"
-    }
-
     // MARK: Photo
 
-    private var photoField: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if let thumbnail {
-                Image(uiImage: thumbnail)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxHeight: 160)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
-            } else if ref.isUploaded {
-                Label("Uploaded photo (no local copy)", systemImage: "photo")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+    private var photoSummary: some View {
+        HStack(spacing: 8) {
+            Group {
+                if let thumbnail {
+                    Image(uiImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo")
+                        .foregroundStyle(.secondary)
+                }
             }
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label(ref.kind == .photo ? "Replace photo" : "Choose photo", systemImage: "photo.on.rectangle")
-            }
-            .buttonStyle(.borderless)
+            .frame(width: 36, height: 36)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             uploadStatus
         }
     }
 
     @ViewBuilder
     private var uploadStatus: some View {
-        if ref.kind == .photo {
-            let state = ref.localFileName.map { uploader.state(for: $0) } ?? UploadState.idle
-            if case .uploading(let fraction) = state {
-                ProgressView(value: fraction) {
-                    Text("Uploading…")
-                        .font(.caption)
+        let state = ref.localFileName.map { uploader.state(for: $0) } ?? UploadState.idle
+        if case .uploading(let fraction) = state {
+            ProgressView(value: fraction)
+                .frame(width: 60)
+                .accessibilityLabel("Uploading")
+        } else if ref.isUploaded {
+            Label("Uploaded", systemImage: "checkmark.circle")
+                .font(.caption)
+                .foregroundStyle(.green)
+        } else {
+            Label("Needs upload", systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(.orange)
+            if let name = ref.localFileName {
+                Button("Retry") {
+                    queue.retryUpload(fileName: name, side: side)
                 }
-            } else if ref.isUploaded {
-                Label("Uploaded", systemImage: "checkmark.circle")
-                    .font(.caption)
-                    .foregroundStyle(.green)
-                Text(ref.remoteUri ?? "")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-            } else {
-                HStack {
-                    Label("Needs upload", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                    Spacer()
-                    if let name = ref.localFileName {
-                        Button("Retry") {
-                            queue.retryUpload(fileName: name, side: side)
-                        }
-                        .buttonStyle(.borderless)
-                        .font(.callout)
-                    }
-                }
-                if case .failed(let message) = state {
-                    Text(message)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                }
+                .buttonStyle(.borderless)
+                .font(.caption)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var uploadFailure: some View {
+        if ref.kind == .photo, let name = ref.localFileName, case .failed(let message) = uploader.state(for: name) {
+            Text(message)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
         }
     }
 
     // MARK: Helpers
 
-    private func syncMode() {
-        switch ref.kind {
-        case .scan:
-            mode = .scan
-        case .photo:
-            mode = .photo
-        case .none:
-            break
+    private func reloadText() {
+        let current = queue.scanText(for: side)
+        if text != current {
+            text = current
         }
+    }
+
+    private func remove() {
+        queue.removeImage(side: side)
+        text = ""
+        pickerItem = nil
+        thumbnail = nil
     }
 
     private func handlePickerChange() {
@@ -190,7 +162,6 @@ struct ImageFieldView: View {
                 queue.errorMessage = error.localizedDescription
             }
             pickerItem = nil
-            mode = .photo
         }
     }
 

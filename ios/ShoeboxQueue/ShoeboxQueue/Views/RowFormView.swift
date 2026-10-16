@@ -1,9 +1,52 @@
 import SwiftUI
 
 /// "Add / Edit Row" — the single form from the Streamlit UI. Place it inside a `List` / `Form`.
-/// Save and Clear live in the navigation bar (`RootView`), not in the form.
+/// Save and Clear live in the navigation bar (`RootView`), not in the form. Order follows the
+/// data-entry flow: card -> images -> quantity & price; picking a card # jumps to the first
+/// image field and the keyboard's Next button walks the rest.
 @MainActor
 struct RowFormView: View {
+    /// The typed fields, in Next order.
+    enum Field: Hashable {
+        case imageFront
+        case imageBack
+        case quantity
+        case price
+
+        static func image(_ side: ImageSide) -> Field {
+            side == .front ? .imageFront : .imageBack
+        }
+
+        var imageSide: ImageSide? {
+            switch self {
+            case .imageFront:
+                return .front
+            case .imageBack:
+                return .back
+            case .quantity, .price:
+                return nil
+            }
+        }
+
+        var next: Field? {
+            switch self {
+            case .imageFront:
+                return .imageBack
+            case .imageBack:
+                return .quantity
+            case .quantity:
+                return .price
+            case .price:
+                return nil
+            }
+        }
+    }
+
+    /// Long enough for the picker's pop animation to finish; focusing earlier is dropped.
+    private static let focusAfterPop: Duration = .milliseconds(550)
+
+    let focus: FocusState<Field?>.Binding
+
     @Environment(QueueViewModel.self) private var queue
 
     var body: some View {
@@ -42,7 +85,9 @@ struct RowFormView: View {
                 selection: Binding(
                     get: { queue.draft.cardNumber },
                     set: { queue.selectCard($0) }
-                )
+                ),
+                subtitle: queue.draft.autofillSummary,
+                onSelect: { _ in focusFirstImage() }
             )
             .disabled(queue.draft.subsetName.isEmpty)
         } header: {
@@ -55,21 +100,9 @@ struct RowFormView: View {
             }
         }
 
-        if queue.draft.hasCardAutofill || queue.draft.hasParallelAutofill {
-            Section("Card details (from metadata)") {
-                if queue.draft.hasCardAutofill {
-                    autofillRow("Player", queue.draft.player)
-                    autofillRow("Team", queue.draft.team)
-                    autofillRow("Year", queue.draft.setYear)
-                    autofillRow("Subset type", queue.draft.subsetType)
-                    autofillRow("Note", queue.draft.note)
-                    autofillRow("Note check", queue.draft.noteCheck)
-                }
-                if queue.draft.hasParallelAutofill {
-                    autofillRow("Print run", queue.draft.printRun.map { String($0) })
-                    autofillRow("Parallel note", queue.draft.parallelNote)
-                }
-            }
+        Section("Images") {
+            ImageFieldView(side: .front, focus: focus)
+            ImageFieldView(side: .back, focus: focus)
         }
 
         Section("Quantity & Price") {
@@ -81,6 +114,7 @@ struct RowFormView: View {
                         .keyboardType(.numberPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 72)
+                        .focused(focus, equals: .quantity)
                 }
             }
             Stepper(value: $queue.draft.price, in: 0 ... 1_000_000, step: 0.5) {
@@ -91,23 +125,22 @@ struct RowFormView: View {
                         .keyboardType(.decimalPad)
                         .multilineTextAlignment(.trailing)
                         .frame(width: 100)
+                        .focused(focus, equals: .price)
                 }
             }
         }
-
-        Section("Images") {
-            ImageFieldView(side: .front)
-            ImageFieldView(side: .back)
-        }
     }
 
-    @ViewBuilder
-    private func autofillRow(_ title: String, _ value: String?) -> some View {
-        if let value, !value.isEmpty {
-            LabeledContent(title) {
-                Text(value)
-                    .multilineTextAlignment(.trailing)
-            }
+    /// After a card # is picked: the first image side that takes a scan number (a side holding a
+    /// photo has no text field).
+    private func focusFirstImage() {
+        let target = ImageSide.allCases.first { queue.imageRef(for: $0).kind != .photo }.map(Field.image)
+        guard let target else {
+            return
+        }
+        Task { @MainActor in
+            try? await Task.sleep(for: Self.focusAfterPop)
+            focus.wrappedValue = target
         }
     }
 }

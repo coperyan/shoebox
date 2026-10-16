@@ -5,12 +5,18 @@ import UIKit
 /// number / decimal pads (which have no return key) or where the return key should close the
 /// keyboard instead of leaving it up.
 struct KeyboardDismissModifier: ViewModifier {
+    /// When set, a "Next" button sits before "Done" (for screens that chain their fields).
+    var next: (() -> Void)? = nil
+
     func body(content: Content) -> some View {
         content
             .scrollDismissesKeyboard(.interactively)
             .toolbar {
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
+                    if let next {
+                        Button("Next", action: next)
+                    }
                     Button("Done") {
                         Self.hideKeyboard()
                     }
@@ -26,7 +32,7 @@ struct KeyboardDismissModifier: ViewModifier {
 }
 
 extension View {
-    func keyboardDismissToolbar() -> some View {
-        modifier(KeyboardDismissModifier())
+    func keyboardDismissToolbar(next: (() -> Void)? = nil) -> some View {
+        modifier(KeyboardDismissModifier(next: next))
     }
 }

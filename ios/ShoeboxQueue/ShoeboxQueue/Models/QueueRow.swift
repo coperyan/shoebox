@@ -155,6 +155,18 @@ struct QueueRow: Codable, Hashable, Identifiable {
         return parts.joined(separator: " · ")
     }
 
+    /// The metadata autofill as one line under Card #: player · team · year · subset type, then
+    /// any note, note check, print run ("/50") and parallel note. Empty when nothing matched.
+    var autofillSummary: String {
+        var parts = [player, team, setYear, subsetType, note, noteCheck]
+        parts.append(printRun.map { "/\($0)" })
+        parts.append(parallelNote)
+        return parts
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
+    }
+
     func image(for side: ImageSide) -> ImageRef {
         switch side {
         case .front:
