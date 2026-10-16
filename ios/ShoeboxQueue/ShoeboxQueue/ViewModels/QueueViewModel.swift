@@ -45,6 +45,8 @@ final class QueueViewModel {
     var rows: [QueueRow] = []
     var draft = QueueRow()
     var editIndex: Int? = nil
+    /// Cards checked together in the Card # list; Save in add mode steps to the next one.
+    private(set) var batch: CardBatch?
 
     private(set) var lastSavedAt: String?
     var errorMessage: String?
@@ -115,6 +117,7 @@ final class QueueViewModel {
         guard value != draft.setName else {
             return
         }
+        batch = nil
         draft.setName = value
         draft.subsetName = ""
         draft.parallelVariety = ""
@@ -126,6 +129,7 @@ final class QueueViewModel {
         guard value != draft.subsetName else {
             return
         }
+        batch = nil
         draft.subsetName = value
         draft.parallelVariety = ""
         draft.cardNumber = ""
@@ -146,6 +150,35 @@ final class QueueViewModel {
         }
         draft.cardNumber = value
         applyAutofill(to: &draft)
+    }
+
+    // MARK: Card batch
+
+    /// Several card #s checked in the Card # list: load the first (in list order) into the draft
+    /// and keep the rest for the following Saves. One card is a plain `selectCard`.
+    func startBatch(_ cards: [String]) {
+        let picked = Set(cards)
+        let ordered = cardOptions.filter { picked.contains($0) }
+        guard let first = ordered.first else {
+            return
+        }
+        batch = ordered.count > 1 ? CardBatch(cards: ordered) : nil
+        selectCard(first)
+    }
+
+    /// Drop the current batch card without queueing it and load the next one.
+    func skipBatchCard() {
+        guard var current = batch else {
+            return
+        }
+        current.position += 1
+        batch = current.current == nil ? nil : current
+        resetDraftForm(keepMetadata: true)
+    }
+
+    /// Stop stepping through the batch; the draft stays as it is.
+    func endBatch() {
+        batch = nil
     }
 
     /// Fill the display-only fields from the metadata index (card -> player/team/year/type/note/
@@ -192,7 +225,8 @@ final class QueueViewModel {
     // MARK: Save / Cancel / Edit / Delete
 
     /// "Save": append or replace, then keep set / subset / parallel for the next card (price goes
-    /// back to `QueueRow.defaultPrice`).
+    /// back to `QueueRow.defaultPrice`). In a batch, adding a row moves on to the next card; an
+    /// edit leaves the batch where it was.
     @discardableResult
     func saveDraft() -> Bool {
         commitStagedScans()
@@ -206,6 +240,10 @@ final class QueueViewModel {
             rows[index] = row
         } else {
             rows.append(row)
+            if var current = batch {
+                current.position += 1
+                batch = current.current == nil ? nil : current
+            }
         }
         resetDraftForm(keepMetadata: true)
         return true
@@ -214,7 +252,7 @@ final class QueueViewModel {
     /// `reset_draft_form(keep_metadata=...)`: a fresh draft, optionally keeping set / subset /
     /// parallel; card # -> "", quantity -> 1, price -> `QueueRow.defaultPrice`, images cleared,
     /// add mode. (The Streamlit form also carries the price over; the app always starts at the
-    /// default.)
+    /// default.) A batch in progress puts its current card # in; a full reset ends the batch.
     func resetDraftForm(keepMetadata: Bool) {
         let previous = draft
         var next = QueueRow()
@@ -222,6 +260,9 @@ final class QueueViewModel {
             next.setName = previous.setName
             next.subsetName = previous.subsetName
             next.parallelVariety = previous.parallelVariety
+            next.cardNumber = batch?.current ?? ""
+        } else {
+            batch = nil
         }
         applyAutofill(to: &next)
         stagedScans = [:]
@@ -355,6 +396,11 @@ final class QueueViewModel {
         }
     }
 
+    /// The first image side that takes a typed scan number (a side holding a photo has no field).
+    var firstScanSide: ImageSide? {
+        ImageSide.allCases.first { imageRef(for: $0).kind != .photo }
+    }
+
     func removeImage(side: ImageSide) {
         stagedScans[side] = nil
         setImageRef(.empty, for: side)
@@ -479,6 +525,7 @@ final class QueueViewModel {
             editIndex = nil
         }
         lastSavedAt = state.savedAt
+        batch = state.batch?.current == nil ? nil : state.batch
         refreshAutofill()
     }
 
@@ -486,7 +533,7 @@ final class QueueViewModel {
         commitStagedScans()
         autosaveTask?.cancel()
         autosaveTask = nil
-        let state = WorkingState(rows: rows, draft: draft, editIndex: editIndex, savedAt: Timestamps.now())
+        let state = WorkingState(rows: rows, draft: draft, editIndex: editIndex, savedAt: Timestamps.now(), batch: batch)
         do {
             try store.saveCurrent(state)
             lastSavedAt = state.savedAt

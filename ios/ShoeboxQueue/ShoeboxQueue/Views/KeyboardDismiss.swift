@@ -7,6 +7,8 @@ import UIKit
 struct KeyboardDismissModifier: ViewModifier {
     /// When set, a "Next" button sits before "Done" (for screens that chain their fields).
     var next: (() -> Void)? = nil
+    /// When set, a button with this title sits before "Done" (e.g. Save while working a batch).
+    var save: (title: String, action: () -> Void)? = nil
 
     func body(content: Content) -> some View {
         content
@@ -16,6 +18,9 @@ struct KeyboardDismissModifier: ViewModifier {
                     Spacer()
                     if let next {
                         Button("Next", action: next)
+                    }
+                    if let save {
+                        Button(save.title, action: save.action)
                     }
                     Button("Done") {
                         Self.hideKeyboard()
@@ -32,7 +37,7 @@ struct KeyboardDismissModifier: ViewModifier {
 }
 
 extension View {
-    func keyboardDismissToolbar(next: (() -> Void)? = nil) -> some View {
-        modifier(KeyboardDismissModifier(next: next))
+    func keyboardDismissToolbar(next: (() -> Void)? = nil, save: (title: String, action: () -> Void)? = nil) -> some View {
+        modifier(KeyboardDismissModifier(next: next, save: save))
     }
 }
