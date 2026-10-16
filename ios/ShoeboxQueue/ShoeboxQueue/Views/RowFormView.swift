@@ -3,7 +3,8 @@ import SwiftUI
 /// "Add / Edit Row" — the single form from the Streamlit UI. Place it inside a `List` / `Form`.
 /// Save and Clear live in the navigation bar (`RootView`), not in the form. Order follows the
 /// data-entry flow: card -> images -> quantity & price; picking a card # jumps to the first
-/// image field and the keyboard's Next button walks the rest.
+/// image field and the keyboard's Next button walks the rest. Checking several card #s starts a
+/// batch: the form steps through them, one Save per card.
 @MainActor
 struct RowFormView: View {
     /// The typed fields, in Next order.
@@ -87,9 +88,17 @@ struct RowFormView: View {
                     set: { queue.selectCard($0) }
                 ),
                 subtitle: queue.draft.autofillSummary,
-                onSelect: { _ in focusFirstImage() }
+                focusesSearch: true,
+                onSelect: { _ in focusFirstImage() },
+                onSelectMany: queue.mode == .add ? { cards in
+                    queue.startBatch(cards)
+                    focusFirstImage()
+                } : nil
             )
             .disabled(queue.draft.subsetName.isEmpty)
+            if queue.mode == .add, let batch = queue.batch {
+                batchRow(batch)
+            }
         } header: {
             Text("Add / Edit Row")
         } footer: {
@@ -131,15 +140,36 @@ struct RowFormView: View {
         }
     }
 
-    /// After a card # is picked: the first image side that takes a scan number (a side holding a
-    /// photo has no text field).
-    private func focusFirstImage() {
-        let target = ImageSide.allCases.first { queue.imageRef(for: $0).kind != .photo }.map(Field.image)
-        guard let target else {
+    private func batchRow(_ batch: CardBatch) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Label(batch.progress, systemImage: "square.stack.3d.up")
+                    .font(.subheadline.weight(.semibold))
+                Text(batch.upcoming.isEmpty ? "Last card — Save finishes the batch." : "Next: " + batch.upcoming.map { "#\($0)" }.joined(separator: ", "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Button("Skip") {
+                queue.skipBatchCard()
+                focusFirstImage(after: .zero)
+            }
+            .buttonStyle(.borderless)
+            Button("End", role: .destructive) {
+                queue.endBatch()
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+
+    /// After a card # is picked: the first image side that takes a scan number.
+    private func focusFirstImage(after delay: Duration? = nil) {
+        guard let target = queue.firstScanSide.map(Field.image) else {
             return
         }
         Task { @MainActor in
-            try? await Task.sleep(for: Self.focusAfterPop)
+            try? await Task.sleep(for: delay ?? Self.focusAfterPop)
             focus.wrappedValue = target
         }
     }

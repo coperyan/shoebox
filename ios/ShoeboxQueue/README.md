@@ -74,7 +74,13 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
   metadata's `set_year`, else the set name's leading digits). Subsets list *Base* first, then
   A–Z. Typing in the search field and pressing **Search** selects the best match (an exact match,
   else the first option starting with the text, else the first containing it), so `12` + Search
-  picks card 12, not 112.
+  picks card 12, not 112. The Card # list opens with the search field already focused.
+- **Card batches** – in add mode, each card # has a checkbox. Check several (once one is checked,
+  tapping a row or pressing **Search** checks instead of picking) and tap *Add N cards*: the form
+  loads the first card (list order) and shows "Card 1 of N" with *Skip* / *End*. Each *Save* (or
+  *Save & Next* on the keyboard bar) queues the card and loads the next one with the front scan
+  field focused. Editing a queued row mid-batch returns to the batch card after *Update*;
+  *Clear* or picking another set / subset ends the batch.
 - **Images** – either a bare **scan number** typed on a number pad (*Done* above the keyboard, or
   a scroll, closes it; stored verbatim; the workstation resolves it to
   `<scans_dir>/<scan_prefix><number><scan_extension>` exactly as today), or a **photo** from the

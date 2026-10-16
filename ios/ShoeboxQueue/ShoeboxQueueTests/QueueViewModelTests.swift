@@ -433,6 +433,106 @@ final class QueueViewModelTests: XCTestCase {
         XCTAssertEqual(vm.draft.imageBack, photo)
     }
 
+    // MARK: Card batch
+
+    private func startBatch(_ vm: QueueViewModel, _ cards: [String]) {
+        vm.selectSet(Fixtures.setName)
+        vm.selectSubset(Fixtures.subsetName)
+        vm.selectParallel("Gold Refractor")
+        vm.startBatch(cards)
+    }
+
+    func testBatchStepsThroughCheckedCardsInListOrder() throws {
+        let vm = try makeHarness().viewModel
+        startBatch(vm, ["10", "1", "A"])
+        XCTAssertEqual(vm.batch?.cards, ["1", "10", "A"])
+        XCTAssertEqual(vm.draft.cardNumber, "1")
+        XCTAssertEqual(vm.draft.player, "Player One")
+        XCTAssertEqual(vm.batch?.progress, "Card 1 of 3")
+
+        vm.stageScanNumber("101", side: .front)
+        XCTAssertTrue(vm.saveDraft())
+        XCTAssertEqual(vm.rows.last?.cardNumber, "1")
+        XCTAssertEqual(vm.rows.last?.imageFront, .scan("101"))
+        XCTAssertEqual(vm.draft.cardNumber, "10")
+        XCTAssertEqual(vm.draft.parallelVariety, "Gold Refractor")
+        XCTAssertEqual(vm.draft.imageFront, .empty)
+        XCTAssertEqual(vm.batch?.upcoming, ["A"])
+
+        vm.saveDraft()
+        XCTAssertEqual(vm.draft.cardNumber, "A")
+        XCTAssertEqual(vm.batch?.upcoming, [])
+
+        vm.saveDraft()
+        XCTAssertEqual(vm.rows.map(\.cardNumber), ["1", "10", "A"])
+        XCTAssertNil(vm.batch)
+        XCTAssertEqual(vm.draft.cardNumber, "")
+    }
+
+    func testOneCheckedCardIsAPlainPick() throws {
+        let vm = try makeHarness().viewModel
+        startBatch(vm, ["2"])
+        XCTAssertNil(vm.batch)
+        XCTAssertEqual(vm.draft.cardNumber, "2")
+    }
+
+    func testSkipAndEndBatch() throws {
+        let vm = try makeHarness().viewModel
+        startBatch(vm, ["1", "2", "10"])
+        vm.setScanNumber("5", side: .front)
+        vm.skipBatchCard()
+        XCTAssertTrue(vm.rows.isEmpty)
+        XCTAssertEqual(vm.draft.cardNumber, "2")
+        XCTAssertEqual(vm.draft.imageFront, .empty)
+
+        vm.endBatch()
+        XCTAssertNil(vm.batch)
+        XCTAssertEqual(vm.draft.cardNumber, "2")
+        vm.saveDraft()
+        XCTAssertEqual(vm.draft.cardNumber, "")
+    }
+
+    func testEditingMidBatchResumesTheBatchCard() throws {
+        let vm = try makeHarness().viewModel
+        startBatch(vm, ["1", "2", "10"])
+        vm.saveDraft()
+        XCTAssertEqual(vm.draft.cardNumber, "2")
+
+        vm.beginEdit(at: 0)
+        vm.draft.quantity = 4
+        vm.saveDraft()
+        XCTAssertEqual(vm.rows.count, 1)
+        XCTAssertEqual(vm.rows[0].quantity, 4)
+        XCTAssertEqual(vm.mode, .add)
+        XCTAssertEqual(vm.draft.cardNumber, "2")
+        XCTAssertEqual(vm.batch?.progress, "Card 2 of 3")
+    }
+
+    func testClearOrNewSubsetEndsTheBatch() throws {
+        let vm = try makeHarness().viewModel
+        startBatch(vm, ["1", "2"])
+        vm.cancelDraft()
+        XCTAssertNil(vm.batch)
+
+        startBatch(vm, ["1", "2"])
+        vm.selectSubset("Rookie Autographs")
+        XCTAssertNil(vm.batch)
+    }
+
+    func testBatchSurvivesSaveAndRestore() throws {
+        let harness = try makeHarness()
+        let vm = harness.viewModel
+        startBatch(vm, ["1", "2", "10"])
+        vm.saveDraft()
+        vm.saveNow()
+
+        let restored = QueueViewModel(store: harness.store, metadata: harness.metadata, uploader: ImageUploader())
+        restored.restore()
+        XCTAssertEqual(restored.batch, vm.batch)
+        restored.saveDraft()
+        XCTAssertEqual(restored.draft.cardNumber, "10")
+    }
+
     func testSetGroupsFollowTheIndex() throws {
         let vm = try makeHarness().viewModel
         XCTAssertEqual(vm.setGroups.map { $0.title }, ["2024", "2023"])

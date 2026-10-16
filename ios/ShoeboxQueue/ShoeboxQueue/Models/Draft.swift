@@ -13,12 +13,36 @@ struct WorkingState: Codable, Hashable {
     var draft: QueueRow
     var editIndex: Int?
     var savedAt: String?
+    /// A card batch in progress (absent in files written before batches existed).
+    var batch: CardBatch?
 
-    init(rows: [QueueRow] = [], draft: QueueRow = QueueRow(), editIndex: Int? = nil, savedAt: String? = nil) {
+    init(rows: [QueueRow] = [], draft: QueueRow = QueueRow(), editIndex: Int? = nil, savedAt: String? = nil, batch: CardBatch? = nil) {
         self.rows = rows
         self.draft = draft
         self.editIndex = editIndex
         self.savedAt = savedAt
+        self.batch = batch
+    }
+}
+
+/// Card numbers checked together in the Card # list. The form takes them one at a time: each
+/// Save in add mode queues the current card and loads the next one.
+struct CardBatch: Codable, Hashable {
+    var cards: [String]
+    var position: Int = 0
+
+    var current: String? {
+        cards.indices.contains(position) ? cards[position] : nil
+    }
+
+    /// Cards after the current one.
+    var upcoming: [String] {
+        cards.indices.contains(position) ? Array(cards[(position + 1)...]) : []
+    }
+
+    /// "Card 2 of 5".
+    var progress: String {
+        "Card \(min(position + 1, cards.count)) of \(cards.count)"
     }
 }
 

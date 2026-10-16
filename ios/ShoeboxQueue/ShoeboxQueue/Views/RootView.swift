@@ -68,6 +68,7 @@ struct RootView: View {
         .onChange(of: queue.rows) { queue.scheduleAutosave() }
         .onChange(of: queue.draft) { queue.scheduleAutosave() }
         .onChange(of: queue.editIndex) { queue.scheduleAutosave() }
+        .onChange(of: queue.batch) { queue.scheduleAutosave() }
         .onChange(of: metadata.version) { queue.refreshAutofill() }
         .onChange(of: scenePhase) {
             if scenePhase == .background || scenePhase == .inactive {
@@ -155,7 +156,10 @@ struct RootView: View {
                 }
             }
             .navigationTitle("Shoebox Queue")
-            .keyboardDismissToolbar(next: focusedField?.next == nil ? nil : { focusNext() })
+            .keyboardDismissToolbar(
+                next: focusedField?.next == nil ? nil : { focusNext() },
+                save: batchSaveTitle.map { title in (title, { saveDraft() }) }
+            )
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button("Clear") {
@@ -165,8 +169,7 @@ struct RootView: View {
                 }
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     Button(queue.mode == .add ? "Save" : "Update") {
-                        focusedField = nil
-                        queue.saveDraft()
+                        saveDraft()
                     }
                     .fontWeight(.semibold)
                     .disabled(!queue.canSaveDraft)
@@ -286,6 +289,28 @@ struct RootView: View {
     }
 
     // MARK: Actions
+
+    /// In a batch the keyboard bar gets its own Save, so a card is scans -> Save without leaving
+    /// the keyboard.
+    private var batchSaveTitle: String? {
+        guard queue.mode == .add, let batch = queue.batch else {
+            return nil
+        }
+        return batch.upcoming.isEmpty ? "Save" : "Save & Next"
+    }
+
+    /// Save / Update. When a batch loads its next card, the first scan field takes focus.
+    private func saveDraft() {
+        let wasAdding = queue.mode == .add
+        guard queue.saveDraft() else {
+            return
+        }
+        if wasAdding, queue.batch != nil, let side = queue.firstScanSide {
+            focusedField = .image(side)
+        } else {
+            focusedField = nil
+        }
+    }
 
     /// The keyboard's Next: the following field, skipping an image side that holds a photo (it
     /// has no text field to focus). Past Price the keyboard closes.
