@@ -277,6 +277,8 @@ struct ListingRun: Codable, Hashable, Identifiable {
     var publish: Bool
     var schedule: Bool
     var queueUri: String
+    /// OneDrive folder the run read scans from when the app chose one; nil is the server's default.
+    var scansFolder: String?
     var metadataVersion: String?
     var rowsTotal: Int
     var rowsDone: Int
@@ -318,6 +320,7 @@ struct ListingRun: Codable, Hashable, Identifiable {
         case publish
         case schedule
         case queueUri
+        case scansFolder
         case metadataVersion
         case rowsTotal
         case rowsDone
@@ -338,6 +341,7 @@ struct ListingRun: Codable, Hashable, Identifiable {
         publish: Bool,
         schedule: Bool,
         queueUri: String,
+        scansFolder: String? = nil,
         metadataVersion: String? = nil,
         rowsTotal: Int,
         rowsDone: Int = 0,
@@ -356,6 +360,7 @@ struct ListingRun: Codable, Hashable, Identifiable {
         self.publish = publish
         self.schedule = schedule
         self.queueUri = queueUri
+        self.scansFolder = scansFolder
         self.metadataVersion = metadataVersion
         self.rowsTotal = rowsTotal
         self.rowsDone = rowsDone
@@ -377,6 +382,7 @@ struct ListingRun: Codable, Hashable, Identifiable {
         publish = try container.decode(Bool.self, forKey: .publish)
         schedule = try container.decode(Bool.self, forKey: .schedule)
         queueUri = try container.decodeIfPresent(String.self, forKey: .queueUri) ?? ""
+        scansFolder = try container.decodeIfPresent(String.self, forKey: .scansFolder)
         metadataVersion = try container.decodeIfPresent(String.self, forKey: .metadataVersion)
         rowsTotal = try container.decodeIfPresent(Int.self, forKey: .rowsTotal) ?? 0
         rowsDone = try container.decodeIfPresent(Int.self, forKey: .rowsDone) ?? 0
@@ -395,7 +401,10 @@ struct ListingRunsResponse: Codable, Hashable {
 }
 
 /// Request body for `POST /queue/listings`. The job never scrapes prices, so there is no flag for it.
+/// `scansFolder` (a path under the OneDrive root) overrides the server's scans folder for this run;
+/// nil leaves the key out, which keeps the configured one.
 struct StartListingRunRequest: Codable, Hashable {
     var publish: Bool
     var schedule: Bool
+    var scansFolder: String? = nil
 }

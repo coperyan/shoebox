@@ -40,7 +40,7 @@ like a password: `openssl rand -hex 32`, rotate by adding a secret version.
 | `PUT /queue/draft` | `{"rows":[DraftRowIn]}` | saves raw (possibly half-filled) rows only |
 | `GET /queue` | – | the last saved rows (queue or draft), the 8 user fields only |
 | `POST /images` | multipart `file`, `side`, optional `client_id` | `201 {"uri":"gs://…","side","client_id","bytes","content_type"}` |
-| `POST /queue/listings` | `{"publish": true, "schedule": true}` | `202 ListingRun` (state `requested`); starts the Cloud Run `create-listings` job. `409` when the latest save is a draft or a run is active; `502` when the job could not be started |
+| `POST /queue/listings` | `{"publish": true, "schedule": true, "scans_folder": "Pictures/Card Scans"}` (`scans_folder` optional) | `202 ListingRun` (state `requested`); starts the Cloud Run `create-listings` job. `409` when the latest save is a draft or a run is active; `502` when the job could not be started |
 | `GET /queue/listings` | – | `{"runs": [ListingRun without results…]}`, newest first (20) |
 | `GET /queue/listings/{run_id}` | – | the full `ListingRun`; `404` if unknown |
 
@@ -167,14 +167,17 @@ combined front+back picture is built, a phone photo feeds that third picture too
 `POST /queue/listings` turns the submitted queue into eBay listings without
 the PC: the API writes a **run record** and starts the Cloud Run job
 `create-listings` (`shoebox create-listings --run-request`). The job claims the
-record, lists the queue with the two choices the app offers, and updates the
-record after every row; the app polls it. Prices are **never scraped** on an
+record, lists the queue with the choices the app offers (publish, schedule,
+and optionally the OneDrive folder to read scans from), and updates the record
+after every row; the app polls it. The record turns `done` as soon as the last
+row is listed; the results sync to GCS / BigQuery runs after that. Prices are **never scraped** on an
 app-triggered run (the `--scrape-prices` path needs Chrome and Slack replies).
 
 ```json
 {"run_id": "20261015T190211Z-3f9a1c0b", "state": "running",
  "requested_at": "2026-10-15T19:02:11+00:00", "started_at": "2026-10-15T19:02:40+00:00", "finished_at": null,
  "publish": true, "schedule": true, "queue_uri": "gs://bucket/queue/listing_queue_enriched.jsonl",
+ "scans_folder": null,
  "metadata_version": "3f9a1c0b7e2d4a65", "rows_total": 12, "rows_done": 3, "listed": 3, "failed": 0,
  "results": [{"sku": "…", "title": "2024 Topps Chrome Base Gold Refractor Player 150",
               "listing_id": "1264…", "offer_id": "8812…", "success": true, "error": null}],
@@ -198,6 +201,18 @@ names identical on both hosts. Once such a scan is uploaded, the job moves it
 into `<scans_folder>/Listed` (`onedrive.listed_subfolder`), the way the
 workstation deletes the local original, so the OneDrive scans folder only
 holds unlisted cards. Phone photos come from `uploads/` as before.
+
+`scans_folder` in the request reads that run's scans from another folder
+under the OneDrive root instead of `onedrive.scans_folder` (the `Listed`
+subfolder is then created inside it). It must be a relative path: blank or
+absent keeps the configured folder; `..`, `\`, `:` and the other characters
+OneDrive rejects answer `422`, as does any folder when `onedrive` is not
+configured.
+
+**Speed.** Rows still list one at a time, but around that loop the job
+downloads the scans for the next dozen rows eight at a time, uploads a row's
+front, back and combined picture at once, and moves listed scans into
+`Listed` in the background.
 Setup (Azure app registration, device-code sign-in, token cache in GCS) is in
 [deployment.md](deployment.md#listing-from-the-app).
 

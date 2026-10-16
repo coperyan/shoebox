@@ -268,6 +268,45 @@ class OneDriveSettings(BaseModel):
         return bool(self.client_id and self.scans_folder)
 
 
+_ONEDRIVE_BAD_CHARS = set('\\:*?"<>|')
+ONEDRIVE_FOLDER_MAX_LEN = 400
+
+
+def normalize_onedrive_folder(value: str) -> str:
+    """A folder path under the OneDrive root, as typed in the iOS app:
+    ``" /Pictures/Card Scans/ "`` -> ``"Pictures/Card Scans"``.
+
+    The job moves listed scans out of this folder, so it must stay a plain
+    relative path: ValueError for an empty path, ``.`` / ``..`` segments,
+    backslashes, control characters, or a character OneDrive rejects in a name
+    (``:`` would also end the ``root:/path:`` segment of a Graph URL).
+    """
+    parts = [part.strip() for part in str(value).strip().split("/")]
+    parts = [part for part in parts if part]
+    if not parts:
+        raise ValueError("the OneDrive folder is empty")
+    for part in parts:
+        if part in (".", ".."):
+            raise ValueError("the OneDrive folder must not contain '.' or '..'")
+        if any(ch in _ONEDRIVE_BAD_CHARS or ord(ch) < 32 for ch in part):
+            raise ValueError(
+                'the OneDrive folder must not contain \\ : * ? " < > | or control characters'
+            )
+    folder = "/".join(parts)
+    if len(folder) > ONEDRIVE_FOLDER_MAX_LEN:
+        raise ValueError(f"the OneDrive folder is longer than {ONEDRIVE_FOLDER_MAX_LEN} characters")
+    return folder
+
+
+def with_scans_folder(settings: Settings, folder: str) -> Settings:
+    """A copy of ``settings`` reading scans from ``folder`` instead of
+    ``onedrive.scans_folder`` (one app-requested run)."""
+    onedrive = settings.onedrive.model_copy(
+        update={"scans_folder": normalize_onedrive_folder(folder)}
+    )
+    return settings.model_copy(update={"onedrive": onedrive})
+
+
 class CloudRunSettings(BaseModel):
     """Where the API finds the Cloud Run job it starts for app-triggered
     listing runs (``POST /queue/listings``). Project is ``gcp.project_id``."""

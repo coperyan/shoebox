@@ -255,6 +255,10 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
         let encoded = try jsonObject(try JSONCoding.encoder.encode(StartListingRunRequest(publish: false, schedule: true)))
         XCTAssertEqual(Set(encoded.keys), ["publish", "schedule"], "no scrape_prices flag: the job never scrapes")
+        let withFolder = try jsonObject(
+            try JSONCoding.encoder.encode(StartListingRunRequest(publish: true, schedule: true, scansFolder: "Pictures/Scans"))
+        )
+        XCTAssertEqual(withFolder["scans_folder"] as? String, "Pictures/Scans")
         XCTAssertEqual(encoded["publish"] as? Bool, false)
         XCTAssertEqual(encoded["schedule"] as? Bool, true)
         // The stub sees request bodies as a stream; check the wire body when it is available.

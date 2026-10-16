@@ -419,3 +419,40 @@ def test_default_onedrive_client_is_shared_per_settings(tmp_path, monkeypatch):
     a = image_refs._default_onedrive(settings)
     b = image_refs._default_onedrive(settings)
     assert a is b and built == [settings]
+
+
+def test_concurrent_token_requests_refresh_once(tmp_path):
+    """create-listings downloads from several threads: one silent acquisition
+    serves them all, and a 401 retry from two threads refreshes only once."""
+    import threading
+    import time
+
+    class SlowApp(FakeMsalApp):
+        def acquire_token_silent(self, scopes, account=None):
+            time.sleep(0.05)
+            return super().acquire_token_silent(scopes, account)
+
+    app = SlowApp()
+    client = _client(tmp_path, http=None, app=app)
+    tokens: list[str] = []
+    start = threading.Barrier(2)
+
+    def grab(fresh=False):
+        if fresh:
+            start.wait()
+        tokens.append(client.access_token(fresh=fresh))
+
+    threads = [threading.Thread(target=grab) for _ in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert app.silent_calls == 1 and set(tokens) == {"tok1"}
+
+    tokens.clear()
+    threads = [threading.Thread(target=grab, kwargs={"fresh": True}) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert app.silent_calls == 2 and set(tokens) == {"tok2"}

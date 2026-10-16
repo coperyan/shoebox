@@ -43,6 +43,24 @@ final class ListingRunViewModelTests: XCTestCase {
         XCTAssertTrue(again.schedule)
     }
 
+    func testScansFolderPersistsAndBlankSendsNil() async throws {
+        let defaults = try makeDefaults()
+        let vm = try makeViewModel(defaults: defaults)
+        XCTAssertEqual(vm.scansFolder, "")
+        XCTAssertNil(vm.requestedScansFolder)
+
+        vm.scansFolder = "  Pictures/Card Scans  "
+        XCTAssertEqual(vm.requestedScansFolder, "Pictures/Card Scans")
+        XCTAssertEqual(try makeViewModel(defaults: defaults).scansFolder, "  Pictures/Card Scans  ")
+
+        let fake = FakeAPI()
+        await vm.start(api: fake)
+        vm.scansFolder = " "
+        await vm.start(api: fake)
+        XCTAssertEqual(fake.startedRuns.map(\.scansFolder), ["Pictures/Card Scans", nil])
+        XCTAssertEqual(vm.activeRun?.scansFolder, nil)
+    }
+
     // MARK: Start
 
     func testStartSendsTogglesAndSetsActiveRun() async throws {

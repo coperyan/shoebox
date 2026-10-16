@@ -85,3 +85,27 @@ def test_onedrive_enabled_and_token_uri_validation():
     raw["onedrive"]["token_cache_uri"] = "gs://b"
     with pytest.raises(ValidationError):
         Settings(**raw)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        ("Scans", "Scans"),
+        (" /Pictures/Card Scans/ ", "Pictures/Card Scans"),
+        ("Pictures//Card Scans", "Pictures/Card Scans"),
+    ],
+)
+def test_normalize_onedrive_folder(value, expected):
+    from shoebox.settings import normalize_onedrive_folder
+
+    assert normalize_onedrive_folder(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value", ["", " / ", "a/../b", "./a", "a\\b", "a:b", "a|b", "a\nb", "x" * 401]
+)
+def test_normalize_onedrive_folder_rejects(value):
+    from shoebox.settings import normalize_onedrive_folder
+
+    with pytest.raises(ValueError):
+        normalize_onedrive_folder(value)

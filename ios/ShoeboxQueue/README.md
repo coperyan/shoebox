@@ -100,7 +100,9 @@ and lets you build rows offline; a failed refresh shows a "using cached metadata
 ### Listing from the app
 
 After *Submit*, the **List on eBay** section on the Preview tab has two toggles, **Publish offers**
-and **Schedule start time** (remembered between launches), and a button that asks for confirmation
+and **Schedule start time**, a **Scans folder** field (a path under your OneDrive root such as
+`Pictures/Card Scans`; blank uses `onedrive.scans_folder` from the server's app.yaml), all
+remembered between launches, and a button that asks for confirmation
 and then calls `POST /queue/listings`. The API starts the `create-listings` Cloud Run job for the
 last submitted queue; the job pulls scan numbers from OneDrive and never scrapes prices, so the PC
 does not need to be on. The app opens the run screen and polls `GET /queue/listings/<run_id>` every
@@ -132,7 +134,7 @@ server order in the fixture.
 | On-device data | `Application Support/ShoeboxQueue/` : `current.json`, `drafts/<uuid>.json`, `images/<uuid>.jpg`, `metadata.json`, `metadata.meta.json` |
 | API key | Keychain generic password, service `com.example.ShoeboxQueue`, account `api-key` |
 | Base URL | `UserDefaults` key `baseURL` |
-| Listing toggles | `UserDefaults` keys `listingPublish`, `listingSchedule` (default on / on) |
+| Listing toggles | `UserDefaults` keys `listingPublish`, `listingSchedule` (default on / on), `listingScansFolder` (default blank) |
 
 The Python side of the contract is `shoebox/api/schemas.py`; the plan section "The API contract"
 in the repo docs (`docs/api.md`) is the human-readable version. Keep the three in sync.

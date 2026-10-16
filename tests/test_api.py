@@ -642,3 +642,31 @@ def test_api_key_whitespace_is_ignored(monkeypatch):
     monkeypatch.setenv("SHOEBOX_API_KEY", "  \n")
     with pytest.raises(RuntimeError, match="SHOEBOX_API_KEY"):
         create_app(settings=_settings(), metadata_loader=_frames, gcs=FakeGCS())
+
+
+def test_start_run_records_scans_folder(run_env):
+    client, gcs, clock, bucket, runner = run_env
+    settings = client.app.state.ctx.settings
+    settings.onedrive.client_id = "app"
+    settings.onedrive.scans_folder = "Scans"
+    client.put("/queue", json={"rows": [row()]})
+    r = client.post("/queue/listings", json={"scans_folder": " /Pictures/Card Scans 2/ "})
+    assert r.status_code == 202, r.text
+    assert r.json()["scans_folder"] == "Pictures/Card Scans 2"
+
+    # Blank means the configured folder.
+    clock.now += timedelta(hours=2)
+    r = client.post("/queue/listings", json={"scans_folder": "  "})
+    assert r.status_code == 202 and r.json()["scans_folder"] is None
+
+
+def test_start_run_rejects_bad_scans_folder(run_env):
+    client, *_ = run_env
+    settings = client.app.state.ctx.settings
+    client.put("/queue", json={"rows": [row()]})
+    for bad in ("../Documents", "a:b", "C:\\Scans"):
+        assert client.post("/queue/listings", json={"scans_folder": bad}).status_code == 422
+    # Without OneDrive configured there is nothing to read a folder from.
+    settings.onedrive.client_id = ""
+    r = client.post("/queue/listings", json={"scans_folder": "Scans"})
+    assert r.status_code == 422 and "OneDrive" in r.json()["detail"]["message"]

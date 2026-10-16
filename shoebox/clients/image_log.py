@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -77,6 +78,8 @@ class ImageLogClient:
         self._bq = self._build_bigquery_client()
 
         self._cache: dict[str, ImageLogEntry] = {}
+        # create-listings uploads a card's images from worker threads.
+        self._lock = threading.Lock()
         self._load_cache()
 
     def _build_storage_client(self) -> storage.Client:
@@ -221,11 +224,12 @@ class ImageLogClient:
             original_filename=original_filename,
         )
 
-        if cache_key in self._cache:
-            return self._cache[cache_key]
-        else:
-            if not file_path.exists():
-                raise FileNotFoundError(str(file_path))
+        with self._lock:
+            cached = self._cache.get(cache_key)
+        if cached is not None:
+            return cached
+        if not file_path.exists():
+            raise FileNotFoundError(str(file_path))
 
         if object_name is None:
             object_name = self.build_object_name(
@@ -268,8 +272,9 @@ class ImageLogClient:
             cache_key=cache_key,
         )
 
-        self._upsert_cache_entry(entry)
-        self._append_new_upload(entry)
+        with self._lock:
+            self._upsert_cache_entry(entry)
+            self._append_new_upload(entry)
         return entry
 
     def upload_combined_image(
