@@ -91,7 +91,7 @@ struct ListingRunsView: View {
                     .foregroundStyle(.secondary)
             }
             .font(.subheadline)
-            Text("Publish \(run.publish ? "on" : "off") · Schedule \(run.schedule ? "on" : "off")")
+            Text("Publish \(run.publish ? "on" : "off") · Schedule \(run.schedule ? "on" : "off")" + (run.scansFolder.map { " · \($0)" } ?? ""))
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -233,6 +233,9 @@ struct ListingRunView: View {
             }
             LabeledContent("Schedule") {
                 Text(run.schedule ? "on" : "off")
+            }
+            LabeledContent("Scans folder") {
+                Text(run.scansFolder ?? "default")
             }
             LabeledContent("Requested") {
                 Text(run.requestedAt)

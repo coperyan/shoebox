@@ -4,6 +4,8 @@ import json
 import logging
 import os
 import time
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,10 +19,14 @@ from shoebox.models.ebay_listing import EbayListingResult
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.pipelines.load_listing_queue_from_excel import create_queue_file
 from shoebox.services.listings import ListingService
-from shoebox.settings import Settings, ensure_runtime_dirs, get_settings
+from shoebox.settings import (
+    Settings,
+    ensure_runtime_dirs,
+    get_settings,
+)
 from shoebox.transforms.listing_builder import build_draft
 from shoebox.utils.ad_campaign import get_ad_campaign
-from shoebox.utils.image_refs import archive_scan, materialize_scan
+from shoebox.utils.image_refs import MaterializedImage, archive_scan, materialize_scan
 from shoebox.utils.jsonl import append_jsonl, read_jsonl
 from shoebox.utils.pricing import parse_price_reply, round_up_to_nine
 from shoebox.utils.sku import build_sku_50
@@ -34,6 +40,17 @@ def _utc_ts() -> str:
 
 
 QUEUE_FILENAME = "listing_queue_enriched.jsonl"
+
+# Scans are fetched this many at a time (OneDrive / GCS downloads), for the
+# rows up to PREFETCH_AHEAD past the one being listed: far enough ahead that
+# the loop never waits on a download, close enough that a long queue does not
+# hold every scan on Cloud Run's in-memory disk at once.
+PREFETCH_WORKERS = 8
+PREFETCH_AHEAD = 12
+# OneDrive "move to Listed" requests run in the background while later rows list.
+ARCHIVE_WORKERS = 4
+
+RowImages = tuple[MaterializedImage | None, MaterializedImage | None]
 
 
 def default_queue_source(settings: Settings) -> str | Path:
@@ -143,6 +160,108 @@ def _upload_combined_image(
         return None
 
 
+def _materialize_row(q: ListingQueueRow, settings: Settings | None = None) -> RowImages:
+    """Resolve a row's front / back references to local files (see
+    ``utils.image_refs``); a blank side is None."""
+    return tuple(  # type: ignore[return-value]
+        materialize_scan(ref, settings=settings) if ref else None
+        for ref in (q.image_front, q.image_back)
+    )
+
+
+class _ImagePrefetch:
+    """Materialise the queue's scans on a thread pool ahead of the listing loop.
+
+    One download per distinct reference, so two rows naming the same scan never
+    write the same file at once. A failed download surfaces from :meth:`get`
+    for its row, which the loop records as that row's failure.
+    """
+
+    def __init__(
+        self, rows: list[ListingQueueRow], *, settings: Settings, pool: ThreadPoolExecutor
+    ):
+        self._rows = rows
+        self._settings = settings
+        self._pool = pool
+        self._futures: dict[str, Future[MaterializedImage]] = {}
+        self._queued = 0
+
+    def ensure(self, upto: int) -> None:
+        """Start the downloads for every row before index ``upto``."""
+        upto = min(upto, len(self._rows))
+        while self._queued < upto:
+            q = self._rows[self._queued]
+            self._queued += 1
+            for ref in (q.image_front, q.image_back):
+                if ref and ref.strip() not in self._futures:
+                    self._futures[ref.strip()] = self._pool.submit(
+                        materialize_scan, ref, settings=self._settings
+                    )
+
+    def get(self, index: int) -> RowImages:
+        self.ensure(index + 1)
+        q = self._rows[index]
+        return tuple(  # type: ignore[return-value]
+            self._futures[ref.strip()].result() if ref else None
+            for ref in (q.image_front, q.image_back)
+        )
+
+
+def _discard_local(path: Path) -> None:
+    """Delete an uploaded scan, as ``upload_image(delete_original=True)`` would."""
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Failed to delete original file: %s", path)
+
+
+def _upload_row_images(
+    q: ListingQueueRow,
+    img_client: ImageLogClient,
+    *,
+    front: MaterializedImage | None,
+    back: MaterializedImage | None,
+) -> list[str]:
+    """Upload the front, the back and their composite at the same time; return
+    the picture URLs front, back, combined.
+
+    The combined picture goes third: the front stays picture 1, which is the
+    search thumbnail and the image send-offers shows in Slack. The composite
+    is built from the scans, so they are deleted only once all three uploads
+    are done. A failed front or back upload fails the row; a failed composite
+    does not (see ``_upload_combined_image``).
+    """
+    sides = [(side, image) for side, image in (("front", front), ("back", back)) if image]
+    with ThreadPoolExecutor(max_workers=3, thread_name_prefix="img-upload") as pool:
+        combined = pool.submit(
+            _upload_combined_image,
+            q,
+            img_client,
+            front=front.path if front else None,
+            back=back.path if back else None,
+        )
+        uploads = [
+            pool.submit(
+                img_client.upload_image,
+                file_path=image.path,
+                set_name=q.set_name,
+                subset_name=q.subset_name,
+                card_number=q.card_number,
+                parallel_variety=q.parallel_variety,
+                side=side,
+                delete_original=False,
+            )
+            for side, image in sides
+        ]
+        image_urls = [upload.result().public_url for upload in uploads]
+        combined_url = combined.result()
+    for _, image in sides:
+        _discard_local(image.path)
+    if combined_url:
+        image_urls.append(combined_url)
+    return image_urls
+
+
 def _create_one_listing(
     q: ListingQueueRow,
     *,
@@ -155,11 +274,17 @@ def _create_one_listing(
     dry_run: bool,
     schedule: bool,
     scrape_prices: bool,
+    images: RowImages | None = None,
+    archive: Callable[[MaterializedImage], object] | None = None,
+    settings: Settings | None = None,
 ) -> EbayListingResult:
     """Build and (optionally) publish a single listing, returning its result.
 
     Raises on any failure; the caller is responsible for catching and recording
-    it so that one bad item does not abort the whole batch.
+    it so that one bad item does not abort the whole batch. ``images`` are the
+    row's scans already materialised (``run_listings`` prefetches them);
+    ``archive`` is handed each uploaded scan in place of an inline
+    :func:`archive_scan` (``run_listings`` moves them in the background).
     """
     # Get pricing
     if scrape_prices:
@@ -213,35 +338,18 @@ def _create_one_listing(
         time.sleep(1)
 
     # Upload images. Each reference (local path, bare scan number, or a gs://
-    # photo from the iOS app) is resolved to a local file once, up front. The
-    # combined front+back picture is built from those files before the scans
-    # upload: uploading a scan deletes the local original, and a scan that
-    # was fetched from OneDrive is then moved into its Listed subfolder.
-    front = materialize_scan(q.image_front) if q.image_front else None
-    back = materialize_scan(q.image_back) if q.image_back else None
-    front_path = front.path if front else None
-    back_path = back.path if back else None
-    combined_url = _upload_combined_image(q, img_client, front=front_path, back=back_path)
-    image_urls: list[str] = []
-
-    for side, image in (("front", front), ("back", back)):
+    # photo from the iOS app) is resolved to a local file once, up front. Once
+    # uploaded, the local scans are deleted and a scan that was fetched from
+    # OneDrive is moved into its Listed subfolder.
+    front, back = images if images is not None else _materialize_row(q, settings)
+    image_urls = _upload_row_images(q, img_client, front=front, back=back)
+    for image in (front, back):
         if image is None:
             continue
-        image_urls.append(
-            img_client.upload_image(
-                file_path=image.path,
-                set_name=q.set_name,
-                subset_name=q.subset_name,
-                card_number=q.card_number,
-                parallel_variety=q.parallel_variety,
-                side=side,
-            ).public_url
-        )
-        archive_scan(image)
-    # Third, after the scans: the front stays picture 1, which is the search
-    # thumbnail and the image send-offers shows in Slack.
-    if combined_url:
-        image_urls.append(combined_url)
+        if archive is None:
+            archive_scan(image, settings=settings)
+        else:
+            archive(image)
 
     draft = build_draft(row=q, image_urls=image_urls, sku=sku, schedule=schedule)
 
@@ -327,12 +435,19 @@ def run_listings(
     schedule: bool = True,
     scrape_prices: bool = False,
     reporter=None,
+    on_complete: Callable[[RunSummary], None] | None = None,
+    settings: Settings | None = None,
 ) -> RunSummary:
     """List every queue row. ``reporter`` (``services.listing_runs.RunRecordReporter``
     or anything with ``start(total)`` / ``row(**kw)``) is told about progress;
     the image log flush and the results sync run even when the loop is
-    interrupted, so a SIGTERM at the job timeout loses nothing already listed."""
-    settings = get_settings()
+    interrupted, so a SIGTERM at the job timeout loses nothing already listed.
+
+    Rows list one at a time, but their scans are downloaded ahead of the loop
+    and the OneDrive moves run behind it. ``on_complete`` is called once every
+    row is done and every move has finished, before the GCS / BigQuery sync,
+    so the app can show the run as done without waiting for it."""
+    settings = settings or get_settings()
 
     if queue_items is None:
         source = queue or default_queue_source(settings)
@@ -353,8 +468,16 @@ def run_listings(
     if reporter is not None:
         reporter.start(len(queue_items))
 
+    prefetch_pool = ThreadPoolExecutor(PREFETCH_WORKERS, thread_name_prefix="scan-fetch")
+    archive_pool = ThreadPoolExecutor(ARCHIVE_WORKERS, thread_name_prefix="scan-archive")
+    prefetch = _ImagePrefetch(queue_items, settings=settings, pool=prefetch_pool)
+
+    def archive(image: MaterializedImage) -> None:
+        archive_pool.submit(archive_scan, image, settings=settings)
+
     try:
-        for q in queue_items:
+        for index, q in enumerate(queue_items):
+            prefetch.ensure(index + 1 + PREFETCH_AHEAD)
             quick_title = _quick_title(q)
             logger.info("Starting to create listing for %s", quick_title)
             sku = build_sku_50(q)
@@ -371,6 +494,9 @@ def run_listings(
                     dry_run=dry_run,
                     schedule=schedule,
                     scrape_prices=scrape_prices,
+                    images=prefetch.get(index),
+                    archive=archive,
+                    settings=settings,
                 )
             except Exception as e:
                 # One bad item must not abort the whole batch — note it and move on.
@@ -397,7 +523,12 @@ def run_listings(
                     listing_id=result.listing_id,
                     offer_id=result.offer_id,
                 )
+        archive_pool.shutdown(wait=True)
+        if on_complete is not None:
+            on_complete(summary)
     finally:
+        prefetch_pool.shutdown(wait=True, cancel_futures=True)
+        archive_pool.shutdown(wait=True)
         _finish_run(settings, img_client=img_client, results_path=results_path)
 
     if failures:
@@ -445,14 +576,17 @@ def run_listing_request(*, store=None, settings=None) -> int:
     """Cloud Run job mode (``create-listings --run-request``): list the queue
     the iOS app asked for.
 
-    Claims the newest ``requested`` run record, reads publish/schedule from it
-    (prices are never scraped here), reports progress to it, and posts the
-    usual start/finish messages to Slack. Returns the process exit code: 0
+    Claims the newest ``requested`` run record, reads publish/schedule (and
+    the OneDrive scans folder, when the app chose one) from it -- prices are
+    never scraped here --, reports progress to it, and posts the usual
+    start/finish messages to Slack. The record is marked done as soon as the
+    last row is listed; the GCS / BigQuery results sync runs after that. Returns the process exit code: 0
     when there was nothing to do or everything ran; a failure re-raises so the
     job-failed alert fires.
     """
     from shoebox.clients.search_state_gcs import _sigterm_as_exit
     from shoebox.services.listing_runs import ListingRunStore, RunRecordReporter
+    from shoebox.settings import with_scans_folder
 
     settings = settings or get_settings()
     in_cloud = bool(os.environ.get("CLOUD_RUN_JOB"))
@@ -479,11 +613,29 @@ def run_listing_request(*, store=None, settings=None) -> int:
 
     reporter = RunRecordReporter(store, run)
     channel = settings.slack.notify_channel
+    folder_note = ""
+    if run.scans_folder:
+        try:
+            settings = with_scans_folder(settings, run.scans_folder)
+        except ValueError as exc:
+            reporter.fail(f"bad scans folder {run.scans_folder!r}: {exc}")
+            raise
+        folder_note = f", scans from {settings.onedrive.scans_folder}"
     notify_best_effort(
         channel,
         f"Starting create-listings (app run {run.run_id}, {run.rows_total} rows, "
-        f"publish={'on' if run.publish else 'off'}, schedule={'on' if run.schedule else 'off'})..",
+        f"publish={'on' if run.publish else 'off'}, schedule={'on' if run.schedule else 'off'}"
+        f"{folder_note})..",
     )
+
+    def completed(summary: RunSummary) -> None:
+        reporter.finish()
+        notify_best_effort(
+            channel,
+            f"Completed create-listings (app run {run.run_id}): "
+            f"{summary.listed} listed, {summary.failed} failed..",
+        )
+
     try:
         with _sigterm_as_exit():
             summary = run_listings(
@@ -493,17 +645,23 @@ def run_listing_request(*, store=None, settings=None) -> int:
                 scrape_prices=False,
                 dry_run=False,
                 reporter=reporter,
+                on_complete=completed,
+                settings=settings,
             )
     except BaseException as exc:
-        reporter.fail(f"{type(exc).__name__}: {exc}")
-        notify_best_effort(channel, f"create-listings (app run {run.run_id}) failed: {exc}")
+        if run.state == "done":
+            # Every row was listed and reported; only the results sync failed.
+            notify_best_effort(
+                channel,
+                f"create-listings (app run {run.run_id}) listed everything, "
+                f"but the results sync failed: {exc}",
+            )
+        else:
+            reporter.fail(f"{type(exc).__name__}: {exc}")
+            notify_best_effort(channel, f"create-listings (app run {run.run_id}) failed: {exc}")
         raise
-    reporter.finish()
-    notify_best_effort(
-        channel,
-        f"Completed create-listings (app run {run.run_id}): "
-        f"{summary.listed} listed, {summary.failed} failed..",
-    )
+    if run.state != "done":
+        completed(summary)
     return 0
 
 

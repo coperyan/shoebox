@@ -25,6 +25,7 @@ scans folder, like ``scans_dir`` on the workstation, only holds unlisted cards.
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -61,15 +62,17 @@ def classify_image_ref(ref: str | None) -> Literal["blank", "gs", "path"]:
 
 # One client per Settings object, so a whole run shares one refreshed token.
 _onedrive_clients: dict[int, Any] = {}
+_onedrive_lock = threading.Lock()
 
 
 def _default_onedrive(settings: Settings) -> Any:
     from shoebox.clients.onedrive import OneDriveClient
 
     key = id(settings)
-    client = _onedrive_clients.get(key)
-    if client is None:
-        client = _onedrive_clients[key] = OneDriveClient(settings)
+    with _onedrive_lock:
+        client = _onedrive_clients.get(key)
+        if client is None:
+            client = _onedrive_clients[key] = OneDriveClient(settings)
     return client
 
 

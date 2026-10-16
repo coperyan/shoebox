@@ -106,9 +106,10 @@ class FakeImageLog:
             raise FileNotFoundError("scans already gone")
         return SimpleNamespace(public_url="https://gcs/combined.jpg")
 
-    def upload_image(self, *, file_path, side, **kwargs):
+    def upload_image(self, *, file_path, side, delete_original=True, **kwargs):
         self.order.append(side)
-        file_path.unlink()  # delete_original=True
+        if delete_original:
+            file_path.unlink()
         return SimpleNamespace(public_url=f"https://gcs/{side}.jpg")
 
 
@@ -151,9 +152,13 @@ class TestCreateListingImages:
 
     def test_combined_is_built_before_scans_are_deleted_and_listed_third(self, tmp_path):
         img = FakeImageLog()
-        urls = self._image_urls(self._row(tmp_path), img)
+        row = self._row(tmp_path)
+        urls = self._image_urls(row, img)
 
-        assert img.order == ["combined", "front", "back"]
+        # The three uploads run at once; the fake raises if the composite
+        # finds a scan already deleted, and the scans are gone afterwards.
+        assert sorted(img.order) == ["back", "combined", "front"]
+        assert not Path(row.image_front).exists() and not Path(row.image_back).exists()
         assert urls == [
             "https://gcs/front.jpg",
             "https://gcs/back.jpg",

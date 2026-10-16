@@ -61,7 +61,7 @@ struct PreviewView: View {
                 }
                 Button("Cancel", role: .cancel) {}
             } message: {
-                Text("Publish: \(listing.publish ? "on" : "off") · Schedule: \(listing.schedule ? "on" : "off"). Runs create-listings in the cloud on the last submitted queue; no prices are scraped.")
+                Text("Publish: \(listing.publish ? "on" : "off") · Schedule: \(listing.schedule ? "on" : "off") · Scans: \(listing.requestedScansFolder ?? "default folder"). Runs create-listings in the cloud on the last submitted queue; no prices are scraped.")
             }
             .alert("Listing error", isPresented: listingErrorBinding) {
                 Button("OK", role: .cancel) {}
@@ -286,6 +286,13 @@ struct PreviewView: View {
         return Section {
             Toggle("Publish offers", isOn: $listing.publish)
             Toggle("Schedule start time", isOn: $listing.schedule)
+            LabeledContent("Scans folder") {
+                TextField("Default (app.yaml)", text: $listing.scansFolder)
+                    .multilineTextAlignment(.trailing)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.done)
+            }
             Button {
                 showListingConfirm = true
             } label: {
@@ -307,7 +314,7 @@ struct PreviewView: View {
         } header: {
             Text("List on eBay")
         } footer: {
-            Text("Runs shoebox create-listings in the cloud: scans are fetched from OneDrive and no prices are scraped, so the PC is not needed. With Publish off the offers are created unpublished (check them in Seller Hub first).")
+            Text("Runs shoebox create-listings in the cloud: scans are fetched from OneDrive and no prices are scraped, so the PC is not needed. Scans folder is a path under your OneDrive root (e.g. Pictures/Card Scans); leave it blank for the one in app.yaml. With Publish off the offers are created unpublished (check them in Seller Hub first).")
         }
     }
 

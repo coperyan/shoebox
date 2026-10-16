@@ -292,14 +292,15 @@ final class FakeAPI: QueueAPI {
         )
     }
 
-    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun {
-        startedRuns.append(StartListingRunRequest(publish: publish, schedule: schedule))
+    func startListingRun(publish: Bool, schedule: Bool, scansFolder: String?) async throws -> ListingRun {
+        startedRuns.append(StartListingRunRequest(publish: publish, schedule: schedule, scansFolder: scansFolder))
         if let startError {
             throw startError
         }
         var run = startResponse
         run.publish = publish
         run.schedule = schedule
+        run.scansFolder = scansFolder
         return run
     }
 

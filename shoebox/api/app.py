@@ -358,6 +358,11 @@ def create_app(
         body: StartListingRunRequest, ctx: Annotated[ApiContext, Depends(get_ctx)]
     ):
         """Ask the Cloud Run ``create-listings`` job to list the submitted queue."""
+        if body.scans_folder and not ctx.settings.onedrive.enabled:
+            raise HTTPException(
+                status_code=422,
+                detail={"message": "a scans folder needs OneDrive (onedrive in app.yaml)"},
+            )
         doc = ctx.queue_store.read_draft()
         if not doc or doc.get("kind") != "queue":
             raise HTTPException(
@@ -380,6 +385,7 @@ def create_app(
             publish=body.publish,
             schedule=body.schedule,
             queue_uri=ctx.queue_store.queue_uri,
+            scans_folder=body.scans_folder,
             metadata_version=doc.get("metadata_version"),
             rows_total=int(counts.get("rows") or len(doc.get("rows") or [])),
         )

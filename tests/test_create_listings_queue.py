@@ -138,9 +138,10 @@ class _FakeImageLog:
         assert front.exists() and back.exists()
         return SimpleNamespace(public_url="https://gcs/combined.jpg")
 
-    def upload_image(self, *, file_path, side, **kwargs):
+    def upload_image(self, *, file_path, side, delete_original=True, **kwargs):
         self.calls.append((side, file_path))
-        file_path.unlink()
+        if delete_original:
+            file_path.unlink()
         return SimpleNamespace(public_url=f"https://gcs/{side}.jpg")
 
 
@@ -191,7 +192,11 @@ def test_combined_image_uses_materialised_scan_number_and_gs_photo(tmp_path, mon
     front = scans / "SCAN_0123.jpg"
     back = scans / "app_uploads" / "abc12345.jpg"
     assert downloads == ["gs://img-bucket/uploads/2026-10/abc12345.jpg"]
-    assert img.calls == [("combined", (front, back)), ("front", front), ("back", back)]
+    assert sorted(img.calls, key=lambda c: c[0]) == [
+        ("back", back),
+        ("combined", (front, back)),
+        ("front", front),
+    ]
     assert result.request.data["inventory_item"]["product"]["imageUrls"] == [
         "https://gcs/front.jpg",
         "https://gcs/back.jpg",
@@ -254,12 +259,10 @@ def test_onedrive_scan_is_archived_after_its_upload(tmp_path, monkeypatch):
         schedule=False,
         scrape_prices=False,
     )
-    assert events == [
-        ("download", "SCAN_0123.jpg"),
-        ("upload", "SCAN_0123.jpg"),
-        ("move", "SCAN_0123.jpg", "Listed"),
-        ("upload", "SCAN_0124.jpg"),
-    ]
+    # The two uploads run at once; only the OneDrive scan is moved, after both.
+    assert events[0] == ("download", "SCAN_0123.jpg")
+    assert sorted(events[1:3]) == [("upload", "SCAN_0123.jpg"), ("upload", "SCAN_0124.jpg")]
+    assert events[3:] == [("move", "SCAN_0123.jpg", "Listed")]
 
 
 def test_missing_gs_photo_fails_the_row_before_anything_uploads(tmp_path, monkeypatch):
@@ -475,3 +478,158 @@ def test_run_listing_request_guards(tmp_path, monkeypatch):
     settings.onedrive.scans_folder = "Scans"
     with pytest.raises(RuntimeError, match="token_cache_uri"):
         cl.run_listing_request(store=_FakeStore(None), settings=settings)
+
+
+# ---- prefetch, background archive, early done, scans folder ----
+
+
+class _FakeOneDrive:
+    def __init__(self, missing=()):
+        self.missing = set(missing)
+        self.downloads: list[str] = []
+        self.moves: list[str] = []
+
+    def download(self, name, dest):
+        self.downloads.append(name)
+        if name in self.missing:
+            raise FileNotFoundError(f"OneDrive: {name} not found")
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"scan")
+        return dest
+
+    def move(self, name, subfolder):
+        self.moves.append(name)
+        return f"Scans/{subfolder}/{name}"
+
+
+def _onedrive_run_env(tmp_path, monkeypatch, onedrive):
+    _point_settings_at(
+        tmp_path,
+        monkeypatch,
+        scans_dir=str(tmp_path / "scans"),
+        exports_dir=str(tmp_path / "exports"),
+    )
+    settings = get_settings()
+    settings.onedrive.client_id = "app"
+    settings.onedrive.scans_folder = "Scans"
+    _stub_clients(monkeypatch)
+    img = _FakeImageLog()
+    img.flush_append_log = lambda: None
+    monkeypatch.setattr(cl, "ImageLogClient", lambda **kw: img)
+    monkeypatch.setattr("shoebox.utils.image_refs._default_onedrive", lambda s: onedrive)
+    synced = []
+    monkeypatch.setattr(cl, "sync_results_to_bq", lambda **kw: synced.append(kw) or "obj")
+    return settings, img, synced
+
+
+def _scan_row(card, front, back=""):
+    row = _row(card)
+    row.image_front = front
+    row.image_back = back
+    return row
+
+
+def test_run_listings_prefetches_scans_and_archives_them(tmp_path, monkeypatch):
+    onedrive = _FakeOneDrive(missing={"SCAN_0009.jpg"})
+    settings, img, synced = _onedrive_run_env(tmp_path, monkeypatch, onedrive)
+    rows = [
+        _scan_row("1", "1", "2"),
+        _scan_row("2", "9"),  # missing in OneDrive: only this row fails
+        _scan_row("3", "3", "4"),
+    ]
+    order = []
+    rep = _Reporter()
+    summary = cl.run_listings(
+        queue_items=rows,
+        dry_run=True,
+        reporter=rep,
+        settings=settings,
+        on_complete=lambda s: order.append(("complete", len(onedrive.moves), len(synced))),
+    )
+    assert (summary.listed, summary.failed) == (2, 1)
+    assert "SCAN_0009.jpg" in rep.events[2][1]["error"]
+    assert sorted(onedrive.downloads) == [
+        "SCAN_0001.jpg",
+        "SCAN_0002.jpg",
+        "SCAN_0003.jpg",
+        "SCAN_0004.jpg",
+        "SCAN_0009.jpg",
+    ]
+    assert sorted(onedrive.moves) == [
+        "SCAN_0001.jpg",
+        "SCAN_0002.jpg",
+        "SCAN_0003.jpg",
+        "SCAN_0004.jpg",
+    ]
+    # Done is reported once every move finished, before the results sync.
+    assert order == [("complete", 4, 0)]
+    assert len(synced) == 1
+    assert not list((tmp_path / "scans").glob("SCAN_*.jpg"))
+
+
+def test_prefetch_downloads_a_shared_scan_once(tmp_path, monkeypatch):
+    onedrive = _FakeOneDrive()
+    settings, img, _ = _onedrive_run_env(tmp_path, monkeypatch, onedrive)
+    pool = cl.ThreadPoolExecutor(4)
+    try:
+        prefetch = cl._ImagePrefetch(
+            [_scan_row("1", "5"), _scan_row("2", " 5 ")], settings=settings, pool=pool
+        )
+        first, _ = prefetch.get(0)
+        second, back = prefetch.get(1)
+    finally:
+        pool.shutdown()
+    assert onedrive.downloads == ["SCAN_0005.jpg"]
+    assert first is second and back is None
+
+
+def test_prefetch_stays_a_window_ahead(tmp_path, monkeypatch):
+    onedrive = _FakeOneDrive()
+    settings, *_ = _onedrive_run_env(tmp_path, monkeypatch, onedrive)
+    rows = [_scan_row(str(i), str(i)) for i in range(1, 31)]
+    pool = cl.ThreadPoolExecutor(4)
+    try:
+        prefetch = cl._ImagePrefetch(rows, settings=settings, pool=pool)
+        prefetch.ensure(1 + cl.PREFETCH_AHEAD)
+        prefetch.get(0)
+    finally:
+        pool.shutdown()
+    assert len(onedrive.downloads) == 1 + cl.PREFETCH_AHEAD
+
+
+def test_run_listing_request_uses_requested_scans_folder(tmp_path, monkeypatch):
+    _point_settings_at(tmp_path, monkeypatch, queue_uri="gs://b/queue/listing_queue_enriched.jsonl")
+    monkeypatch.delenv("CLOUD_RUN_JOB", raising=False)
+    settings = get_settings()
+    settings.onedrive.client_id = "app"
+    settings.onedrive.scans_folder = "Scans"
+    calls, notes = [], []
+    monkeypatch.setattr(cl, "notify_best_effort", lambda ch, msg: notes.append(msg))
+    monkeypatch.setattr(cl, "run_listings", lambda **kw: calls.append(kw) or cl.RunSummary())
+    store = _FakeStore(_request_run(scans_folder="Pictures/Batch 7"))
+    assert cl.run_listing_request(store=store, settings=settings) == 0
+    assert calls[0]["settings"].onedrive.scans_folder == "Pictures/Batch 7"
+    assert settings.onedrive.scans_folder == "Scans"  # the shared settings are untouched
+    assert "scans from Pictures/Batch 7" in notes[0]
+    assert store.writes[-1].state == "done"
+
+
+def test_run_listing_request_marks_done_before_sync_and_keeps_it(tmp_path, monkeypatch):
+    """The record goes to done from on_complete; a results-sync failure after
+    that re-raises (job alert) without flipping the record to failed."""
+    _point_settings_at(tmp_path, monkeypatch, queue_uri="gs://b/queue/listing_queue_enriched.jsonl")
+    monkeypatch.delenv("CLOUD_RUN_JOB", raising=False)
+    notes = []
+    monkeypatch.setattr(cl, "notify_best_effort", lambda ch, msg: notes.append(msg))
+
+    def fake_run_listings(**kw):
+        kw["on_complete"](cl.RunSummary(listed=1))
+        raise RuntimeError("bigquery load failed")
+
+    monkeypatch.setattr(cl, "run_listings", fake_run_listings)
+    store = _FakeStore(_request_run())
+    with pytest.raises(RuntimeError, match="bigquery"):
+        cl.run_listing_request(store=store)
+    assert [w.state for w in store.writes] == ["done"]
+    assert "1 listed, 0 failed" in notes[1]
+    assert "results sync failed" in notes[-1]

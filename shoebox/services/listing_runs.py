@@ -5,7 +5,7 @@ API, the Cloud Run job and the phone together.
 ``requested`` and starts the ``create-listings`` job. The job
 (``create-listings --run-request``) claims the newest requested record with a
 generation-matched write (so a second execution cannot run the same queue
-twice), reads publish/schedule from it, and updates it after every row. The
+twice), reads publish/schedule (and the scans folder) from it, and updates it after every row. The
 app polls ``GET /queue/listings/<run_id>``.
 
 The run id sorts by time (``<UTC timestamp>-<8 hex>``), which is what makes
@@ -73,6 +73,9 @@ class ListingRun(BaseModel):
     publish: bool = True
     schedule: bool = True
     queue_uri: str
+    # OneDrive folder the app asked to read scans from; None is the
+    # configured onedrive.scans_folder.
+    scans_folder: str | None = None
     metadata_version: str | None = None
     rows_total: int = 0
     rows_done: int = 0

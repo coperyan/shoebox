@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Scans folder per listing run.** The iOS app's *List on eBay* section has a
+  *Scans folder* field; `POST /queue/listings` takes an optional
+  `scans_folder` (a relative path under the OneDrive root, validated), stored
+  on the run record, and the job reads that run's scans from it instead of
+  `onedrive.scans_folder`. Blank keeps the configured folder.
+- **Faster `create-listings`.** Scans are downloaded ahead of the listing loop
+  (8 at a time, 12 rows ahead, each distinct scan once), a row's front, back
+  and combined pictures upload in parallel, and OneDrive moves to `Listed` run
+  in the background. An app-triggered run is marked done before the GCS /
+  BigQuery results sync; a sync failure after that alerts without flipping
+  the record to failed.
 - **Listed scans leave the OneDrive scans folder.** When `create-listings`
   fetches a scan from OneDrive (the Cloud Run job started from the iOS app),
   it now moves that scan into `<scans_folder>/<onedrive.listed_subfolder>`

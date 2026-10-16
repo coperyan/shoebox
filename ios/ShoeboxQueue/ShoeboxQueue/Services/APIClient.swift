@@ -71,11 +71,19 @@ protocol QueueAPI {
     func fetchLastQueue() async throws -> QueueGetResponse
     func uploadImage(jpeg: Data, side: ImageSide, clientId: String?, progress: UploadProgressHandler?) async throws -> UploadResponse
     /// `POST /queue/listings`: start a `create-listings` run in the cloud for the last submitted queue.
-    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun
+    /// A non-nil `scansFolder` reads the scans from that OneDrive folder instead of the configured one.
+    func startListingRun(publish: Bool, schedule: Bool, scansFolder: String?) async throws -> ListingRun
     /// `GET /queue/listings`: recent runs, newest first (without their `results`).
     func fetchListingRuns() async throws -> [ListingRun]
     /// `GET /queue/listings/{run_id}`: one run with its per-row results.
     func fetchListingRun(id: String) async throws -> ListingRun
+}
+
+extension QueueAPI {
+    /// `startListingRun` with the server's configured scans folder.
+    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun {
+        try await startListingRun(publish: publish, schedule: schedule, scansFolder: nil)
+    }
 }
 
 // MARK: - Shared JSON coding (wire and disk files use the same snake_case convention)
@@ -267,10 +275,12 @@ final class APIClient: QueueAPI {
         return try decode(UploadResponse.self, from: result.0)
     }
 
-    func startListingRun(publish: Bool, schedule: Bool) async throws -> ListingRun {
+    func startListingRun(publish: Bool, schedule: Bool, scansFolder: String?) async throws -> ListingRun {
         let body: Data
         do {
-            body = try JSONCoding.encoder.encode(StartListingRunRequest(publish: publish, schedule: schedule))
+            body = try JSONCoding.encoder.encode(
+                StartListingRunRequest(publish: publish, schedule: schedule, scansFolder: scansFolder)
+            )
         } catch {
             throw APIError.decoding("could not encode the request: \(error.localizedDescription)")
         }

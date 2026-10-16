@@ -22,6 +22,7 @@ go stale, which is why it lives in GCS and not Secret Manager.
 from __future__ import annotations
 
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
@@ -137,6 +138,9 @@ class OneDriveClient:
         self._cache = None
         self._access_token: str | None = None
         self._folder_ids: dict[str, str] = {}
+        # create-listings downloads and moves scans from worker threads; token
+        # refresh (and the cache write-back) must happen once, not per thread.
+        self._token_lock = threading.Lock()
 
     # -----------------------------
     # Auth
@@ -152,8 +156,17 @@ class OneDriveClient:
         return self._app
 
     def access_token(self, *, fresh: bool = False) -> str:
-        if self._access_token and not fresh:
-            return self._access_token
+        seen = self._access_token
+        if seen and not fresh:
+            return seen
+        with self._token_lock:
+            current = self._access_token
+            # Another thread got a token (or a fresh one) while this one waited.
+            if current and (not fresh or current != seen):
+                return current
+            return self._acquire_token()
+
+    def _acquire_token(self) -> str:
         app = self._application()
         accounts = app.get_accounts()
         if not accounts:

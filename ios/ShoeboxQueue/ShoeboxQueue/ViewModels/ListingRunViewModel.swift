@@ -8,6 +8,7 @@ import Observation
 final class ListingRunViewModel {
     static let publishDefaultsKey = "listingPublish"
     static let scheduleDefaultsKey = "listingSchedule"
+    static let scansFolderDefaultsKey = "listingScansFolder"
     static let defaultPollInterval: Duration = .seconds(3)
 
     private let defaults: UserDefaults
@@ -20,6 +21,8 @@ final class ListingRunViewModel {
     private var publishStorage: Bool
     @ObservationIgnored
     private var scheduleStorage: Bool
+    @ObservationIgnored
+    private var scansFolderStorage: String
 
     /// The run being started, shown or polled.
     private(set) var activeRun: ListingRun?
@@ -39,6 +42,7 @@ final class ListingRunViewModel {
         self.pollInterval = pollInterval
         self.publishStorage = Self.flag(Self.publishDefaultsKey, in: defaults, default: true)
         self.scheduleStorage = Self.flag(Self.scheduleDefaultsKey, in: defaults, default: true)
+        self.scansFolderStorage = defaults.string(forKey: Self.scansFolderDefaultsKey) ?? ""
     }
 
     // MARK: Toggles (persisted; observable through the generated access / withMutation hooks)
@@ -71,6 +75,27 @@ final class ListingRunViewModel {
         }
     }
 
+    /// OneDrive folder to read the scans from, e.g. `Pictures/Card Scans`. Blank uses the folder in
+    /// the server's app.yaml. Remembered between launches.
+    var scansFolder: String {
+        get {
+            access(keyPath: \.scansFolder)
+            return scansFolderStorage
+        }
+        set {
+            withMutation(keyPath: \.scansFolder) {
+                scansFolderStorage = newValue
+            }
+            defaults.set(newValue, forKey: Self.scansFolderDefaultsKey)
+        }
+    }
+
+    /// `scansFolder` as sent: trimmed, nil when blank.
+    var requestedScansFolder: String? {
+        let trimmed = scansFolder.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
     private static func flag(_ key: String, in defaults: UserDefaults, default fallback: Bool) -> Bool {
         if defaults.object(forKey: key) == nil {
             return fallback
@@ -80,7 +105,7 @@ final class ListingRunViewModel {
 
     // MARK: Starting
 
-    /// `POST /queue/listings` with the current toggles. Returns the new run (also `activeRun`) or
+    /// `POST /queue/listings` with the current toggles and scans folder. Returns the new run (also `activeRun`) or
     /// `nil` after setting `errorMessage` (409 "submit the queue first" / "a run is in progress",
     /// 502 when the job could not be started).
     @discardableResult
@@ -92,7 +117,11 @@ final class ListingRunViewModel {
         defer { isStarting = false }
         stopPolling()
         do {
-            let run = try await api.startListingRun(publish: publish, schedule: schedule)
+            let run = try await api.startListingRun(
+                publish: publish,
+                schedule: schedule,
+                scansFolder: requestedScansFolder
+            )
             activeRun = run
             pollError = nil
             upsert(run)

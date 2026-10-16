@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from shoebox.models.listing_queue import ListingQueueRow
+from shoebox.settings import normalize_onedrive_folder
 
 MAX_ROWS = 500
 
@@ -156,12 +157,22 @@ class HealthResponse(BaseModel):
 
 
 class StartListingRunRequest(BaseModel):
-    """``POST /queue/listings``: the only two choices the app offers. Prices
-    are never scraped on an app-triggered run."""
+    """``POST /queue/listings``: the choices the app offers. Prices are never
+    scraped on an app-triggered run. ``scans_folder`` reads the scans from
+    that OneDrive folder instead of ``onedrive.scans_folder``; blank or absent
+    keeps the configured one."""
 
     model_config = ConfigDict(extra="forbid")
     publish: bool = True
     schedule: bool = True
+    scans_folder: str | None = None
+
+    @field_validator("scans_folder")
+    @classmethod
+    def _folder(cls, value: str | None) -> str | None:
+        if value is None or not value.strip():
+            return None
+        return normalize_onedrive_folder(value)
 
 
 class ListingRunsResponse(BaseModel):
