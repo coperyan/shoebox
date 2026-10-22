@@ -155,3 +155,13 @@ def test_id_normalizers_accept_both_spellings():
     assert offer_id_of(None) is None
     assert listing_id_of({"listing_id": "1"}) == "1"
     assert listing_id_of({"listingId": 2}) == "2"
+
+
+class TestDeleteInventoryItem:
+    def test_delete_is_not_retried(self):
+        client, api = build_client(
+            {"sell_inventory_delete_inventory_item": api_error(INVENTORY_TRANSIENT_ERROR)}
+        )
+        with pytest.raises(EbayApiError):
+            client.delete_inventory_item("A")
+        assert api.calls == [("sell_inventory_delete_inventory_item", {"sku": "A"})]
