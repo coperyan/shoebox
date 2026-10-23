@@ -145,6 +145,14 @@ def apply_assignments(
         targets = targets.head(limit)
 
     ids = category_ids(ebay_api)
+    # The inventory route PUTs the whole offer; its stored price is stale for
+    # anything repriced in Seller Hub, so each update carries the live one.
+    prices: dict[str, float] = {}
+    for listing in ebay_api.trading.get_active_listings():
+        try:
+            prices[str(listing["item_id"])] = float(listing["price"])
+        except (KeyError, TypeError, ValueError):
+            continue
     listings = ListingService(ebay_api)
     statuses: list[str] = []
     errors: list[str] = []
@@ -170,11 +178,15 @@ def apply_assignments(
                 missing = [c for c, r in zip(categories, resolved, strict=True) if r is None]
                 raise ValueError(f"store category not found: {', '.join(missing)}")
 
+            live_price = prices.get(str(item_id)) if item_id else None
+            if sku and live_price is None:
+                raise ValueError("no live price from GetMyeBaySelling for this item_id")
             outcome = listings.update_store_categories(
                 categories=categories,
                 category_ids=[r for r in resolved if r],
                 sku=sku or None,
                 item_id=item_id or None,
+                live_price=live_price,
             )
             statuses.append("skipped" if outcome.get("skipped") else "updated")
             errors.append("")

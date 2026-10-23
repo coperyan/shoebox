@@ -88,6 +88,9 @@ teams:
     "American League": "AL"
 
   nfl:
+    # Also listed under mlb_historical, so the name implies no one sport and
+    # the Sport item specific decides (see title_crosswalk.team_sport).
+    "New York Giants": "Giants"
     "Arizona Cardinals": "Cardinals"
     "Atlanta Falcons": "Falcons"
     "Baltimore Ravens": "Ravens"

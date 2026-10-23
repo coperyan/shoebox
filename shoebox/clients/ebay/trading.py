@@ -288,6 +288,10 @@ class TradingClient:
             "start_time": dig(item, ["ListingDetails", "StartTime"]),
             "end_time": dig(item, ["ListingDetails", "EndTime"]),
             "view_item_url": dig(item, ["ListingDetails", "ViewItemURL"]),
+            # Store categories come back as numeric IDs; resolve them against
+            # StoresClient.get_store_categories. "1" is eBay's "Other".
+            "store_category_id": dig(item, ["Storefront", "StoreCategoryID"]),
+            "store_category2_id": dig(item, ["Storefront", "StoreCategory2ID"]),
             "item_specifics": specifics,
         }
 

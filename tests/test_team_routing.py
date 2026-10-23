@@ -113,6 +113,8 @@ class TestTeamSport:
 
     def test_college_implies_no_single_sport(self):
         assert team_sport("Marquette Golden Eagles") is None
+        # Shared by the NFL club and the historical MLB club.
+        assert team_sport("New York Giants") is None
         assert team_sport("Ole Miss Rebels") is None
 
     def test_unknown_team_implies_no_sport(self):

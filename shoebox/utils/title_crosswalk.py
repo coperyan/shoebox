@@ -79,7 +79,13 @@ def _crosswalk() -> dict:
             key = _normalize(long_name)
             teams[key] = str(short_name)
             display[key] = str(long_name)
-            team_sports[key] = sport
+            # A name listed under two sports (the NFL and the historical MLB
+            # "New York Giants") implies neither; the Sport item specific
+            # decides for those, the same way college teams work.
+            if key in team_sports and team_sports[key] != sport:
+                team_sports[key] = None
+            else:
+                team_sports[key] = sport
 
     # Only exceptions are configured; every other team parents to its short
     # name, which already folds most alternate spellings together.
@@ -256,7 +262,9 @@ def team_sport(long_name: str | None) -> str | None:
 
     Preferred over the Sport item specific, which disagrees on a small number of
     listings -- basketball cards tagged Baseball, mostly. College teams field
-    several sports, so they return None and leave the decision to the caller.
+    several sports, and a name shared by clubs in two sports ("New York
+    Giants") fits either, so those return None and leave the decision to the
+    caller.
     """
     if not long_name:
         return None

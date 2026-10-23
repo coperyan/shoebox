@@ -7,6 +7,7 @@ from shoebox.models.ebay.inventory_item import InventoryItem
 from shoebox.models.ebay_listing import EbayListingDraft
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.settings import get_settings
+from shoebox.transforms.store_category_builder import plan_store_category
 from shoebox.utils.title_crosswalk import shorten_team_name
 
 # eBay caps Inventory API description fields (inventory item product.description
@@ -316,19 +317,36 @@ def title(r: ListingQueueRow) -> str:
     return title
 
 
+def store_categories(r: ListingQueueRow) -> list[str]:
+    """The store category paths a new single-card listing is filed under.
+
+    Primary is the sport branch, broken out by team for baseball; the second
+    slot is the Hits category when the card is an autograph, relic, serial
+    numbered or short print. The rules live in
+    :func:`shoebox.transforms.store_category_builder.plan_store_category`, the
+    same ones ``plan-store-categories`` runs over the live store, so a new
+    listing lands where a recategorized one would.
+
+    These are full ``/path`` names: the Inventory API matches
+    ``storeCategoryNames`` against the live tree and silently files anything it
+    cannot find under "Other", which is exactly what the old flat names
+    ("Parallels", "Base Cards", ...) did once the tree was restructured.
+    """
+    plan = plan_store_category(
+        title=title(r),
+        team=r.team,
+        sport=sport(r.set_name),
+        features=" | ".join(features(r)),
+        subset_name=r.subset_name,
+        print_run=r.print_run,
+        autographed="Yes" if autographed(r.subset_name) else "No",
+    )
+    return list(plan.categories)
+
+
 def store_category(r: ListingQueueRow) -> str:
-    if autographed(r.subset_name):
-        return "Autographs"
-    elif relic(r.subset_name, r.parallel_note):
-        return "Relics"
-    elif r.print_run:
-        return "Serial Numbered"
-    elif r.parallel_variety:
-        return "Parallels"
-    elif insert_set(r.subset_name, r.subset_type):
-        return "Inserts"
-    else:
-        return "Base Cards"
+    """The primary store category path; see :func:`store_categories`."""
+    return store_categories(r)[0]
 
 
 def build_aspects(row: ListingQueueRow) -> dict[str, Any]:
@@ -439,7 +457,7 @@ def build_offer_payload(*, draft: EbayListingDraft) -> dict[str, Any]:
             "returnPolicyId": store.policies.return_policy_id,
             "bestOfferTerms": {"bestOfferEnabled": True},
         },
-        "storeCategoryNames": [draft.store_category],
+        "storeCategoryNames": list(draft.store_categories) or [draft.store_category],
         "pricingSummary": {"price": {"value": float(draft.price), "currency": "USD"}},
     }
     if draft.listing_start_date:
@@ -534,6 +552,23 @@ def _to_camel(snake: str) -> str:
     return head + "".join(word.title() for word in rest)
 
 
+def live_store_category_names(names: list) -> list[str]:
+    """Store category names as read off an offer, in the form eBay accepts back.
+
+    ``getOffers`` reports an empty second slot as the string ``"None"`` and
+    drops the leading slash the Inventory API wants on the way in, so a
+    round-tripped list needs both put right or the relisted offer lands in
+    "Other".
+    """
+    out: list[str] = []
+    for name in names or []:
+        text = str(name or "").strip()
+        if not text or text.casefold() == "none":
+            continue
+        out.append(text if text.startswith("/") else f"/{text}")
+    return out
+
+
 def rebuild_offer_body(
     existing_offer: dict, new_price: float, schedule_datetime: str = None
 ) -> dict:
@@ -558,9 +593,7 @@ def rebuild_offer_body(
             "returnPolicyId": store.policies.return_policy_id,
             "bestOfferTerms": {"bestOfferEnabled": True},
         },
-        "storeCategoryNames": [
-            x for x in existing_offer["store_category_names"] if "None" not in x
-        ],
+        "storeCategoryNames": live_store_category_names(existing_offer["store_category_names"]),
         "pricingSummary": {"price": {"value": new_price, "currency": "USD"}},
     }
     if schedule_datetime:
@@ -568,7 +601,9 @@ def rebuild_offer_body(
     return d
 
 
-def offer_body_with_store_categories(existing_offer: dict, categories: list[str]) -> dict:
+def offer_body_with_store_categories(
+    existing_offer: dict, categories: list[str], *, live_price: float | None = None
+) -> dict:
     """Rebuild an offer payload changing only which store categories it sits in.
 
     Unlike :func:`rebuild_offer_body`, nothing else is recomputed: the price,
@@ -578,11 +613,18 @@ def offer_body_with_store_categories(existing_offer: dict, categories: list[str]
     the threshold since it was created.
 
     ``updateOffer`` is a full PUT, so every required field has to be present
-    even though only ``storeCategoryNames`` is changing.
+    even though only ``storeCategoryNames`` is changing. **Pass
+    ``live_price``.** The offer's own price is only what the Inventory API
+    last wrote; a price changed in Seller Hub or via Trading never reaches the
+    offer, so a PUT that trusts it silently reverts the listing to the stale
+    value -- 25 listings went back to the app's $0.99 default that way. The
+    live price comes from GetMyeBaySelling / GetItem.
     """
     policies = existing_offer.get("listing_policies") or {}
     pricing = existing_offer.get("pricing_summary") or {}
-    price = pricing.get("price") or {}
+    price = dict(pricing.get("price") or {})
+    if live_price is not None:
+        price["value"] = live_price
 
     listing_policies: dict[str, Any] = {
         "fulfillmentPolicyId": policies.get("fulfillment_policy_id"),
@@ -632,6 +674,7 @@ def build_draft(
     )
     draft_desc = draft_specifics + store_footer_html()
     aspects = build_aspects(row)
+    categories = store_categories(row)
 
     if schedule:
         listing_start_date = (datetime.now(UTC) + timedelta(days=19)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -646,7 +689,8 @@ def build_draft(
         quantity=row.quantity,
         price=float(row.price),
         category_id=get_settings().store.category_id,
-        store_category=store_category(row),
+        store_category=categories[0],
+        store_categories=categories,
         listing_start_date=listing_start_date,
         condition_id="",
         image_urls=image_urls,

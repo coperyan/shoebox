@@ -104,9 +104,9 @@ class TestSportResolution:
 class TestHits:
     def test_autograph_relic_and_numbered_each_get_a_second_category(self):
         cases = [
-            ({"subset_name": "Rookie Autographs"}, "/A_Hits/Autographs"),
-            ({"features": "Relic"}, "/A_Hits/Relics"),
-            ({"print_run": "150"}, "/A_Hits/Numbered"),
+            ({"subset_name": "Rookie Autographs"}, "/Hits/Autographs"),
+            ({"features": "Relic"}, "/Hits/Relics"),
+            ({"print_run": "150"}, "/Hits/Numbered"),
         ]
         for kwargs, expected in cases:
             plan = plan_store_category(
@@ -141,7 +141,7 @@ class TestHits:
             title="a card", team="Dallas Mavericks", sport="Basketball", print_run="99"
         )
         assert plan.hit == "Numbered"
-        assert plan.categories == ["/Basketball Singles", "/A_Hits/Numbered"]
+        assert plan.categories == ["/Basketball Singles", "/Hits/Numbered"]
 
     def test_never_exceeds_the_ebay_cap(self):
         plan = plan_store_category(
@@ -248,7 +248,7 @@ class TestBuildCategoryPlan:
     def test_store_category_names_carry_both_slots(self):
         plan = build_category_plan(self._frame())
         assert plan.loc[0, "store_category_names"] == (
-            "/Baseball Singles/San Francisco Giants | /A_Hits/Autographs"
+            "/Baseball Singles/San Francisco Giants | /Hits/Autographs"
         )
         assert plan.loc[0, "category_count"] == 2
         assert plan.loc[1, "store_category_names"] == "/Complete Your Set - You Pick"
@@ -257,5 +257,89 @@ class TestBuildCategoryPlan:
         counts = category_counts(build_category_plan(self._frame()))
         by_category = dict(zip(counts["category"], counts["listings"], strict=True))
         assert by_category["/Baseball Singles/San Francisco Giants"] == 1
-        assert by_category["/A_Hits/Autographs"] == 1
+        assert by_category["/Hits/Autographs"] == 1
         assert by_category["/Basketball Singles"] == 1
+
+
+class TestShortPrintsAndGraded:
+    def test_short_print_is_the_fallback_hit(self):
+        plan = plan_store_category(
+            title="a card",
+            team="Chicago Cubs",
+            sport="Baseball",
+            features="[Base] | Parallel/Variety | Short Print",
+        )
+        assert plan.categories == ["/Baseball Singles/Chicago Cubs", "/Hits/Short Prints"]
+
+    def test_a_numbered_short_print_is_numbered(self):
+        assert hit_type(features="Short Print", print_run="25") == "Numbered"
+        assert hit_type(features="Short Print") == "Short Prints"
+
+    def test_graded_cards_leave_the_team_branch(self):
+        plan = plan_store_category(
+            title="a card",
+            team="New York Yankees",
+            sport="Baseball",
+            graded=True,
+            print_run="99",
+        )
+        assert plan.is_graded
+        assert plan.team is None
+        assert plan.categories == ["/Graded Singles", "/Hits/Numbered"]
+
+    def test_graded_accepts_the_string_forms_the_view_emits(self):
+        for value in ("true", "Yes", "TRUE"):
+            assert plan_store_category(title="a", sport="Football", graded=value).is_graded
+        for value in ("false", "No", "", None, False):
+            assert not plan_store_category(title="a", sport="Football", graded=value).is_graded
+
+
+class TestHitsBranchName:
+    def test_hits_branch_matches_the_live_store_tree(self):
+        # The Inventory API matches storeCategoryNames by path and silently
+        # files anything it cannot find under "Other". The branch was renamed
+        # from A_Hits once and every new listing landed in Other for it.
+        from shoebox.transforms.store_category_builder import HITS_PARENT
+
+        assert HITS_PARENT == "Hits"
+
+
+class TestTitleSportConflict:
+    def test_football_title_routed_to_a_baseball_team_is_flagged(self):
+        plan = plan_store_category(
+            title="2026 Bowman Football Chrome Malachi Fields Gold Refractor Giants (RC) /50",
+            team="New York Giants",
+            sport="Baseball",
+        )
+        assert plan.primary == "/Baseball Singles/San Francisco Giants"
+        assert "title_sport_conflict" in plan.notes
+
+    def test_matching_or_absent_sport_words_are_not_flagged(self):
+        ok = plan_store_category(
+            title="2026 Topps Allen & Ginter - Hank Aaron #CR-11 Braves",
+            team="Atlanta Braves",
+            sport="Baseball",
+        )
+        assert "title_sport_conflict" not in ok.notes
+        ok = plan_store_category(
+            title="2025 Bowman Baseball Chrome Prospects", team="Chicago Cubs", sport="Baseball"
+        )
+        assert "title_sport_conflict" not in ok.notes
+
+
+class TestAmbiguousTeamNames:
+    def test_nfl_giants_follow_the_sport_specific(self):
+        plan = plan_store_category(
+            title="2026 Bowman Football Chrome Malachi Fields Giants (RC) /50",
+            team="New York Giants",
+            sport="Football",
+            print_run="50",
+        )
+        assert plan.categories == ["/Football Singles", "/Hits/Numbered"]
+        assert "title_sport_conflict" not in plan.notes
+
+    def test_historical_baseball_giants_still_file_with_san_francisco(self):
+        plan = plan_store_category(
+            title="1952 Bowman Willie Mays #218 Giants", team="New York Giants", sport="Baseball"
+        )
+        assert plan.primary == "/Baseball Singles/San Francisco Giants"

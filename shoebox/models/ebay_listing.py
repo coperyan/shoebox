@@ -28,7 +28,11 @@ class EbayListingDraft(Model):
     # eBay category/condition/etc. are typically defaults for cards
     category_id: str | None = None
     condition_id: str | None = None
+    # Primary store category path, kept for callers that read one value.
     store_category: str | None = None
+    # Every store category path the offer is filed under (eBay allows two):
+    # the sport/team branch first, then a Hits category when the card is one.
+    store_categories: list[str] = Field(default_factory=list)
     listing_start_date: str | None = None
 
     # image urls (public)

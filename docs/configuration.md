@@ -347,6 +347,6 @@ The following are still hardcoded — changing them means editing code:
 |---|---|
 | eBay condition **descriptor** codes (`40001` / `400010`) | `listing_builder.build_inventory_item_payload`, `variation_listing_builder` |
 | Package weight/dimensions (1 oz LETTER, 7×5×1 in) | `listing_builder`, `variation_listing_builder` |
-| Store category names (Autographs/Relics/…) and the rules that pick them | `listing_builder.store_category`, `variation_listing_builder.variation_store_category` |
+| Store category tree (`/Baseball Singles/<team>`, `/Hits/…`, `/Graded Singles`, `/Complete Your Set - You Pick`) and the rules that pick them | `transforms/store_category_builder.py` (used by `create-listings`, `plan-store-categories` and `scripts/recategorize_active_listings.py`) |
 | Listing HTML footer boilerplate (shipping terms) — only the store name is templated | `listing_builder._STORE_FOOTER_TEMPLATE` |
 | Item-specific/aspect derivation rules (sport, league, features) | `listing_builder`, `variation_listing_builder` |

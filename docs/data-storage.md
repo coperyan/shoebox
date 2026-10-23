@@ -43,7 +43,7 @@ by the shipped SQL views/queries:
 | `<checklist_dataset>` | `parallels` | `sync-metadata` | `parallels.json` | Full replace per sync |
 | `ebay` | `orders` | `sync-orders` | `orders.json` | One row per order line item (~40 cols from `Order.flattened_line_items`) |
 | `ebay` | `active_listings` | `sync-active-listings` | `active_listings.json` | Snapshot incl. impressions/views |
-| `ebay` | `active_listing_details` | `sync-active-listing-details` | `active_listing_details.json` | Adds item-specifics + picture URLs as JSON columns |
+| `ebay` | `active_listing_details` | `sync-active-listing-details` | `active_listing_details.json` | Adds item-specifics + picture URLs as JSON columns, plus `store_category_id` / `store_category2_id` (eBay's `1` = Other) |
 | `ebay` | `watch_list` | `sync-watch-list` | `watch_list.json` | Watched listings (any seller) + item-specifics/picture URLs as JSON columns; `detail_error` set when `GetItem` failed |
 | `ebay` | `ebay_listings` | `create-listings` / variation pipeline | `ebay_listings.json` | `EbayListingResult` rows: sku, ids, success, full request/response JSON |
 | `images` | `image_log` | `ImageLogClient` | `image_log.json` | One row per net-new image upload |

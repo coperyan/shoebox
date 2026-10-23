@@ -14,6 +14,7 @@ from shoebox.transforms.listing_builder import (
     sport,
     store_footer_html,
 )
+from shoebox.transforms.store_category_builder import VARIATION_CATEGORY, category_path
 
 
 @dataclass
@@ -190,13 +191,14 @@ def build_item_group_payload(
 
 
 def variation_store_category(row: ChecklistVariationRow) -> str:
-    if autographed(row.subset_name):
-        return "Autographs"
-    if relic(row.subset_name, None):
-        return "Relics"
-    if insert_set(row.subset_name, row.subset_type):
-        return "Inserts"
-    return "Base Cards"
+    """The store category path for a "Complete Your Set" group listing.
+
+    Every You Pick listing sits in the one You Pick branch -- it spans a whole
+    set, so it has no team and no single card to call a hit. This has to be a
+    live ``/path`` name: the Inventory API files any name it cannot match in
+    the store tree under "Other".
+    """
+    return category_path(VARIATION_CATEGORY)
 
 
 def build_sku_offer_payload(

@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **New listings landed in the "Other" store category.** `create-listings`
+  still sent the pre-restructure flat names (`Parallels`, `Base Cards`,
+  `Inserts`, `Serial Numbered`, …) as `storeCategoryNames`, and the Inventory
+  API files any name it cannot match in the store tree under Other. `build_draft`
+  now runs the row through `store_category_builder.plan_store_category` -- the
+  same rules `plan-store-categories` uses -- and sends the full path list
+  (`/Baseball Singles/<team>` + `/Hits/<type>`). `EbayListingDraft` gains
+  `store_categories`; `store_category` is the primary. Variation listings now
+  go to `/Complete Your Set - You Pick` instead of the dead flat names.
+- **Store category updates reverted prices.** The inventory route PUTs the
+  whole offer, and an offer's stored price is whatever the Inventory API last
+  wrote -- a listing repriced in Seller Hub keeps the old value on the offer.
+  Moving 25 listings that had been listed at the app's $0.99 default and
+  repriced by hand put them back to $0.99. `update_store_categories` now
+  requires `live_price` (from GetMyeBaySelling, read once per run by the
+  clean-up script and `assign-store-categories`) and
+  `offer_body_with_store_categories` writes it into the PUT; prices were
+  restored from the pre-run BigQuery snapshot (`exports/csv/price_restore_2026_10_22.csv`).
+- **Hits branch name.** The builder said `/A_Hits/…`; the live tree is
+  `/Hits/…`. A test pins the name.
+- **NFL Giants filed with the MLB Giants.** The crosswalk only knew "New York
+  Giants" as the historical baseball club, and the team wins over the Sport
+  specific, so six football cards planned into `/Baseball Singles/San
+  Francisco Giants`. A team name listed under two sports now implies neither
+  (`team_sport` returns None, like college teams) and the Sport specific
+  decides; the NFL club is in the `nfl` group. The planner also notes
+  `title_sport_conflict` when a title names a different sport than the one it
+  resolved to, and the clean-up script holds those listings back.
+
+### Added
+
+- **`scripts/recategorize_active_listings.py`.** Ad hoc clean-up: plan every
+  active listing from BigQuery, read its current categories off the live offer
+  (or the snapshot IDs for SKU-less listings), and push primary + Hits only
+  where they differ. `--since`, `--sport`, `--limit`, `--apply`; writes a CSV
+  per run plus a working copy that `--from-plan` applies later as written.
+- **Store category rules.** `/Hits/Short Prints` for short prints (below
+  Numbered in precedence) and `/Graded Singles` for graded cards (`is_graded`
+  from the view, or condition `2750`).
+- **Store category IDs in snapshots.** `get_item_details` captures
+  `Storefront.StoreCategoryID` / `StoreCategory2ID`; the
+  `active_listing_details` schema and `store_category_plan.sql` carry them.
+
 ### Changed
 
 - **iOS form.** *Clear* and *Save* sit in the Queue tab's top bar (*Save* reads
