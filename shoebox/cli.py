@@ -158,6 +158,38 @@ def main() -> None:
     p_relist.add_argument("--no-scrape", action="store_true")
     p_relist.add_argument("--dry-run", action="store_true")
 
+    # Refresh listings: delete the inventory item, recreate it as a new listing
+    p_refresh = sub.add_parser(
+        "refresh-listings",
+        help="End live listings by deleting their inventory item, then recreate them as new",
+    )
+    p_refresh.add_argument("--sku", action="append", default=[], help="SKU to refresh (repeat)")
+    p_refresh.add_argument(
+        "--item-id", action="append", default=[], help="eBay item ID to refresh (repeat)"
+    )
+    p_refresh.add_argument(
+        "--aged",
+        action="store_true",
+        help="Pick listings by the relist-listings criteria (age, price, impressions)",
+    )
+    p_refresh.add_argument("--min-age", type=int, default=90, help="--aged: min days live")
+    p_refresh.add_argument("--min-price", type=float, default=2, help="--aged: price above")
+    p_refresh.add_argument(
+        "--min-impressions", type=int, default=100, help="--aged: min 90-day impressions"
+    )
+    p_refresh.add_argument(
+        "--include-watched", action="store_true", help="Refresh watched listings too"
+    )
+    p_refresh.add_argument("--limit", type=int, help="Cap how many listings are refreshed")
+    p_refresh.add_argument(
+        "--apply", action="store_true", help="Delete and recreate on eBay (default: preview only)"
+    )
+    p_refresh.add_argument(
+        "--restore",
+        metavar="PATH",
+        help="Recreate listings from a snapshot file or run directory left by a failed refresh",
+    )
+
     # Send offers to watchers
     p_offers = sub.add_parser(
         "send-offers", help="Send negotiation offers to eligible watchers via Slack prompts"
@@ -600,6 +632,25 @@ def main() -> None:
             price_scrape=not args.no_scrape,
             dry_run=args.dry_run,
         )
+        return
+
+    if args.cmd == "refresh-listings":
+        from shoebox.pipelines import refresh_listings
+
+        if args.restore:
+            refresh_listings.restore(Path(args.restore))
+        else:
+            refresh_listings.main(
+                skus=args.sku,
+                item_ids=args.item_id,
+                aged=args.aged,
+                min_age=args.min_age,
+                min_price=args.min_price,
+                min_impressions=args.min_impressions,
+                include_watched=args.include_watched,
+                limit=args.limit,
+                apply=args.apply,
+            )
         return
 
     if args.cmd == "send-offers":

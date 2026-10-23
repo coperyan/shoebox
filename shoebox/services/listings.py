@@ -2,6 +2,7 @@
 
 Each method here is a multi-step recipe: an inventory upsert followed by an
 offer, a publish, and a promotion; a relist that tears down and rebuilds; a
+refresh that deletes the inventory item and recreates it from scratch; a
 retitle that picks the Inventory or Trading route by what identifies the
 listing. None of it is a wrapper around a single eBay call -- that is the
 sub-clients' job -- and none of it belongs to any one sub-client.
@@ -13,6 +14,7 @@ This is also the layer allowed to know how request bodies are built
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from shoebox.clients.ebay.client import EbayClient
@@ -140,6 +142,110 @@ class ListingService:
         logger.info("Published sku=%s listing_id=%s", sku, listing_id_of(out["publish"]))
 
         if promote_listing and campaign_id:
+            try:
+                self.ebay.marketing.create_ads_by_inventory_reference(
+                    sku=sku, rate=promote_rate, campaign_id=campaign_id
+                )
+                logger.info("Promoted sku=%s campaign_id=%s", sku, campaign_id)
+            except Exception as e:
+                logger.warning("Failed to promote sku=%s: %s", sku, e)
+
+        return out
+
+    def refresh_listing(
+        self,
+        *,
+        sku: str,
+        inventory_item_body: dict[str, Any],
+        offer_body: dict[str, Any],
+        existing_ad_id: str | None = None,
+        campaign_id: str | None = None,
+        promote_rate: int = 7,
+        settle_seconds: float = 5,
+    ) -> dict[str, Any]:
+        """
+        Fresh-listing flow: delete the inventory item, then build it again.
+
+        Where :meth:`relist_listing` keeps the inventory item and swaps only
+        the offer, this goes through deleteInventoryItem -- which ends the live
+        listing and deletes every offer on the SKU -- and then recreates the
+        item and a brand-new offer from the bodies passed in, so the published
+        listing shares nothing with the old one but the SKU.
+
+        Build both bodies (and re-host the pictures) *before* calling this:
+        once the delete goes through, eBay no longer has them. The recreate
+        half is :meth:`recreate_listing`, safe to re-run on its own if it fails.
+        """
+        if existing_ad_id and campaign_id:
+            try:
+                self.ebay.marketing.delete_ad(campaign_id=campaign_id, ad_id=existing_ad_id)
+                logger.info("Deleted ad ad_id=%s for sku=%s", existing_ad_id, sku)
+            except Exception as e:
+                logger.warning("Failed to delete ad ad_id=%s: %s", existing_ad_id, e)
+
+        self.ebay.inventory.delete_inventory_item(sku)
+        logger.info("Deleted inventory item sku=%s (old listing ended, offers deleted)", sku)
+        if settle_seconds:
+            # Give eBay a moment to finish ending the old listing before the
+            # same SKU is created again.
+            time.sleep(settle_seconds)
+
+        return self.recreate_listing(
+            sku=sku,
+            inventory_item_body=inventory_item_body,
+            offer_body=offer_body,
+            campaign_id=campaign_id,
+            promote_rate=promote_rate,
+        )
+
+    def recreate_listing(
+        self,
+        *,
+        sku: str,
+        inventory_item_body: dict[str, Any],
+        offer_body: dict[str, Any],
+        campaign_id: str | None = None,
+        promote_rate: int = 7,
+    ) -> dict[str, Any]:
+        """
+        Second half of :meth:`refresh_listing`: upsert the item, create (or
+        reuse an unpublished) offer, publish, promote when ``campaign_id`` is set.
+
+        Idempotent, so it doubles as the recovery step when a refresh fails
+        after its delete: an offer a previous attempt already created is
+        updated rather than duplicated, and one already published is left alone.
+        """
+        out: dict[str, Any] = {}
+
+        out["inventory_item"] = self.ebay.inventory.upsert_inventory_item(sku, inventory_item_body)
+        logger.info("Recreated inventory item sku=%s", sku)
+
+        existing = self.ebay.inventory.find_offer(sku)
+        if existing is not None and existing.status == "PUBLISHED":
+            logger.info(
+                "sku=%s already has a published offer listing_id=%s; nothing to recreate",
+                sku,
+                existing.listing_id,
+            )
+            out["offer"] = {"offer_id": existing.offer_id}
+            out["publish"] = {"listing_id": existing.listing_id}
+            return out
+        if existing is None:
+            out["offer"] = self.ebay.inventory.create_offer(offer_body)
+            offer_id = offer_id_of(out["offer"])
+            logger.info("Created offer offer_id=%s for sku=%s", offer_id, sku)
+        else:
+            offer_id = existing.offer_id
+            self.ebay.inventory.update_offer(offer_id, offer_body)
+            out["offer"] = {"offer_id": offer_id}
+            logger.info("Reused unpublished offer offer_id=%s for sku=%s", offer_id, sku)
+        if not offer_id:
+            raise EbayClientError(f"createOffer response did not contain offer_id: {out['offer']}")
+
+        out["publish"] = self.ebay.inventory.publish_offer(offer_id)
+        logger.info("Published sku=%s listing_id=%s", sku, listing_id_of(out["publish"]))
+
+        if campaign_id:
             try:
                 self.ebay.marketing.create_ads_by_inventory_reference(
                     sku=sku, rate=promote_rate, campaign_id=campaign_id
