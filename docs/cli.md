@@ -179,6 +179,43 @@ reply skips that listing. Cheaper/no-view listings are auto-repriced by rule.
 | `--no-scrape` | Skip 130point price scraping (approval prompt still fires, proposing the current price) |
 | `--dry-run` | Log the repricing decision for each listing without contacting eBay or Slack |
 
+### `refresh-listings`
+The "end listing, sell similar" refresh through the API. Where `relist-listings`
+keeps each SKU's inventory item and only swaps its offer, this calls
+`deleteInventoryItem` — which ends the live listing and deletes its offers —
+then recreates the item and a brand-new offer from what eBay held, so the
+result is a new listing (new item ID) unrelated to the old one. Title,
+description, aspects, condition, packaging, price, policies (best-offer
+thresholds included) and store categories are carried across unchanged;
+pictures are re-hosted in GCS from the live listing first. A promoted listing
+is re-promoted in the same campaign at its old ad rate.
+
+Preview is the default: it builds and writes the snapshots without touching
+eBay or GCS. Each listing's snapshot goes to
+`<exports_dir>/refresh_snapshots/<run>/<sku>.json` **before** anything is
+deleted, with a `report.csv` beside them (old → new item ID). If a recreate
+fails after the delete, `--restore` rebuilds from the snapshot.
+
+A refresh drops watchers, view/sales history and open best offers, so watched
+listings are skipped unless `--include-watched`. Variation listings, and SKUs
+whose offer isn't live on the listing, are refused.
+
+| Flag | Effect |
+|---|---|
+| `--sku` / `--item-id` | Listing(s) to refresh; repeat for more |
+| `--aged` | Pick listings by the relist criteria instead (`--min-age` 90, `--min-price` 2, `--min-impressions` 100) |
+| `--include-watched` | Refresh listings with watchers too |
+| `--limit N` | Cap how many listings are refreshed |
+| `--apply` | Actually delete and recreate on eBay |
+| `--restore PATH` | Recreate from a snapshot file, or every snapshot in a run directory (idempotent) |
+
+```bash
+shoebox refresh-listings --item-id 123456789012           # preview
+shoebox refresh-listings --item-id 123456789012 --apply
+shoebox refresh-listings --aged --limit 10 --apply
+shoebox refresh-listings --restore exports/refresh_snapshots/20261022T150000Z
+```
+
 ### `end-oos-listings`
 Ends every active "out of stock" listing (quantity − sold = 0) via the Trading
 API and notifies the Slack notify channel with the count.

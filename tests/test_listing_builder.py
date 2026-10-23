@@ -233,4 +233,6 @@ class TestLiveStoreCategoryNames:
             "/Baseball Singles/Chicago Cubs"
         ]
         assert live_store_category_names(["/Hits/Numbered", "", None]) == ["/Hits/Numbered"]
+        # The empty slot also comes back as "/None".
+        assert live_store_category_names(["/Baseball/Base", "/None"]) == ["/Baseball/Base"]
         assert live_store_category_names([]) == []

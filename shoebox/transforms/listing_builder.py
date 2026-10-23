@@ -562,11 +562,73 @@ def live_store_category_names(names: list) -> list[str]:
     """
     out: list[str] = []
     for name in names or []:
-        text = str(name or "").strip()
+        text = str(name or "").strip().lstrip("/")
         if not text or text.casefold() == "none":
             continue
-        out.append(text if text.startswith("/") else f"/{text}")
+        out.append(f"/{text}")
     return out
+
+
+def _camelize(value: Any) -> Any:
+    """Deep snake_case -> camelCase of an ebay_rest response, dropping nulls."""
+    if isinstance(value, dict):
+        return {
+            _to_camel(k): _camelize(v)
+            for k, v in value.items()
+            if v is not None and v != [] and v != {}
+        }
+    if isinstance(value, list):
+        return [_camelize(v) for v in value if v is not None]
+    return value
+
+
+# Product fields round_trip_inventory_item_body doesn't send, carried by a refresh.
+_PRODUCT_EXTRAS = ("subtitle", "brand", "mpn", "epid", "upc", "ean", "isbn", "video_ids")
+
+
+def refresh_inventory_item_body(item: InventoryItem, image_urls: list[str]) -> dict[str, Any]:
+    """The body to recreate a deleted inventory item exactly as it was.
+
+    :func:`round_trip_inventory_item_body` plus the product identifiers and
+    condition description it leaves alone (an in-place upsert keeps those; a
+    recreate after deleteInventoryItem would lose them). Pass ``image_urls``
+    re-hosted from the live listing, for the reason given there.
+    """
+    body = round_trip_inventory_item_body(item, image_urls=image_urls)
+    product = item.product
+    for field in _PRODUCT_EXTRAS:
+        value = getattr(product, field, None)
+        if value:
+            body["product"][_to_camel(field)] = value
+    if item.condition_description:
+        body["conditionDescription"] = item.condition_description
+    return body
+
+
+# getOffer fields that describe the offer's state rather than the listing; a
+# createOffer body must not carry them. listing_start_date is in the past for a
+# live listing, and the new one should start now.
+_OFFER_READ_ONLY = ("offer_id", "offerId", "status", "listing", "listing_start_date")
+
+
+def round_trip_offer_body(existing_offer: dict, *, price: float | None = None) -> dict[str, Any]:
+    """A createOffer body that reproduces ``existing_offer`` field for field.
+
+    Unlike :func:`rebuild_offer_body`, nothing is re-derived from settings:
+    policies (best-offer thresholds included), categories, description, tax,
+    quantity limits and location are sent back exactly as getOffers returned
+    them, so the new listing is the same listing. ``price`` replaces the
+    price when given; otherwise it is kept too.
+    """
+    body = _camelize({k: v for k, v in existing_offer.items() if k not in _OFFER_READ_ONLY})
+    if "storeCategoryNames" in body:
+        # getOffers drops the leading slash and reports an empty slot as
+        # "None"; sent back verbatim the new listing lands in Other.
+        body["storeCategoryNames"] = live_store_category_names(body["storeCategoryNames"])
+    if price is not None:
+        currency = (body.get("pricingSummary", {}).get("price") or {}).get("currency") or "USD"
+        body.setdefault("pricingSummary", {})["price"] = {"value": price, "currency": currency}
+    return body
 
 
 def rebuild_offer_body(

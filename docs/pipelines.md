@@ -204,6 +204,21 @@ which is what lets relist flows find existing inventory items and offers.
   withdraw + delete old offer, create + publish new offer, re-promote (7%).
 - Failures are collected per row and printed; the loop continues.
 
+### `pipelines/refresh_listings.py` (CLI: `refresh-listings`)
+
+- Targets: `--sku` / `--item-id`, or `--aged` (relist criteria). Watched
+  listings are skipped unless asked; most expensive first.
+- Snapshot first (`build_snapshot`): `getInventoryItem` + `getOffers` (must be
+  `PUBLISHED` on this item ID, not a variation member), live pictures re-hosted
+  in GCS, then `refresh_inventory_item_body` / `round_trip_offer_body` build
+  exact copies. Written to `<exports_dir>/refresh_snapshots/<run>/<sku>.json`.
+- Refresh: `ListingService.refresh_listing` — delete old ad, `deleteInventoryItem`
+  (ends the listing, deletes its offers), short settle pause, then
+  `recreate_listing`: upsert item, create offer, publish, re-promote at the old
+  ad rate.
+- `recreate_listing` is idempotent (reuses an unpublished offer, leaves a
+  published one alone), which is what `--restore` runs.
+
 ### `pipelines/end_oos_listings.py`
 
 Trading API: find active listings with zero remaining quantity, end them all
