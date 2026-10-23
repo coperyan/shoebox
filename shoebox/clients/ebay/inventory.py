@@ -5,8 +5,8 @@ quirks are handled in this module and nowhere else:
 
 * errorId 25001 ("Core Inventory Service internal error", HTTP 500) is
   transient. The idempotent calls (item and group upserts, offer updates,
-  publishes) retry it with linear backoff. Creates, deletes and withdrawals do
-  not: a replay of one of those could double up or hide a real failure.
+  publishes) retry it with linear backoff. Creates, deletes (offers and
+  inventory items) and withdrawals do not: a replay of one of those could double up or hide a real failure.
 * ``getOffers`` answers 404 / errorId 25713 ("This Offer is not available")
   for a SKU that has no offer yet. That is the normal state of a brand-new
   listing, so :meth:`InventoryClient.get_offers` returns an empty list.
@@ -130,6 +130,14 @@ class InventoryClient:
             ),
             label=f"inventory upsert sku={sku}",
         )
+
+    def delete_inventory_item(self, sku: str) -> None:
+        """deleteInventoryItem: removes the item *and* everything hanging off the SKU.
+
+        eBay deletes every offer on the SKU and ends any live single-variation
+        listing built from it, so this is the Inventory API's "end listing".
+        """
+        self.api.sell_inventory_delete_inventory_item(sku=sku)
 
     def upsert_inventory_item_group(self, group_key: str, body: dict[str, Any]) -> Any:
         """createOrReplaceInventoryItemGroup for a multi-variation listing. Retries 25001."""

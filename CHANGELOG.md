@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`refresh-listings`.** Refreshes live listings as brand-new ones through the
+  Inventory API: `deleteInventoryItem` ends the listing and deletes its offers,
+  then the item and a new offer are recreated exactly as they were (same body,
+  aspects, condition, price, policies, store categories; pictures re-hosted
+  from the live listing), giving a new item ID with no link to the old one.
+  Targets by `--sku` / `--item-id` or `--aged`; preview unless `--apply`; every
+  listing is snapshotted before its delete, and `--restore` rebuilds from a
+  snapshot if a recreate fails. New `InventoryClient.delete_inventory_item`,
+  `ListingService.refresh_listing` / `recreate_listing`, and the
+  `refresh_inventory_item_body` / `round_trip_offer_body` transforms.
 - **Scans folder per listing run.** The iOS app's *List on eBay* section has a
   *Scans folder* field; `POST /queue/listings` takes an optional
   `scans_folder` (a relative path under the OneDrive root, validated), stored
