@@ -6,7 +6,8 @@ The store tree this builds toward:
     /Baseball Singles/<team>
     /Basketball Singles
     /Football Singles
-    /A_Hits/{Autographs,Relics,Numbered}    -- secondary, every sport
+    /Graded Singles                          -- graded cards, any sport
+    /Hits/{Autographs,Relics,Numbered,Short Prints}   -- secondary, every sport
 
 Only baseball is broken out by team: it is 93% of the shelf, so its 30 clubs
 average ~50 listings each, while basketball (82 listings across 32 teams) and
@@ -29,10 +30,15 @@ from shoebox.utils.title_crosswalk import team_parents, team_sport
 # Level-one branch holding the multi-variation "Complete Your Set" listings.
 VARIATION_CATEGORY = "Complete Your Set - You Pick"
 
-# Parent of the secondary categories that call out the good stuff. The "A_"
-# prefix is load-bearing: it sorts the branch to the top of the store nav, and
-# it is the name the live store tree actually uses.
-HITS_PARENT = "A_Hits"
+# Parent of the secondary categories that call out the good stuff. This has to
+# match the live store tree *exactly* -- the Inventory API matches
+# ``storeCategoryNames`` by path, and a name it cannot find is silently filed
+# under "Other". It was "A_Hits" once; the branch is "Hits" now.
+HITS_PARENT = "Hits"
+
+# Branch for graded cards, regardless of sport or team: a graded card is shopped
+# for as a graded card first.
+GRADED_CATEGORY = "Graded Singles"
 
 # Sports whose singles are broken out by team. See the module docstring.
 TEAM_SUBCATEGORY_SPORTS = frozenset({"Baseball"})
@@ -50,6 +56,11 @@ FALLBACK_SPORT = "Other"
 # eBay caps a listing at two store categories.
 MAX_STORE_CATEGORIES = 2
 
+# Sport words a title can carry ("2026 Bowman Football Chrome ..."). When one
+# of these disagrees with the sport the team and item specific resolved to,
+# the listing's data is suspect and the plan is flagged rather than trusted.
+_TITLE_SPORTS = ("Baseball", "Basketball", "Football")
+
 # Title markers for a multi-variation listing. These are group listings with no
 # single card behind them, so they are never given a team or a hit category.
 _VARIATION_MARKERS = ("complete your set", "you pick")
@@ -57,6 +68,7 @@ _VARIATION_MARKERS = ("complete your set", "you pick")
 _AUTOGRAPH_MARKERS = ("auto", "signature")
 _RELIC_MARKERS = ("relic", "memorabilia", "patch")
 _NUMBERED_MARKERS = ("serial numbered", "numbered")
+_SHORT_PRINT_MARKERS = ("short print",)
 
 
 def _text(value: object) -> str:
@@ -70,6 +82,13 @@ def _text(value: object) -> str:
     if isinstance(value, float) and value != value:  # NaN
         return ""
     return str(value).strip()
+
+
+def _truthy(value: object) -> bool:
+    """True for a boolean True or a yes/true string; anything else is False."""
+    if isinstance(value, bool):
+        return value
+    return _text(value).lower() in ("yes", "true", "1")
 
 
 def is_variation_listing(title: object) -> bool:
@@ -87,9 +106,9 @@ def hit_type(
 ) -> str | None:
     """Which Hits category a card belongs in, or None for an ordinary card.
 
-    Precedence matches the existing ``listing_builder.store_category``: an
-    autographed relic is filed under Autographs, and a numbered parallel only
-    counts as Numbered when it is neither.
+    Precedence: an autographed relic is filed under Autographs, a numbered
+    parallel only counts as Numbered when it is neither, and a short print is
+    the fallback hit -- a numbered short print is Numbered.
     """
     auto = _text(autographed).lower()
     haystack = f"{_text(features)} {_text(subset_name)}".lower()
@@ -100,6 +119,8 @@ def hit_type(
         return "Relics"
     if _text(print_run) or any(m in haystack for m in _NUMBERED_MARKERS):
         return "Numbered"
+    if any(m in haystack for m in _SHORT_PRINT_MARKERS):
+        return "Short Prints"
     return None
 
 
@@ -122,6 +143,13 @@ def resolve_sport(team: object = None, sport: object = None) -> tuple[str, bool]
     return FALLBACK_SPORT, False
 
 
+def title_sport_conflict(title: object, resolved_sport: str) -> bool:
+    """True when the title names a different sport than the listing resolved to."""
+    lowered = _text(title).lower()
+    named = {s for s in _TITLE_SPORTS if s.lower() in lowered}
+    return bool(named) and resolved_sport not in named
+
+
 def category_path(*segments: str) -> str:
     """Join category names into the ``/a/b`` path eBay expects."""
     return "".join(f"/{segment.strip()}" for segment in segments if segment and segment.strip())
@@ -136,6 +164,7 @@ class StoreCategoryPlan:
     team: str | None = None
     hit: str | None = None
     is_variation: bool = False
+    is_graded: bool = False
     notes: list[str] = field(default_factory=list)
 
     @property
@@ -156,11 +185,14 @@ def plan_store_category(
     subset_name: object = None,
     print_run: object = None,
     autographed: object = None,
+    graded: object = None,
 ) -> StoreCategoryPlan:
     """Decide the store categories for a single listing.
 
     Every argument is optional and missing values are tolerated: this runs over
-    a BigQuery export where any item specific may be null.
+    a BigQuery export where any item specific may be null. ``graded`` is the
+    ``is_graded`` flag (or the ``Graded`` item specific); a truthy value files
+    the card under Graded Singles instead of its sport and team.
     """
     notes: list[str] = []
 
@@ -177,9 +209,17 @@ def plan_store_category(
     resolved_sport, confident = resolve_sport(team=team, sport=sport)
     if not confident:
         notes.append("sport_unresolved")
+    if title_sport_conflict(title, resolved_sport):
+        # e.g. a Bowman Football card whose Team is "New York Giants" and
+        # whose Sport specific says Baseball: the team routes to the MLB
+        # Giants. The data, not the rule, is wrong -- say so.
+        notes.append("title_sport_conflict")
 
     team_name: str | None = None
-    if resolved_sport in TEAM_SUBCATEGORY_SPORTS:
+    is_graded = _truthy(graded)
+    if is_graded:
+        primary = category_path(GRADED_CATEGORY)
+    elif resolved_sport in TEAM_SUBCATEGORY_SPORTS:
         parents = team_parents(team)
         team_name = parents[0]
         if len(parents) > 1:
@@ -211,5 +251,6 @@ def plan_store_category(
         sport=resolved_sport,
         team=team_name,
         hit=hit,
+        is_graded=is_graded,
         notes=notes,
     )

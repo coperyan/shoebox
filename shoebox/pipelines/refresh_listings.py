@@ -153,7 +153,9 @@ def build_snapshot(
         "campaign_id": _none_if_nan(row.get("campaign_id")),
         "promote_rate": round(float(rate)) if rate else _DEFAULT_PROMOTE_RATE,
         "inventory_item_body": refresh_inventory_item_body(item, image_urls),
-        "offer_body": round_trip_offer_body(offer.raw),
+        # Live price from GetMyeBaySelling, not the offer's own: a listing
+        # repriced in Seller Hub keeps the old value on its offer.
+        "offer_body": round_trip_offer_body(offer.raw, price=_none_if_nan(row.get("price"))),
         "original": {"inventory_item": item.raw, "offer": offer.raw},
         "taken_at": datetime.now(UTC).isoformat(),
     }

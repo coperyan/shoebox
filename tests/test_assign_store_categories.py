@@ -17,7 +17,7 @@ def _plan() -> pd.DataFrame:
                 "sport": "Baseball",
                 "is_variation": "False",
                 "primary_category": "/Baseball Singles/Chicago Cubs",
-                "secondary_category": "/A_Hits/Numbered",
+                "secondary_category": "/Hits/Numbered",
             },
             {
                 "item_id": "2",
@@ -74,11 +74,11 @@ class TestBuildAssignments:
         # hand-set Hits category is not clobbered.
         out = build_assignments(_plan()).set_index("item_id")
         assert out.loc["1", "secondary_category"] == ""
-        assert out.loc["1", "planned_secondary"] == "/A_Hits/Numbered"
+        assert out.loc["1", "planned_secondary"] == "/Hits/Numbered"
 
     def test_with_hits_pushes_the_planned_category(self):
         out = build_assignments(_plan(), with_hits=True).set_index("item_id")
-        assert out.loc["1", "secondary_category"] == "/A_Hits/Numbered"
+        assert out.loc["1", "secondary_category"] == "/Hits/Numbered"
 
 
 class TestOfferBody:
@@ -122,11 +122,11 @@ class TestOfferBody:
 
     def test_two_categories_are_carried(self):
         body = offer_body_with_store_categories(
-            self._offer(), ["/Baseball Singles/Chicago Cubs", "/A_Hits/Numbered"]
+            self._offer(), ["/Baseball Singles/Chicago Cubs", "/Hits/Numbered"]
         )
         assert body["storeCategoryNames"] == [
             "/Baseball Singles/Chicago Cubs",
-            "/A_Hits/Numbered",
+            "/Hits/Numbered",
         ]
 
     def test_missing_optional_fields_are_dropped_not_nulled(self):
@@ -154,3 +154,43 @@ class TestClientGuards:
 
         with pytest.raises(ValueError, match="Trading needs category_ids"):
             ListingService(ebay=object()).update_store_categories(categories=["/x"], item_id="1")
+
+
+class TestLivePriceCarriedOnUpdate:
+    """A category update must never push the offer's stale price back to the listing."""
+
+    def _offer(self) -> dict:
+        return TestOfferBody._offer()
+
+    def test_live_price_overrides_the_offer_price(self):
+        body = offer_body_with_store_categories(
+            self._offer(), ["/Baseball Singles/Chicago Cubs"], live_price=4.49
+        )
+        assert body["pricingSummary"]["price"]["value"] == 4.49
+        assert body["pricingSummary"]["price"]["currency"] == "USD"
+
+    def test_without_live_price_the_offer_price_is_kept(self):
+        body = offer_body_with_store_categories(self._offer(), ["/Baseball Singles/Chicago Cubs"])
+        assert body["pricingSummary"]["price"]["value"] == "1.29"
+
+    def test_inventory_route_refuses_to_put_without_a_live_price(self):
+        class _Inventory:
+            def find_offer(self, sku):
+                from shoebox.models.ebay.offer import Offer
+
+                return Offer.from_api(
+                    {"offer_id": "o1", "sku": sku, "store_category_names": ["Parallels"]}
+                )
+
+            def update_offer(self, *a, **k):
+                raise AssertionError("must not PUT without a live price")
+
+        class _Ebay:
+            inventory = _Inventory()
+
+        from shoebox.services.listings import ListingService
+
+        with pytest.raises(ValueError, match="live_price"):
+            ListingService(ebay=_Ebay()).update_store_categories(
+                categories=["/Baseball Singles/Chicago Cubs"], sku="A"
+            )

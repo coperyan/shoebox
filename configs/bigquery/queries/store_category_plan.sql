@@ -20,7 +20,11 @@ SELECT
   print_run,
   features,
   card_number,
-  JSON_VALUE(item_specifics, '$."Autographed"[0]') AS autographed
+  JSON_VALUE(item_specifics, '$."Autographed"[0]') AS autographed,
+  is_graded,
+  start_date,
+  store_category_id,
+  store_category2_id
 FROM
   `{dataset}.v_active_listing_details`
 ORDER BY

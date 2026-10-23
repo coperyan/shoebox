@@ -342,6 +342,7 @@ class ListingService:
         category_ids: list[str] | None = None,
         sku: str | None = None,
         item_id: str | None = None,
+        live_price: float | None = None,
     ) -> dict[str, Any]:
         """Move a published listing into the given store categories.
 
@@ -355,6 +356,13 @@ class ListingService:
 
         ``categories`` is the full replacement list eBay will store, capped at
         two. A listing already in exactly these categories is skipped.
+
+        ``live_price`` is the listing's current price as eBay shows it
+        (GetMyeBaySelling / GetItem). The inventory route is a full PUT of the
+        offer, and the offer's own price goes stale the moment the listing is
+        repriced outside the Inventory API, so the PUT carries the live price
+        instead. Required on the inventory route; the Trading route never
+        touches price.
         """
         if not sku and not item_id:
             raise ValueError("update_store_categories needs a sku or an item_id")
@@ -389,7 +397,12 @@ class ListingService:
                 "skipped": True,
             }
 
-        body = offer_body_with_store_categories(offer.raw, categories)
+        if live_price is None:
+            raise ValueError(
+                f"sku={sku}: live_price is required on the inventory route; the offer's own "
+                "price may be stale and a PUT without it reverts the listing"
+            )
+        body = offer_body_with_store_categories(offer.raw, categories, live_price=live_price)
         self.ebay.inventory.update_offer(offer.offer_id, body)
         logger.info("Recategorized sku=%s: %s -> %s", sku, current, categories)
         return {

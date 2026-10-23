@@ -123,7 +123,8 @@ Per queue row:
    combined.
 3. **Payload** — `transforms/listing_builder.build_draft` assembles the title
    (80-char limit with progressive element-stripping), HTML description,
-   full item-specifics dict, store category, condition, package, and policy
+   full item-specifics dict, store categories (see *Store categories* below),
+   condition, package, and policy
    IDs into an `EbayListingDraft` with ready-to-send `inventory_item` and
    `offer` dicts. `--schedule` sets a listing start date ~19 days out.
 4. **eBay** — `ListingService.create_listing`: upsert
@@ -330,6 +331,53 @@ logs the prompts without contacting eBay or Slack. No state is kept between
 runs — eligibility comes fresh from eBay each time.
 
 ---
+
+### Store categories (`plan-store-categories`, `assign-store-categories`, `scripts/recategorize_active_listings.py`)
+
+The rules live in `transforms/store_category_builder.plan_store_category` and
+every path that sets a store category goes through them, so a new listing lands
+where a recategorized one would:
+
+- **Primary** — `/<Sport> Singles`, broken out by team for baseball
+  (`/Baseball Singles/<team>`, unknown teams under `Other Teams`); graded
+  cards go to `/Graded Singles` instead; "Complete Your Set" group listings go
+  to `/Complete Your Set - You Pick` and get nothing else.
+- **Secondary** — `/Hits/Autographs`, `/Hits/Relics`, `/Hits/Numbered` or
+  `/Hits/Short Prints`, in that precedence, when the card is one.
+
+The names must match the live store tree exactly: the Inventory API matches
+`storeCategoryNames` by path and silently files anything it cannot find under
+**Other** — which is what happened when the tree was restructured and
+`create-listings` kept sending the old flat names (`Parallels`, `Base Cards`,
+…). `TestHitsBranchName` pins the branch name; rename it in eBay and the test
+tells you.
+
+- `plan-store-categories` reads `v_active_listing_details`, plans every
+  listing, and writes `exports/csv/store_categories_working.csv`.
+- `assign-store-categories` pushes that working CSV (team only by default,
+  preserving whatever Hits category a listing already carries; `--with-hits`
+  overwrites it).
+- `scripts/recategorize_active_listings.py` is the ad hoc clean-up: plan from
+  BigQuery, read each listing's *current* categories off its live offer (or
+  the snapshot's `store_category_id` for SKU-less listings), and push the full
+  primary + Hits list only where it differs. `--since YYYY-MM-DD` scopes it to
+  recent runs, `--sport` to one branch, `--limit` caps the pushes; nothing is
+  sent without `--apply`. Each run writes
+  `exports/csv/recategorize_active_listings_<stamp>.csv` and refreshes
+  `recategorize_active_listings_working.csv`; `--from-plan <csv>` applies a
+  saved run as written (no re-planning or offer reads), so the working copy
+  can be reviewed, trimmed and pushed later. A listing whose
+  title names a different sport than its Team/Sport specifics resolve to
+  (`title_sport_conflict` in `notes`) is reported and left alone -- fix the
+  item specific first.
+
+The sport comes from the team when the name implies one (`team_sport`), else
+from the Sport specific. A name shared by two sports ("New York Giants": NFL
+and the historical MLB club) implies neither, so the specific decides.
+
+`sync-active-listing-details` captures GetItem's `Storefront` IDs into
+`store_category_id` / `store_category2_id`, so snapshots taken after this
+change show where each listing sits (`1` is eBay's Other).
 
 ## Monitoring
 

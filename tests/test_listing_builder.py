@@ -7,6 +7,8 @@ from shoebox.transforms.listing_builder import (
     build_draft,
     build_offer_payload,
     fit_inventory_description,
+    live_store_category_names,
+    store_categories,
     store_footer_html,
     title,
 )
@@ -130,3 +132,107 @@ class TestDescriptionLimits:
     def test_fit_raises_rather_than_truncating(self):
         with pytest.raises(ValueError, match="4000"):
             fit_inventory_description("x" * (MAX_INVENTORY_DESCRIPTION_LEN + 1))
+
+
+class TestStoreCategories:
+    """New listings must use live ``/path`` names or eBay files them under Other."""
+
+    def test_baseball_hit_gets_team_and_hits_paths(self):
+        row = _queue_row().model_copy(update={"team": "San Francisco Giants"})
+        assert store_categories(row) == [
+            "/Baseball Singles/San Francisco Giants",
+            "/Hits/Numbered",
+        ]
+
+    def test_base_card_gets_only_its_team(self):
+        row = _queue_row().model_copy(
+            update={
+                "team": "Chicago Cubs",
+                "subset_name": "Base",
+                "subset_type": "Base",
+                "parallel_variety": "",
+                "print_run": None,
+            }
+        )
+        assert store_categories(row) == ["/Baseball Singles/Chicago Cubs"]
+
+    def test_autograph_outranks_numbering(self):
+        row = _queue_row().model_copy(
+            update={"team": "New York Mets", "subset_name": "Rookie Autographs"}
+        )
+        assert store_categories(row)[1] == "/Hits/Autographs"
+
+    def test_relic_from_parallel_note(self):
+        row = _queue_row().model_copy(
+            update={"team": "New York Mets", "print_run": None, "parallel_note": "MEM"}
+        )
+        assert store_categories(row)[1] == "/Hits/Relics"
+
+    def test_football_stays_flat_but_keeps_hits(self):
+        row = _queue_row().model_copy(
+            update={"set_name": "2023 Sample Football", "team": "Dallas Cowboys"}
+        )
+        assert store_categories(row) == ["/Football Singles", "/Hits/Numbered"]
+
+    def test_unknown_baseball_team_lands_in_other_teams(self):
+        assert store_categories(_queue_row())[0] == "/Baseball Singles/Other Teams"
+
+    def test_draft_and_offer_carry_both_paths(self):
+        row = _queue_row().model_copy(update={"team": "San Francisco Giants"})
+        draft = build_draft(row=row, image_urls=[], sku="S")
+        assert draft.store_categories == [
+            "/Baseball Singles/San Francisco Giants",
+            "/Hits/Numbered",
+        ]
+        assert draft.store_category == "/Baseball Singles/San Francisco Giants"
+        assert draft.offer["storeCategoryNames"] == draft.store_categories
+
+    def test_no_flat_legacy_names_survive(self):
+        legacy = {"Base Cards", "Parallels", "Inserts", "Serial Numbered", "Autographs", "Relics"}
+        for name in store_categories(_queue_row()):
+            assert name.startswith("/")
+            assert name not in legacy
+
+    def test_offer_payload_falls_back_to_the_single_category(self):
+        offer = build_offer_payload(draft=_draft(5.0))
+        assert offer["storeCategoryNames"] == ["Base Cards"]
+
+
+class TestVariationStoreCategory:
+    def test_you_pick_listings_take_the_you_pick_branch(self):
+        from shoebox.transforms.variation_listing_builder import (
+            ChecklistVariationRow,
+            variation_store_category,
+        )
+
+        for subset_name, subset_type in (("Base", "Base"), ("Rookie Autographs", "Insert")):
+            row = ChecklistVariationRow(
+                record_id="r",
+                set_year="2025",
+                subset_id="s",
+                set_name="2025 Topps",
+                subset_name=subset_name,
+                subset_type=subset_type,
+                derived_card_number=None,
+                card_number="1",
+                qty=1,
+                price=0.99,
+                player="p",
+                team=None,
+                display_name="d",
+                note=None,
+            )
+            assert variation_store_category(row) == "/Complete Your Set - You Pick"
+
+
+class TestLiveStoreCategoryNames:
+    def test_round_trip_restores_the_slash_and_drops_empty_slots(self):
+        # getOffers reports "Baseball Singles/Chicago Cubs | None"; sending that
+        # back verbatim would file the relisted offer under Other.
+        assert live_store_category_names(["Baseball Singles/Chicago Cubs", "None"]) == [
+            "/Baseball Singles/Chicago Cubs"
+        ]
+        assert live_store_category_names(["/Hits/Numbered", "", None]) == ["/Hits/Numbered"]
+        # The empty slot also comes back as "/None".
+        assert live_store_category_names(["/Baseball/Base", "/None"]) == ["/Baseball/Base"]
+        assert live_store_category_names([]) == []

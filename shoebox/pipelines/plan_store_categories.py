@@ -51,6 +51,10 @@ _SPECIFIC_FALLBACKS = {
     "set_name": "Set",
 }
 
+# eBay's condition ID for a professionally graded card, the fallback for a raw
+# export that lacks the view's ``is_graded`` column.
+_GRADED_CONDITION_ID = "2750"
+
 
 def _check_columns(df: pd.DataFrame, source: str) -> pd.DataFrame:
     missing = [c for c in _REQUIRED_COLUMNS if c not in df.columns]
@@ -147,6 +151,12 @@ def read_fields(row: pd.Series) -> dict:
     # is what it is built from.
     subset = _clean_str(row.get("subset_name")) if "subset_name" in row.index else ""
     fields["subset_name"] = subset or fields.get("insert_set", "")
+
+    graded = row.get("is_graded") if "is_graded" in row.index else None
+    if graded is None or (not isinstance(graded, str) and pd.isna(graded)):
+        graded = _clean_str(row.get("condition_id")) == _GRADED_CONDITION_ID
+    # BigQuery hands the flag back as a numpy bool, a CSV as "True"/"true".
+    fields["graded"] = "Yes" if _clean_str(graded).lower() in ("true", "1", "yes") else ""
     return fields
 
 
@@ -172,6 +182,7 @@ def build_category_plan(df: pd.DataFrame) -> pd.DataFrame:
             subset_name=fields["subset_name"],
             print_run=fields["print_run"],
             autographed=fields["autographed"],
+            graded=fields["graded"],
         )
 
         records.append(
@@ -184,6 +195,7 @@ def build_category_plan(df: pd.DataFrame) -> pd.DataFrame:
                 "team_category": plan.team or "",
                 "hit": plan.hit or "",
                 "is_variation": plan.is_variation,
+                "is_graded": plan.is_graded,
                 "primary_category": plan.primary,
                 "secondary_category": plan.secondary or "",
                 # The shape the Inventory API wants, ready to eyeball.

@@ -80,6 +80,16 @@
     "mode": "NULLABLE"
   },
   {
+    "name": "store_category_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
+    "name": "store_category2_id",
+    "type": "STRING",
+    "mode": "NULLABLE"
+  },
+  {
     "name": "item_specifics",
     "type": "JSON",
     "mode": "NULLABLE"
