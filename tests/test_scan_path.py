@@ -47,3 +47,16 @@ def test_existing_path_is_returned_as_is(tmp_path, monkeypatch):
     real = tmp_path / "already_here.png"
     real.write_text("x")
     assert handle_image_path(str(real)) == str(real)
+
+
+def test_missing_path_is_returned_as_is(tmp_path, monkeypatch):
+    """A workstation path that is not on this machine keeps its file name
+    (it used to be mangled into a scan number like ``ryan``)."""
+    _point_settings_at(tmp_path, monkeypatch, scans_dir="scans")
+    gone = "/users/ryan.cope/OneDrive/Pictures/Scanned_NEW/SCAN_0001.jpg"
+    assert handle_image_path(gone) == gone
+
+
+def test_excel_float_scan_number(tmp_path, monkeypatch):
+    _point_settings_at(tmp_path, monkeypatch, scans_dir="scans")
+    assert handle_image_path("123.0").replace("\\", "/") == "scans/SCAN_0123.jpg"
