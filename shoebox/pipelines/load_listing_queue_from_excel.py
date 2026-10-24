@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from shoebox.clients.gcs import GCSClient, parse_gs_uri
 from shoebox.models.listing_queue import ListingQueueRow
 from shoebox.settings import get_settings
 from shoebox.transforms.queue_enrichment import (
@@ -34,7 +35,7 @@ def get_input_df():
     return df
 
 
-def write_enriched_json(df: pd.DataFrame):
+def write_enriched_json(df: pd.DataFrame) -> Path:
     settings = get_settings()
     export_path = Path(settings.paths.exports_dir) / "jsonl/listing_queue_enriched.jsonl"
     cdf, pdf = load_checklist_and_parallels()
@@ -59,11 +60,29 @@ def write_enriched_json(df: pd.DataFrame):
             )
         )
     write_jsonl(export_path, enriched_rows)
+    return export_path
+
+
+def upload_queue_file(local_path: Path, queue_uri: str, gcs: GCSClient | None = None) -> None:
+    """Copy the local queue over the ``paths.queue_uri`` object, which is what
+    ``create-listings`` reads when that setting is on -- without this it would
+    list whatever the GCS queue last held instead of the file just written."""
+    bucket, name = parse_gs_uri(queue_uri)
+    (gcs or GCSClient()).upload_text(
+        bucket=bucket,
+        object_name=name,
+        text=local_path.read_text(encoding="utf-8"),
+        content_type="application/json",
+    )
+    logger.info("Copied %s to %s", local_path, queue_uri)
 
 
 def create_queue_file():
     df = get_input_df()
-    write_enriched_json(df)
+    export_path = write_enriched_json(df)
+    queue_uri = get_settings().paths.queue_uri
+    if queue_uri:
+        upload_queue_file(export_path, queue_uri)
     logger.info(
         "Wrote %d records to the enriched jsonl:\n%s",
         len(df),

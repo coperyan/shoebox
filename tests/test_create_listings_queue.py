@@ -633,3 +633,23 @@ def test_run_listing_request_marks_done_before_sync_and_keeps_it(tmp_path, monke
     assert [w.state for w in store.writes] == ["done"]
     assert "1 listed, 0 failed" in notes[1]
     assert "results sync failed" in notes[-1]
+
+
+def test_upload_queue_file_copies_local_queue_to_queue_uri(tmp_path):
+    from shoebox.pipelines.load_listing_queue_from_excel import upload_queue_file
+
+    local = tmp_path / "listing_queue_enriched.jsonl"
+    local.write_text(json.dumps(ROW) + "\n")
+    uploads = []
+    gcs = SimpleNamespace(upload_text=lambda **kw: uploads.append(kw))
+
+    upload_queue_file(local, "gs://b/q/listing_queue_enriched.jsonl", gcs=gcs)
+
+    assert uploads == [
+        {
+            "bucket": "b",
+            "object_name": "q/listing_queue_enriched.jsonl",
+            "text": json.dumps(ROW) + "\n",
+            "content_type": "application/json",
+        }
+    ]
