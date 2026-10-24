@@ -161,6 +161,8 @@ jobs:
     schedule: "*/15 8-21 * * *"
     timeout: 840s
     memory: 512Mi
+    # Paused for now; flip back to true and run --scheduler-only --only send-offers.
+    enabled: false
 
   # The listing run the iOS app triggers (`POST /queue/listings` on shoebox-api
   # starts one execution). No schedule: it only runs on request. Claims the
