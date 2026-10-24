@@ -26,7 +26,7 @@ from shoebox.settings import (
 )
 from shoebox.transforms.listing_builder import build_draft
 from shoebox.utils.ad_campaign import get_ad_campaign
-from shoebox.utils.image_refs import MaterializedImage, archive_scan, materialize_scan
+from shoebox.utils.image_refs import MaterializedImage, archive_scan, materialize_scan, scan_path
 from shoebox.utils.jsonl import append_jsonl, read_jsonl
 from shoebox.utils.pricing import parse_price_reply, round_up_to_nine
 from shoebox.utils.sku import build_sku_50
@@ -160,12 +160,61 @@ def _upload_combined_image(
         return None
 
 
-def _materialize_row(q: ListingQueueRow, settings: Settings | None = None) -> RowImages:
+def _resolve_side(
+    q: ListingQueueRow,
+    side: str,
+    ref: str,
+    fetch: Callable[[], MaterializedImage],
+    *,
+    img_client: ImageLogClient | None,
+    settings: Settings | None,
+) -> MaterializedImage:
+    """``fetch()`` a row's scan. A scan that is gone but whose card, side and
+    file name are already in the image log (a retry of a row that uploaded its
+    pictures and then failed on eBay) comes back as ``cached``: the earlier
+    upload is reused and no file is needed."""
+    try:
+        return fetch()
+    except FileNotFoundError:
+        path = scan_path(ref, settings=settings)
+        if img_client is None or not img_client.is_cached(
+            file_path=path,
+            set_name=q.set_name,
+            subset_name=q.subset_name,
+            card_number=q.card_number,
+            parallel_variety=q.parallel_variety,
+            side=side,
+        ):
+            raise
+        logger.info(
+            "%s scan %s is gone; reusing its earlier upload for %s %s",
+            side,
+            path.name,
+            q.set_name,
+            q.card_number,
+        )
+        return MaterializedImage(path, "cached")
+
+
+def _materialize_row(
+    q: ListingQueueRow,
+    settings: Settings | None = None,
+    img_client: ImageLogClient | None = None,
+) -> RowImages:
     """Resolve a row's front / back references to local files (see
-    ``utils.image_refs``); a blank side is None."""
+    ``utils.image_refs`` and :func:`_resolve_side`); a blank side is None."""
     return tuple(  # type: ignore[return-value]
-        materialize_scan(ref, settings=settings) if ref else None
-        for ref in (q.image_front, q.image_back)
+        _resolve_side(
+            q,
+            side,
+            ref,
+            lambda ref=ref: materialize_scan(ref, settings=settings),
+            img_client=img_client,
+            settings=settings,
+        )
+        if ref
+        else None
+        for side, ref in (("front", q.image_front), ("back", q.image_back))
     )
 
 
@@ -178,10 +227,16 @@ class _ImagePrefetch:
     """
 
     def __init__(
-        self, rows: list[ListingQueueRow], *, settings: Settings, pool: ThreadPoolExecutor
+        self,
+        rows: list[ListingQueueRow],
+        *,
+        settings: Settings,
+        pool: ThreadPoolExecutor,
+        img_client: ImageLogClient | None = None,
     ):
         self._rows = rows
         self._settings = settings
+        self._img_client = img_client
         self._pool = pool
         self._futures: dict[str, Future[MaterializedImage]] = {}
         self._queued = 0
@@ -202,8 +257,17 @@ class _ImagePrefetch:
         self.ensure(index + 1)
         q = self._rows[index]
         return tuple(  # type: ignore[return-value]
-            self._futures[ref.strip()].result() if ref else None
-            for ref in (q.image_front, q.image_back)
+            _resolve_side(
+                q,
+                side,
+                ref,
+                self._futures[ref.strip()].result,
+                img_client=self._img_client,
+                settings=self._settings,
+            )
+            if ref
+            else None
+            for side, ref in (("front", q.image_front), ("back", q.image_back))
         )
 
 
@@ -221,17 +285,33 @@ def _upload_row_images(
     *,
     front: MaterializedImage | None,
     back: MaterializedImage | None,
-) -> list[str]:
+) -> tuple[list[str], list[MaterializedImage]]:
     """Upload the front, the back and their composite at the same time; return
-    the picture URLs front, back, combined.
+    the picture URLs front, back, combined, and the scans that were actually
+    sent (the ones the caller may archive).
 
     The combined picture goes third: the front stays picture 1, which is the
     search thumbnail and the image send-offers shows in Slack. The composite
     is built from the scans, so they are deleted only once all three uploads
     are done. A failed front or back upload fails the row; a failed composite
     does not (see ``_upload_combined_image``).
+
+    A scan whose card, side and file name are already in the image log is not
+    uploaded (the earlier picture is reused), so it is kept on disk: scan
+    numbers restart, and a stale queue row must not delete a new batch's file.
     """
     sides = [(side, image) for side, image in (("front", front), ("back", back)) if image]
+    cached = {
+        side: img_client.is_cached(
+            file_path=image.path,
+            set_name=q.set_name,
+            subset_name=q.subset_name,
+            card_number=q.card_number,
+            parallel_variety=q.parallel_variety,
+            side=side,
+        )
+        for side, image in sides
+    }
     with ThreadPoolExecutor(max_workers=3, thread_name_prefix="img-upload") as pool:
         combined = pool.submit(
             _upload_combined_image,
@@ -255,11 +335,24 @@ def _upload_row_images(
         ]
         image_urls = [upload.result().public_url for upload in uploads]
         combined_url = combined.result()
-    for _, image in sides:
+    uploaded = []
+    for side, image in sides:
+        if image.source == "cached":
+            continue  # already gone; _resolve_side logged it
+        if cached[side]:
+            logger.warning(
+                "%s for %s %s was uploaded before; reusing that picture and keeping %s",
+                side,
+                q.set_name,
+                q.card_number,
+                image.path,
+            )
+            continue
         _discard_local(image.path)
+        uploaded.append(image)
     if combined_url:
         image_urls.append(combined_url)
-    return image_urls
+    return image_urls, uploaded
 
 
 def _create_one_listing(
@@ -341,11 +434,9 @@ def _create_one_listing(
     # photo from the iOS app) is resolved to a local file once, up front. Once
     # uploaded, the local scans are deleted and a scan that was fetched from
     # OneDrive is moved into its Listed subfolder.
-    front, back = images if images is not None else _materialize_row(q, settings)
-    image_urls = _upload_row_images(q, img_client, front=front, back=back)
-    for image in (front, back):
-        if image is None:
-            continue
+    front, back = images if images is not None else _materialize_row(q, settings, img_client)
+    image_urls, uploaded = _upload_row_images(q, img_client, front=front, back=back)
+    for image in uploaded:
         if archive is None:
             archive_scan(image, settings=settings)
         else:
@@ -470,7 +561,9 @@ def run_listings(
 
     prefetch_pool = ThreadPoolExecutor(PREFETCH_WORKERS, thread_name_prefix="scan-fetch")
     archive_pool = ThreadPoolExecutor(ARCHIVE_WORKERS, thread_name_prefix="scan-archive")
-    prefetch = _ImagePrefetch(queue_items, settings=settings, pool=prefetch_pool)
+    prefetch = _ImagePrefetch(
+        queue_items, settings=settings, pool=prefetch_pool, img_client=img_client
+    )
 
     def archive(image: MaterializedImage) -> None:
         archive_pool.submit(archive_scan, image, settings=settings)

@@ -9,18 +9,24 @@ def handle_image_path(img: str) -> str:
     """Normalize an image reference.
 
     - If the provided string is an existing path, return it.
-    - Otherwise, treat it as a scan number/id and build the expected path under
-      scans_dir using the configured scan naming convention
+    - If it is a scan number (``"123"``, or ``"123.0"`` from Excel), build the
+      expected path under scans_dir using the configured scan naming convention
       (``scan_prefix`` / ``scan_number_padding`` / ``scan_extension``).
+    - Otherwise (a path that does not exist here) return it unchanged.
     """
 
     p = Path(img)
     if p.exists():
         return str(p)
 
+    number = img.strip().split(".")[0]
+    if not number.isdigit():
+        # A path that is not on this machine (e.g. a workstation path in the
+        # cloud): keep it, so callers can still fetch it by its file name.
+        return img
+
     paths = get_settings().paths
 
-    number = img.split(".")[0]
     if paths.scan_number_padding:
         number = number.rjust(paths.scan_number_padding, "0")
 

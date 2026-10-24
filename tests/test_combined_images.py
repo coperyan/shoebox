@@ -100,6 +100,9 @@ class FakeImageLog:
         self.combined_fails = combined_fails
         self.order: list[str] = []
 
+    def is_cached(self, **kwargs):
+        return False
+
     def upload_combined_image(self, *, front, back, **kwargs):
         self.order.append("combined")
         if self.combined_fails or not (front.exists() and back.exists()):

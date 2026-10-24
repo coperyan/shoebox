@@ -197,6 +197,31 @@ class ImageLogClient:
     # -----------------------------
     # Public API
     # -----------------------------
+    def is_cached(
+        self,
+        *,
+        file_path: Path,
+        set_name: str,
+        subset_name: str,
+        card_number: str,
+        parallel_variety: str | None = None,
+        side: str | None = None,
+    ) -> bool:
+        """True when :meth:`upload_image` with these arguments would return an
+        earlier upload instead of sending ``file_path`` (same card, side and
+        file name), i.e. the file on disk is not what the listing will show."""
+        cache_key = self.build_cache_key(
+            bucket=self.image_bucket,
+            set_name=set_name,
+            subset_name=subset_name,
+            parallel_variety=parallel_variety,
+            card_number=card_number,
+            side=side,
+            original_filename=Path(file_path).name,
+        )
+        with self._lock:
+            return cache_key in self._cache
+
     def upload_image(
         self,
         *,

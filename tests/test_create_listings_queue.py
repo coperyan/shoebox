@@ -130,8 +130,12 @@ class _FakeImageLog:
     """Records the files create-listings hands it and deletes uploaded ones,
     like the real client (delete_original=True)."""
 
-    def __init__(self):
+    def __init__(self, cached: set[str] | None = None):
         self.calls: list[tuple[str, object]] = []
+        self.cached = cached or set()
+
+    def is_cached(self, *, file_path, **kwargs):
+        return file_path.name in self.cached
 
     def upload_combined_image(self, *, front, back, **kwargs):
         self.calls.append(("combined", (front, back)))
@@ -140,6 +144,8 @@ class _FakeImageLog:
 
     def upload_image(self, *, file_path, side, delete_original=True, **kwargs):
         self.calls.append((side, file_path))
+        if file_path.name in self.cached:
+            return SimpleNamespace(public_url=f"https://gcs/old-{side}.jpg")
         if delete_original:
             file_path.unlink()
         return SimpleNamespace(public_url=f"https://gcs/{side}.jpg")
@@ -567,6 +573,40 @@ def test_run_listings_prefetches_scans_and_archives_them(tmp_path, monkeypatch):
     assert not list((tmp_path / "scans").glob("SCAN_*.jpg"))
 
 
+def test_already_uploaded_scan_is_kept_and_not_archived(tmp_path, monkeypatch):
+    """A stale queue row whose card + scan name is already in the image log reuses
+    the old picture; the new batch's scan of the same name stays on disk and in
+    the OneDrive scans folder."""
+    onedrive = _FakeOneDrive()
+    settings, img, _ = _onedrive_run_env(tmp_path, monkeypatch, onedrive)
+    img.cached = {"SCAN_0001.jpg"}
+    scans = tmp_path / "scans"
+    summary = cl.run_listings(
+        queue_items=[_scan_row("1", "1", "2")], dry_run=True, settings=settings
+    )
+    assert summary.listed == 1
+    assert (scans / "SCAN_0001.jpg").exists()
+    assert not (scans / "SCAN_0002.jpg").exists()
+    assert onedrive.moves == ["SCAN_0002.jpg"]
+
+
+def test_retry_reuses_uploads_of_scans_already_gone(tmp_path, monkeypatch):
+    """A row that uploaded its pictures and then failed on eBay is retried after
+    its scans were deleted: the earlier uploads are reused, nothing is fetched
+    or moved. A gone scan with no earlier upload still fails its row."""
+    onedrive = _FakeOneDrive(missing={"SCAN_0001.jpg", "SCAN_0002.jpg", "SCAN_0003.jpg"})
+    settings, img, _ = _onedrive_run_env(tmp_path, monkeypatch, onedrive)
+    img.cached = {"SCAN_0001.jpg", "SCAN_0002.jpg"}
+    summary = cl.run_listings(
+        queue_items=[_scan_row("1", "1", "2"), _scan_row("2", "3")],
+        dry_run=True,
+        settings=settings,
+    )
+    assert (summary.listed, summary.failed) == (1, 1)
+    assert "SCAN_0003.jpg" in summary.failures[0]["error"]
+    assert onedrive.moves == []
+
+
 def test_prefetch_downloads_a_shared_scan_once(tmp_path, monkeypatch):
     onedrive = _FakeOneDrive()
     settings, img, _ = _onedrive_run_env(tmp_path, monkeypatch, onedrive)
@@ -633,3 +673,23 @@ def test_run_listing_request_marks_done_before_sync_and_keeps_it(tmp_path, monke
     assert [w.state for w in store.writes] == ["done"]
     assert "1 listed, 0 failed" in notes[1]
     assert "results sync failed" in notes[-1]
+
+
+def test_upload_queue_file_copies_local_queue_to_queue_uri(tmp_path):
+    from shoebox.pipelines.load_listing_queue_from_excel import upload_queue_file
+
+    local = tmp_path / "listing_queue_enriched.jsonl"
+    local.write_text(json.dumps(ROW) + "\n")
+    uploads = []
+    gcs = SimpleNamespace(upload_text=lambda **kw: uploads.append(kw))
+
+    upload_queue_file(local, "gs://b/q/listing_queue_enriched.jsonl", gcs=gcs)
+
+    assert uploads == [
+        {
+            "bucket": "b",
+            "object_name": "q/listing_queue_enriched.jsonl",
+            "text": json.dumps(ROW) + "\n",
+            "content_type": "application/json",
+        }
+    ]

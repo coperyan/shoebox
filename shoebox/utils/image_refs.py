@@ -39,14 +39,15 @@ logger = logging.getLogger(__name__)
 
 UPLOADS_SUBDIR = "app_uploads"
 
-ImageSource = Literal["local", "onedrive", "gs"]
+ImageSource = Literal["local", "onedrive", "gs", "cached"]
 
 
 @dataclass(frozen=True)
 class MaterializedImage:
     """A queue image as a local file, and where that file came from: already
-    on disk (``local``), fetched from OneDrive by scan name (``onedrive``) or
-    downloaded from the app's ``gs://`` upload (``gs``)."""
+    on disk (``local``), fetched from OneDrive by scan name (``onedrive``),
+    downloaded from the app's ``gs://`` upload (``gs``), or gone but already
+    in the image log, so its earlier upload is reused (``cached``, no file)."""
 
     path: Path
     source: ImageSource
@@ -76,6 +77,23 @@ def _default_onedrive(settings: Settings) -> Any:
     return client
 
 
+def scan_path(ref: str, *, settings: Settings | None = None) -> Path:
+    """The local file :func:`materialize_scan` resolves ``ref`` to, whether or
+    not it exists yet. Raises ValueError for a blank reference."""
+    kind = classify_image_ref(ref)
+    if kind == "blank":
+        raise ValueError("empty image reference")
+    ref = ref.strip()
+    if kind == "gs":
+        settings = settings or get_settings()
+        _, name = parse_gs_uri(ref)
+        basename = Path(name).name
+        if not basename:
+            raise ValueError(f"gs:// URI names a bucket, not an object: {ref!r}")
+        return Path(settings.paths.scans_dir) / UPLOADS_SUBDIR / basename
+    return Path(handle_image_path(ref))
+
+
 def materialize_scan(
     ref: str,
     *,
@@ -93,23 +111,13 @@ def materialize_scan(
     """
     if download is None:
         download = download_gs_file
-    kind = classify_image_ref(ref)
-    if kind == "blank":
-        raise ValueError("empty image reference")
-
+    local = scan_path(ref, settings=settings)
     ref = ref.strip()
-    if kind == "gs":
-        settings = settings or get_settings()
-        _, name = parse_gs_uri(ref)
-        basename = Path(name).name
-        if not basename:
-            raise ValueError(f"gs:// URI names a bucket, not an object: {ref!r}")
-        dest = Path(settings.paths.scans_dir) / UPLOADS_SUBDIR / basename
-        if not dest.exists():
-            download(ref, dest)
-        return MaterializedImage(dest, "gs")
+    if is_gs_uri(ref):
+        if not local.exists():
+            download(ref, local)
+        return MaterializedImage(local, "gs")
 
-    local = Path(handle_image_path(ref))
     if local.exists():
         return MaterializedImage(local, "local")
     settings = settings or get_settings()
