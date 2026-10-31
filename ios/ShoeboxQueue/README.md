@@ -1,7 +1,7 @@
 # Shoebox Queue (iOS)
 
 A small SwiftUI app that builds the eBay listing queue from an iPhone. It talks to the
-`shoebox api` FastAPI service (see `docs/api.md` at the repo root) which serves the
+`shoebox api` FastAPI service (see `docs/content/guides/api.mdx` at the repo root) which serves the
 set / subset / parallel / card dropdown metadata from BigQuery, enriches rows with the same
 `build_enriched_json` the Streamlit UI uses, and writes `listing_queue_enriched.jsonl` to GCS.
 `shoebox create-listings --queue gs://...` on the workstation consumes it unchanged, or the app
@@ -16,7 +16,7 @@ saved rows, Edit / Delete / reorder, Preview (enriched JSON per row) and Submit.
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen): `brew install xcodegen`
 - An iPhone 15 (or any iOS 17) simulator, or a device with a development team set up.
 - The API running somewhere reachable: either locally (`SHOEBOX_API_KEY=dev shoebox api --port 8080`)
-  or the deployed Cloud Run service `shoebox-api` (see `docs/deployment.md`).
+  or the deployed Cloud Run service `shoebox-api` (see `docs/content/guides/deployment.mdx`).
 
 There are no third-party packages; nothing to `pod install` or resolve.
 
@@ -137,7 +137,7 @@ server order in the fixture.
 | Listing toggles | `UserDefaults` keys `listingPublish`, `listingSchedule` (default on / on), `listingScansFolder` (default blank) |
 
 The Python side of the contract is `shoebox/api/schemas.py`; the plan section "The API contract"
-in the repo docs (`docs/api.md`) is the human-readable version. Keep the three in sync.
+in the repo docs (`docs/content/guides/api.mdx`) is the human-readable version. Keep the three in sync.
 
 ## Troubleshooting
 
@@ -155,7 +155,7 @@ in the repo docs (`docs/api.md`) is the human-readable version. Keep the three i
 - **List on eBay fails with 409 "submit the queue first"** – the last thing saved on the server is a
   draft (or nothing); press *Submit queue* first. **409 "a run is in progress"** – wait for it (the
   *Runs* screen shows it) or for it to go stale. **502** – the service could not start the Cloud Run
-  job; see the "Listing from the app" section of `docs/deployment.md`.
+  job; see the "Listing from the app" section of `docs/content/guides/deployment.mdx`.
 - **Build errors after pulling** – run `xcodegen generate` again; new files are not in the project
   until you do.
 - **`plutil -p ShoeboxQueue/Info.plist`** should show `NSAllowsLocalNetworking` and *no*

@@ -36,7 +36,7 @@ The package follows a layered layout under `shoebox/`:
 | Pipelines | `pipelines/` | End-to-end runnable workflows (one per CLI command, roughly) |
 | Services | `services/` | Workflows and long-running components: `ListingService` (create / relist / retitle / recategorize listings across the eBay APIs), the Slack command bot, the orders-awaiting-shipment display/messenger |
 | UI | `ui/` | Streamlit app for building the listing queue |
-| API | `api/` | FastAPI service behind the iOS app: metadata, enrichment, queue/draft writes to GCS, photo uploads ([api.md](api.md)) |
+| API | `api/` | FastAPI service behind the iOS app: metadata, enrichment, queue/draft writes to GCS, photo uploads ([api.md](/guides/api)) |
 | Utils | `utils/` | Slack messaging (`slack.py`, `slack_formatting.py`), pricing math and reply parsing (`pricing.py`), SKU hashing, JSONL helpers, ad-campaign routing, team-name shortening, rich-table rendering |
 | Storage | `storage/` | `TableAsset` — the CSV → JSONL → GCS → BigQuery loading abstraction used by metadata sync |
 | Settings | `settings.py` | Pydantic-validated config loaded from `configs/app.yaml` (cached accessor `get_settings()`) |
@@ -128,7 +128,7 @@ The `v_active_listing_details` view stitches the latest snapshots together.
 - **No import-time side effects in settings** — `get_settings()` is an
   `lru_cache`d accessor; directories are created only by an explicit
   `ensure_runtime_dirs()` call from entrypoints. (A few older pipeline modules
-  do construct clients at import time; see [pipelines.md](pipelines.md).)
+  do construct clients at import time; see [pipelines.md](/guides/pipelines).)
 - **JSONL everywhere** — every artifact that crosses a boundary is
   newline-delimited JSON: queue files, logs, GCS staging objects, BigQuery
   loads.
@@ -139,7 +139,7 @@ The `v_active_listing_details` view stitches the latest snapshots together.
   snapshot.
 - **Human-in-the-loop pricing** — price changes above trivial amounts are never
   applied without a Slack approval or an explicit override reply; each prompt
-  has a defined timeout policy (see [slack.md](slack.md)).
+  has a defined timeout policy (see [slack.md](/guides/slack)).
 
 ## Known quirks
 

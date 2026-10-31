@@ -1,0 +1,704 @@
+# Utilities
+
+Slack messaging and formatting, pricing math, SKU hashing, JSONL helpers, image handling, logging setup.
+
+- [`shoebox.utils.ad_campaign`](#shoeboxutilsad_campaign)
+- [`shoebox.utils.image_refs`](#shoeboxutilsimage_refs)
+- [`shoebox.utils.images`](#shoeboxutilsimages)
+- [`shoebox.utils.jsonl`](#shoeboxutilsjsonl)
+- [`shoebox.utils.logging_setup`](#shoeboxutilslogging_setup)
+- [`shoebox.utils.pricing`](#shoeboxutilspricing)
+- [`shoebox.utils.render_table`](#shoeboxutilsrender_table)
+- [`shoebox.utils.search_formatting`](#shoeboxutilssearch_formatting)
+- [`shoebox.utils.sku`](#shoeboxutilssku)
+- [`shoebox.utils.slack`](#shoeboxutilsslack)
+- [`shoebox.utils.slack_formatting`](#shoeboxutilsslack_formatting)
+- [`shoebox.utils.title_crosswalk`](#shoeboxutilstitle_crosswalk)
+
+### `shoebox.utils.ad_campaign`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/ad_campaign.py)
+
+Promoted-listings campaign routing.
+
+```
+Campaign IDs and routing rules live in `settings.store.ad_campaigns`
+(see `configs/app.example.yml`). This keeps eBay-account-specific IDs out
+of the source tree.
+```
+
+#### `get_ad_campaign(title: str, set_name: str, sport: str, campaigns: StoreAdCampaignSettings | None=None) -> str`
+
+```
+Resolve the promoted-listings campaign ID for a listing.
+
+Resolution order: by_sport → by_set → current-year default → default.
+`title` is accepted for signature compatibility with callers.
+```
+
+---
+
+### `shoebox.utils.image_refs`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/image_refs.py)
+
+Resolve a queue row's image reference to a local file.
+
+```
+A queue row's ``image_front`` / ``image_back`` can be one of three things:
+
+- a local path (what the Streamlit file picker and the Excel loader produce);
+- a bare scan number such as ``"123"`` (typed in the UI, the workbook or the iOS
+  app), resolved to ``scans_dir/<scan_prefix><padded><scan_extension>`` by the
+  configured scan naming convention;
+- a ``gs://`` URI (a photo the iOS app uploaded through the API), downloaded to
+  ``scans_dir/app_uploads/<basename>`` once and reused on re-runs.
+
+A scan number whose file is not on disk is fetched from OneDrive when the
+``onedrive`` settings are configured (the Cloud Run job started from the app
+has no sync folder), into the very path the workstation would use, so the
+image-log cache keys and GCS object names are identical on both hosts.
+
+``create-listings`` calls :func:`materialize_scan` right before
+``ImageLogClient.upload_image``, so the dedup cache, object naming, mirroring
+and image log behave identically for all three kinds. The upload deletes the
+local file; for a scan that came from OneDrive, :func:`archive_scan` then
+moves the OneDrive original into ``onedrive.listed_subfolder`` so that the
+scans folder, like ``scans_dir`` on the workstation, only holds unlisted cards.
+```
+
+#### `class MaterializedImage`
+
+```
+A queue image as a local file, and where that file came from: already
+on disk (``local``), fetched from OneDrive by scan name (``onedrive``),
+downloaded from the app's ``gs://`` upload (``gs``), or gone but already
+in the image log, so its earlier upload is reused (``cached``, no file).
+```
+
+**Fields**
+
+```
+path: Path
+source: ImageSource
+```
+
+#### `scan_path(ref: str, *, settings: Settings | None=None) -> Path`
+
+```
+The local file :func:`materialize_scan` resolves ``ref`` to, whether or
+not it exists yet. Raises ValueError for a blank reference.
+```
+
+#### `materialize_scan(ref: str, *, settings: Settings | None=None, download: Callable[[str, Path], Path] | None=None, onedrive: Any=None) -> MaterializedImage`
+
+```
+Return a local file for ``ref`` and its source (see module docstring).
+
+Raises ValueError for a blank reference. A ``gs://`` object that does not
+exist raises FileNotFoundError from the download; the caller (the per-row
+try/except in ``run_listings``) records it and moves on. ``download``
+defaults to :func:`download_gs_file`, looked up at call time so tests can
+patch it on this module.
+```
+
+#### `materialize_image(ref: str, *, settings: Settings | None=None, download: Callable[[str, Path], Path] | None=None, onedrive: Any=None) -> Path`
+
+```
+:func:`materialize_scan` for callers that only want the file.
+```
+
+#### `archive_scan(image: MaterializedImage, *, settings: Settings | None=None, onedrive: Any=None) -> str | None`
+
+```
+After the upload: move a scan that was fetched from OneDrive into
+``onedrive.listed_subfolder``; returns its new OneDrive path, or None when
+there was nothing to move (a local file, an app photo, the feature off).
+
+Best-effort, like the workstation's delete of the original: the listing
+is already made, so a failure here is logged, never raised. A 403 means
+the token predates the ``Files.ReadWrite`` scope.
+```
+
+---
+
+### `shoebox.utils.images`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/images.py)
+
+Combine card scans into a single composite image.
+
+```
+Ported from the standalone ``combine_images.py`` script. The listing pipelines
+use :func:`combine_front_back` to build the front+back picture that follows
+the two scans on a listing.
+```
+
+#### `parse_color(value: str) -> RGBA`
+
+```
+Turn 'white', '#222', 'none' etc. into an RGBA tuple.
+```
+
+#### `open_image(source: Path | bytes) -> Image.Image`
+
+```
+Open a file or raw bytes as RGBA, honoring EXIF orientation.
+```
+
+#### `offset(free_space: int, align: str) -> int`
+
+```
+Where to place an image inside the free space of its cell.
+```
+
+#### `compose_linear(images: list[Image.Image], *, horizontal: bool=True, gap: int=COMBINED_GAP, padding: int=COMBINED_PADDING, background: RGBA=(255, 255, 255, 255), align: str='center', match: bool=True) -> Image.Image`
+
+```
+Lay images out in a row (or column), optionally matching heights (widths).
+```
+
+#### `to_jpeg_bytes(canvas: Image.Image, quality: int=COMBINED_QUALITY) -> bytes`
+
+```
+Flatten onto white and encode as JPEG.
+```
+
+#### `combine_front_back(front: Path | bytes, back: Path | bytes, *, max_width: int | None=COMBINED_MAX_WIDTH) -> bytes`
+
+```
+Front and back side by side at matched heights, as JPEG bytes.
+```
+
+---
+
+### `shoebox.utils.jsonl`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/jsonl.py)
+
+#### `write_jsonl(path: Path, records: list[dict], *, default: Any=None) -> None`
+
+```
+Write records to JSONL, creating parent dirs.
+
+``default`` is passed to ``json.dumps`` for values it can't serialize
+natively (e.g. Decimal).
+```
+
+#### `append_jsonl(path: Path, obj: Any) -> None`
+
+```
+Append one record; uses pydantic's to_jsonable_python to handle datetimes.
+```
+
+---
+
+### `shoebox.utils.logging_setup`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/logging_setup.py)
+
+Central logging configuration for CLI and pipeline entrypoints.
+
+```
+Call ``setup_logging()`` once from an entrypoint (the CLI does this for every
+subcommand). Importing library modules never configures logging.
+
+Environment variables:
+- SHOEBOX_LOG_DIR: directory for the per-run log file (defaults to ``logs``).
+  Set it to ``-`` (or empty) to log to the console only, which is what a
+  container wants: its stdout/stderr is already collected by the platform, so a
+  file handler writes a log nobody reads to a filesystem that is discarded when
+  the execution ends.
+```
+
+#### `setup_logging(*, log_dir: str | Path | None=None, level: int=logging.INFO) -> None`
+
+```
+Configure the root logger with a console handler and a timestamped log file.
+
+Safe to call more than once: if the root logger already has handlers,
+this is a no-op so embedding applications keep their own configuration.
+```
+
+---
+
+### `shoebox.utils.pricing`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/pricing.py)
+
+#### `parse_price_reply(reply: str | None) -> float | None`
+
+```
+Parse a human price reply from Slack into a positive float.
+
+Tolerates '$4.99', ' 4.99 ', '1,299.99' (comma = thousands separator).
+Returns None for anything that isn't a positive price ('no', 'Y', '', None),
+so callers can decide whether to keep the proposed price or skip.
+```
+
+#### `round_up_to_nine(value: float) -> float`
+
+```
+Round value up to the nearest x.x9 price point (e.g. 1.56 -> 1.59).
+```
+
+#### `calculate_new_price(orig_price: float) -> float`
+
+```
+Apply the standard markdown discount for a given price tier.
+```
+
+---
+
+### `shoebox.utils.render_table`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/render_table.py)
+
+---
+
+### `shoebox.utils.search_formatting`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/search_formatting.py)
+
+Slack message builders for saved-search hits.
+
+```
+Deliberately *not* using ``slack_formatting.table``: it renders inside a fenced
+code block, and Slack neither linkifies nor unfurls URLs there — which would
+defeat the entire point of an alert you want to click through.
+
+Item messages carry the listing photo as a Block Kit ``image`` block. Relying on
+Slack's link unfurl instead would be leaving the most useful part of a card
+alert to chance: whether a preview appears at all depends on eBay's OG tags and
+Slack's crawler, and neither is under our control. Unfurling stays as the
+fallback for the rare listing with no photo, and that path is the only reason
+``format_item`` still emits a bare URL.
+
+Pure functions: no I/O.
+```
+
+#### `format_time_left(end: datetime | None, now: datetime | None) -> str | None`
+
+```
+``2d 4h left`` — the one thing that decides whether to act on an auction.
+
+Returns None when either end is unknown, rather than guessing: a wrong
+countdown on an auction is worse than none.
+```
+
+#### `format_interval(delta) -> str`
+
+```
+Render a timedelta the way it was written in YAML (``15m``, ``2h``).
+```
+
+#### `format_header(search: ResolvedSearch, new_count: int) -> str`
+
+```
+The in-channel header. Listings follow it directly in the channel.
+```
+
+#### `format_item(item: ItemSummary, search: ResolvedSearch, *, include_bare_url: bool=True, now: datetime | None=None) -> str`
+
+```
+One in-channel message per listing.
+
+Four lines: title, price, shipping, seller. Each is one fact, because the
+single dot-joined line this replaced made a $4.99 shipping cost read as part
+of the price.
+
+``include_bare_url`` appends the URL on its own line, which is what lets
+Slack unfurl it. Turn it off when an image block already carries the photo:
+the trailing URL would then be duplicated noise in the push notification.
+
+``now`` is the run timestamp, used for the auction countdown. Passed in
+rather than read from the clock so this stays a pure function; omitting it
+just drops the countdown.
+```
+
+#### `class ItemMessage(NamedTuple)`
+
+```
+Everything needed to post one item reply.
+
+Bundled rather than returned piecemeal so the image-or-unfurl decision stays
+here, in the pure layer, instead of being re-derived at every call site.
+```
+
+**Fields**
+
+```
+text: str
+blocks: list[dict] | None
+unfurl_links: bool
+```
+
+#### `build_unfurl_fallback(item: ItemSummary, search: ResolvedSearch, *, now: datetime | None=None) -> ItemMessage`
+
+```
+The photo-less rendering: bare URL in the text, image left to the unfurl.
+
+No blocks at all -- putting the URL inside a section block would stop Slack
+keying the unfurl off it. Used when a listing has no photo, and as the retry
+when Slack rejects an image block because it couldn't download the photo.
+```
+
+#### `build_item_message(item: ItemSummary, search: ResolvedSearch, *, now: datetime | None=None) -> ItemMessage`
+
+```
+Render a listing as a photo-carrying message, or fall back to unfurling.
+```
+
+#### `format_overflow(total_new: int, shown: int, search: ResolvedSearch) -> str`
+
+```
+Shown when max_notify caps the replies. Never truncate silently.
+```
+
+#### `format_seed(search: ResolvedSearch, count: int, *, shown: int=0) -> str`
+
+```
+First-run confirmation.
+
+A fully silent seed is indistinguishable from a broken config, so one line
+goes out — but no per-item spam.
+
+``shown`` > 0 means ``notify_on_seed`` is on and this line is followed by
+that many of the seeded listings in the channel. It states the count both
+ways, so "412 matched, you are seeing 10" can't be misread as "10 matched".
+```
+
+#### `format_run_summary(failures: list[tuple[str, str]]) -> str`
+
+```
+Posted only when something went wrong — a quiet channel is the goal.
+```
+
+---
+
+### `shoebox.utils.sku`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/sku.py)
+
+#### `build_sku_50(row: ListingQueueRow, *, prefix: str='') -> str`
+
+```
+Generate a stable 50-character SKU based on listing metadata.
+```
+
+---
+
+### `shoebox.utils.slack`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/slack.py)
+
+#### `class ApprovalResult`
+
+**Fields**
+
+```
+approved: bool
+reply_text: str | None = None
+approved_by: str | None = None
+```
+
+#### `async send_message_only(bot_token: str, channel: str, text: str, thread_ts: str | None=None, unfurl_links: bool=False, blocks: list[dict] | None=None) -> str`
+
+```
+Post a message and return its ts (usable as thread_ts for replies).
+
+``unfurl_links`` must be opted into: bot tokens don't expand text links by
+default, so a message whose value is the link preview (an eBay listing, say)
+gets no preview at all unless this is set.
+
+When ``blocks`` are given they become the rendered message and ``text`` is
+demoted to the push-notification and fallback string — so it must still read
+as a complete summary on its own.
+```
+
+#### `async send_and_await_reply(bot_token: str, app_token: str, channel: str, text: str, *, timeout_s: int=300) -> str`
+
+```
+Sends `text` to `channel`, then waits for a *threaded reply* to that message.
+Returns the reply text.
+```
+
+#### `async send_and_await_reaction(bot_token: str, app_token: str, channel: str, text: str, *, accepted_reactions: list[str] | None=None, timeout_s: int=300) -> bool`
+
+```
+Sends `text` to `channel`, then waits for a reaction on that message.
+A `:heart:` reaction is accepted by default.
+Returns True when an accepted reaction is received, raises asyncio.TimeoutError otherwise.
+```
+
+#### `async send_and_await_approval(bot_token: str, app_token: str, channel: str, text: str, *, approve_label: str='Approve', timeout_s: int=300) -> ApprovalResult`
+
+```
+Sends `text` with an Approve button, then waits for whichever comes first:
+  - Button click           -> ApprovalResult(approved=True, approved_by=<user id>)
+  - A threaded reply       -> ApprovalResult(approved=False, reply_text=<reply>)
+Raises asyncio.TimeoutError if neither arrives within timeout_s.
+The message is edited afterwards to show the outcome and remove the button.
+
+Requires Interactivity enabled on the Slack app (with Socket Mode, no
+Request URL is needed -- just the toggle).
+```
+
+#### `class BatchPrompt`
+
+```
+One prompt message in a batch: ``key`` is the caller's identifier
+(e.g. a listing id), ``text`` the mrkdwn body (also the notification
+fallback when ``blocks`` are given).
+```
+
+**Fields**
+
+```
+key: str
+text: str
+blocks: list[dict] | None = None
+```
+
+#### `async send_batch_and_await_replies(bot_token: str, app_token: str, channel: str, prompts: list[BatchPrompt], on_reply: BatchReplyHandler, *, timeout_s: int=900, pacing_seconds: float=1.0, sweep_interval_s: float=15.0) -> dict[str, str]`
+
+```
+Post every prompt up front, then dispatch threaded replies to any of
+them as they arrive, until all are resolved or the deadline passes.
+
+Each reply to a prompt's thread invokes ``on_reply``; an outcome string
+resolves that prompt (its message is rewritten to show the outcome), None
+keeps it pending so the user can reply again. Returns {key: outcome} —
+prompts still pending at the deadline are stamped and returned with
+EXPIRED_STATUS rather than raising.
+
+Socket Mode events are the fast path, but Slack load-balances events
+across ALL of an app's open Socket Mode connections (the always-on
+slack-bot service typically holds one), so replies can be delivered to a
+connection this waiter never sees. A conversations.replies poll of every
+pending thread runs every ``sweep_interval_s`` to pick those up.
+```
+
+#### `notify(channel: str, message: str, thread_ts: str | None=None, unfurl_links: bool=False, blocks: list[dict] | None=None) -> str`
+
+```
+Post a message; returns its ts so follow-ups can thread under it.
+
+Pass ``unfurl_links=True`` when the message's links are the point (link
+previews are off by default for bot tokens), or ``blocks`` to control the
+rendering — in which case ``message`` is the notification/fallback text.
+```
+
+#### `notify_best_effort(channel: str, message: str) -> None`
+
+```
+``notify()``, but a Slack failure logs instead of raising.
+
+For progress pings from data pipelines: the sync is the job, the ping is a
+courtesy, and a Slack outage must not abort an eBay/BigQuery run.
+```
+
+#### `notify_batch_and_wait(channel: str, prompts: list[BatchPrompt], on_reply: BatchReplyHandler, timeout_s: int=900) -> dict[str, str]`
+
+```
+Sync wrapper for send_batch_and_await_replies. ``on_reply`` is still an
+async callable (wrap blocking work in asyncio.to_thread).
+```
+
+#### `async listen_for_commands(dispatch: CommandDispatch) -> None`
+
+```
+Long-running Socket Mode listener. For each top-level (non-threaded) message
+posted in settings.slack.command_channel, parses it as a command (with optional
+flags) and calls dispatch(event, client, command, args).
+
+When settings.slack.allowed_user_ids is non-empty, messages from any other
+user are ignored (logged at WARNING).
+
+Supports both '/command --flag' and 'command --flag' formats.
+Cancel the coroutine (or Ctrl-C) to stop.
+```
+
+---
+
+### `shoebox.utils.slack_formatting`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/slack_formatting.py)
+
+Slack mrkdwn formatting helpers.
+
+```
+Slack has no native table markup, so `table()` renders a column-aligned grid
+inside a fenced code block (monospace keeps the alignment intact, mirroring
+what `rich`/`render_table` produces in the terminal).
+```
+
+#### `table_messages(heading: str, headers: list[str], rows: list[list], max_chars: int=MAX_MESSAGE_CHARS) -> list[str]`
+
+```
+Bold heading + fenced table, split across multiple messages if needed.
+```
+
+---
+
+### `shoebox.utils.title_crosswalk`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/title_crosswalk.py)
+
+Lookups keyed off the eBay ``Team`` item specific, plus token expansions.
+
+```
+Covers listing-title text (team short names, shorthand expansion) and eBay
+store category routing (:func:`team_parent`, :func:`team_sport`).
+
+The data lives in ``configs/title_crosswalk.yaml`` so teams can be added or
+renamed without a code change. Everything here is cached after the first read;
+call :func:`reload_crosswalk` in a REPL after editing the file.
+
+Resolution order for the file:
+  1. ``$SHOEBOX_TITLE_CROSSWALK``
+  2. ``configs/title_crosswalk.yaml`` under the current working directory
+  3. ``configs/title_crosswalk.yaml`` next to the installed package
+```
+
+#### `crosswalk_path() -> Path`
+
+```
+Path the crosswalk is read from.
+```
+
+#### `reload_crosswalk() -> None`
+
+```
+Drop the cached crosswalk so the next lookup re-reads the YAML.
+```
+
+#### `shorten_team_name(long_name: str | None) -> str | None`
+
+```
+Short title form of an eBay ``Team`` item specific, or None if unmapped.
+
+Unmapped teams deliberately return None: the title leaves the team out
+rather than guessing at an abbreviation.
+```
+
+#### `team_aliases(long_name: str | None) -> tuple[str, ...]`
+
+```
+Every spelling that means "this title already names the team".
+
+Covers the short name, the full eBay value, and its trailing one- and
+two-word nicknames -- so a title reading "Red Sox" or "Diamondbacks"
+counts as already tagged for "Boston Red Sox" / "Arizona Diamondbacks".
+```
+
+#### `split_team_values(value: str | Iterable[str] | None) -> list[str]`
+
+```
+Normalize a Team item specific into a list of individual team names.
+
+Accepts what each source actually hands over: a list from the eBay API, a
+``"Detroit Tigers | Houston Astros"`` string from a dataframe or BigQuery,
+or a plain single name.
+```
+
+#### `shorten_team_names(value: str | Iterable[str] | None) -> list[str]`
+
+```
+Distinct short names for a Team item specific, in the order given.
+
+Two-team cards usually collapse to one name -- "Brooklyn Dodgers |
+Los Angeles Dodgers" is just "Dodgers" -- which is why this dedupes rather
+than returning one short name per input value.
+```
+
+#### `all_team_aliases(value: str | Iterable[str] | None) -> tuple[str, ...]`
+
+```
+Aliases for every team named in a Team item specific.
+```
+
+#### `unmapped_team() -> str`
+
+```
+Store category for teams with no usable home of their own.
+```
+
+#### `team_parent(long_name: str | None) -> str`
+
+```
+Store category a team's cards belong under. Always returns a category.
+
+Folds alternate, historical and minor-league names into the one category a
+buyer would look under: "Cleveland Indians" and "Cleveland" both land on
+"Cleveland Guardians", "Jupiter Hammerheads" on "Miami Marlins". Teams with
+no explicit parent keep their own name; anything unresolved -- an unknown
+team, a blank Team specific -- falls back to :func:`unmapped_team`.
+
+Categories carry the full city name, where :func:`shorten_team_name` gives
+the short form titles use. Full names also keep leagues apart: "Cardinals"
+is two clubs, "Arizona Cardinals" and "St. Louis Cardinals" are not.
+
+Unlike :func:`shorten_team_name`, this never returns None. A title can omit
+a team it cannot name, but every listing needs somewhere to live in the
+store tree.
+```
+
+#### `team_sport(long_name: str | None) -> str | None`
+
+```
+Sport implied by the team name itself, or None if it implies no one sport.
+
+Preferred over the Sport item specific, which disagrees on a small number of
+listings -- basketball cards tagged Baseball, mostly. College teams field
+several sports, and a name shared by clubs in two sports ("New York
+Giants") fits either, so those return None and leave the decision to the
+caller.
+```
+
+#### `team_parents(value: str | Iterable[str] | None) -> list[str]`
+
+```
+Distinct store categories for a Team item specific, in the order given.
+
+Two-team cards usually collapse to one, the same way
+:func:`shorten_team_names` does -- "Brooklyn Dodgers | Los Angeles Dodgers"
+is one Dodgers category, not two.
+
+The fallback is a last resort, not a co-category: a card naming one known
+team and one unknown one files under the known team alone, and only a value
+that resolves to nothing at all lands in :func:`unmapped_team`.
+```
+
+#### `token_expansions() -> dict[str, str | None]`
+
+```
+Title shorthand -> replacement word. A None value means "recognized as a
+suffix token, but left as written" (e.g. SP).
+```
+
+#### `token_removals() -> tuple[str, ...]`
+
+```
+Shorthand tokens dropped from titles entirely (e.g. MEM).
+```
+
+#### `token_synonyms(word: str) -> tuple[str, ...]`
+
+```
+Words that already say what ``word`` says, ``word`` itself included.
+```
+
+#### `title_removals() -> tuple[str, ...]`
+
+```
+Phrases stripped from every title.
+```
+
+#### `known_teams() -> dict[str, str]`
+
+```
+Full crosswalk as ``{eBay team value: short name}``, original casing.
+```
+
+---

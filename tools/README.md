@@ -12,7 +12,7 @@ Only the columns present in `configs/bigquery/schemas/{checklist,parallels}.json
 are kept during the load; the remaining workbook columns (IDs, Set Year,
 Derived Card Number) are surfaced downstream by your BigQuery views. For a
 field-by-field definition of every column, see
-[docs/metadata.md](../docs/metadata.md).
+[docs/content/guides/metadata.mdx](../docs/content/guides/metadata.mdx).
 
 ## Getting started
 

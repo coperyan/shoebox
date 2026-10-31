@@ -6,7 +6,7 @@
 # absence of the pipeline's own "Completed" message in Slack. This policy turns
 # that silence into a push notification.
 #
-# Apply with (see docs/deployment.md):
+# Apply with (see docs/content/guides/deployment.mdx):
 #   gcloud monitoring policies create --policy-from-file=deploy/alerts/job-failed.yaml \
 #     --notification-channels=projects/PROJECT/notificationChannels/CHANNEL_ID
 #
@@ -40,7 +40,7 @@ documentation:
     gcloud run jobs execute ${metric_or_resource.label.job_name} --region us-central1 --wait
     ```
 
-    Common causes are listed in `docs/deployment.md` ("When a step fails"): an
+    Common causes are listed in `docs/content/guides/deployment.mdx` ("When a step fails"): an
     expired eBay refresh token, a bad path in the uploaded `app.yaml`, or a
     missing secret version.
 
