@@ -30,6 +30,7 @@ import argparse
 import logging
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -69,7 +70,10 @@ _FINISH_WORDS = {
     "holo", "rainbow", "gold", "orange", "black", "pink", "yellow", "silver", "purple",
     "red", "blue", "green", "light", "glitter", "snow", "snowflake", "metallic", "sparkle",
     "wave", "refractor", "prizm", "mojo", "sepia", "xfractor", "chrome", "variation",
-    "backs", "plate", "finest", "heritage", "bowman", "mosaic", "inception",
+    "backs", "plate", "finest", "heritage", "bowman", "mosaic", "inception", "prism",
+    "raywave", "aqua", "magenta", "lava", "geometric", "negative", "speckle", "diamond",
+    "teal", "crackle", "canvas", "acetate", "pulsar", "reptilian", "atomic", "shimmer",
+    "logofractor", "fuchsia", "rose", "leather", "lightboard", "logo", "apple", "hongbao",
 }  # fmt: skip
 
 # Used too loosely by sellers to decide on either way.
@@ -77,9 +81,10 @@ _WEAK_WORDS = {"foil", "sp", "ssp", "short", "print", "parallel", "white", "imag
 
 _SYNONYMS = {"back": "backs"}
 
-# Another release of the same year (Series 1's holiday variations, say), unless
-# the search text names it.
-_OTHER_PRODUCT_WORDS = ["series", "update"]
+# Releases that share a year and a card-number scheme (Series 1's holiday
+# variations, Chrome vs Chrome Update). A comp must name the same ones the
+# listing's title does.
+_PRODUCT_WORDS = {"series", "update", "sapphire", "platinum", "cosmic"}
 
 # Team names with a finish word in them, removed before finish words are read.
 _TEAM_NAMES = ["red sox", "white sox", "blue jays", "green bay"]
@@ -98,8 +103,12 @@ def last_name(player: str) -> str:
 
 
 def tokens(text: str) -> set[str]:
-    """Lowercased words and print runs (``/299``) in ``text``, minus team names."""
-    t = f" {text.lower()} "
+    """Lowercased words and print runs (``/299``) in ``text``, minus team names.
+
+    Accents are dropped (``Acuña`` -> ``acuna``) and ``X-Fractor`` is one word.
+    """
+    t = unicodedata.normalize("NFKD", f" {text.lower()} ").encode("ascii", "ignore").decode()
+    t = re.sub(r"\bx[\s-]?fractor", "xfractor", t)
     for team in _TEAM_NAMES:
         t = t.replace(team, " ")
     return {_SYNONYMS.get(w, w) for w in re.findall(r"/\d+|[a-z0-9]+", t)}
@@ -152,11 +161,13 @@ def load_scheduled(ebay_api: EbayClient, title_contains: str, workers: int) -> p
         value = (spec.get(key) or [""])[0]
         return "" if value in ("Base", "[Base]") else value
 
+    search_words = tokens(title_contains)
     out = []
     for row, spec in zip(rows, all_specifics, strict=True):
         player = " ".join(spec.get("Player/Athlete") or [])
         insert, parallel = first(spec, "Insert Set"), first(spec, "Parallel/Variety")
         print_run = first(spec, "Print Run")
+        finish_text = f"{insert} {parallel} {'/' + print_run if print_run else ''}"
         out.append(
             {
                 "item_id": row["item_id"],
@@ -170,13 +181,7 @@ def load_scheduled(ebay_api: EbayClient, title_contains: str, workers: int) -> p
                 "card_number": first(spec, "Card Number"),
                 "variant": " ".join(x for x in (insert, parallel) if x) or "base",
                 "insert": insert,
-                "finish": " ".join(
-                    sorted(
-                        finish(
-                            tokens(f"{insert} {parallel} {'/' + print_run if print_run else ''}")
-                        )
-                    )
-                ),
+                "finish": " ".join(sorted(finish(tokens(finish_text) - search_words))),
                 "query": f"{title_contains} {last_name(player)}".lower() if player else None,
             }
         )
@@ -197,10 +202,10 @@ def _looks_stale(df: pd.DataFrame, query: str) -> bool:
     When 130point is slow, a new search can leave the previous one's grid on
     the page, and the scraper reads it back as this query's results.
     """
-    name = query.split()[-1].split("-")[0]
+    name = tokens(query.split()[-1])
     if df.empty or "title" not in df.columns:
         return False
-    hits = df["title"].fillna("").str.contains(name, case=False, regex=False).mean()
+    hits = df["title"].fillna("").map(lambda t: name <= tokens(t)).mean()
     return hits < _MIN_NAME_SHARE
 
 
@@ -238,14 +243,11 @@ def scrape(queries: list[str], attempts: int = 3) -> pd.DataFrame:
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
-def exclusion_reason(title: str, year: str, search_words: set[str]) -> str | None:
-    """Why a comp can't price any listing: wrong year or product, or not a raw single."""
+def exclusion_reason(title: str, year: str) -> str | None:
+    """Why a comp can't price any listing: wrong year, or not a raw single."""
     t = title.lower()
     if year and year not in t:
         return f"no {year}"
-    product = next((w for w in _OTHER_PRODUCT_WORDS if w in tokens(t) - search_words), None)
-    if product:
-        return f"'{product}'"
     hit = next((x for x in _EXCLUDE_TERMS if re.search(rf"\b{re.escape(x)}\b", t)), None)
     return f"'{hit}'" if hit else None
 
@@ -253,19 +255,35 @@ def exclusion_reason(title: str, year: str, search_words: set[str]) -> str | Non
 class _Card:
     """A listing, reduced to what a comp title has to agree with."""
 
-    def __init__(self, row: pd.Series, need_first_name: bool, search_words: set[str]):
-        names = tokens(row["player"])
+    def __init__(self, row: pd.Series, search_words: set[str]):
         self.last = tokens(row["last_name"])
-        self.first = (names - self.last - _NAME_SUFFIXES) if need_first_name else set()
+        # A bare last name picks up other players (Julien Duranville for Edouard
+        # Julien), so a first-name word is required too -- or the words run
+        # together, for J.P. -> jp.
+        plain = unicodedata.normalize("NFKD", row["player"].lower()).encode("ascii", "ignore")
+        given = [
+            w
+            for w in re.findall(r"[a-z0-9]+", plain.decode())
+            if w not in self.last and w not in _NAME_SUFFIXES
+        ]
+        self.first = set(given) | ({"".join(given)} if given else set())
         self.team_card = bool(row["team_card"])
         self.number = card_number_pattern(row["card_number"] or "")
         self.insert = insert_tokens(row["insert"], search_words)
         self.finish = frozenset(row["finish"].split())
+        self.search_words = search_words
+        self.products = _PRODUCT_WORDS & (tokens(row["title"]) - search_words)
+        # A lettered number (USC43, 89CB-13) names one product's card on its own.
+        self.lettered = bool(re.search(r"[a-z]", (row["card_number"] or "").lower()))
 
     def mismatch(self, title: str, words: set[str], other_inserts: list[frozenset]) -> str | None:
         if not self.last <= words or (self.first and not self.first & words):
             return "other player"
-        if self.number and self.number.search(title.lower()):
+        number_matched = bool(self.number and self.number.search(title.lower()))
+        products = _PRODUCT_WORDS & (words - self.search_words)
+        if products != self.products and not (number_matched and self.lettered):
+            return "other product"
+        if number_matched:
             pass
         elif self.number and re.search(r"#\s*[a-z0-9]", title.lower()):
             return "other card"
@@ -275,7 +293,7 @@ class _Card:
             return "other card"
         elif not self.insert and any(s <= words for s in other_inserts):
             return "other card"
-        if finish(words) != self.finish:
+        if finish(words - self.search_words) != self.finish:
             return "other parallel"
         return None
 
@@ -289,16 +307,17 @@ def build_plan(listings: pd.DataFrame, comps: pd.DataFrame, title_contains: str)
     comps = comps.copy().reset_index(drop=True)
     comps["title"] = comps["title"].fillna("")
     comps["sold_date"] = pd.to_datetime(comps["sold_date"], utc=True, errors="coerce")
-    comps["excluded"] = comps["title"].map(lambda t: exclusion_reason(t, year, search_words))
-    comps["finish"] = comps["title"].map(lambda t: " ".join(sorted(finish(tokens(t)))))
+    comps["excluded"] = comps["title"].map(lambda t: exclusion_reason(t, year))
+    comps["finish"] = comps["title"].map(
+        lambda t: " ".join(sorted(finish(tokens(t) - search_words)))
+    )
     words = comps["title"].map(tokens)
     inserts = [s for s in {insert_tokens(i, search_words) for i in listings["insert"]} if s]
-    players_per_query = listings.groupby("query")["player"].nunique().to_dict()
 
     counted_for: dict[int, list[str]] = {}
     stats = []
     for _, row in listings.iterrows():
-        card = _Card(row, players_per_query.get(row["query"], 1) > 1, search_words)
+        card = _Card(row, search_words)
         pool = comps[(comps["query"] == row["query"]) & comps["excluded"].isna()]
         player_rows, mine_rows = [], []
         for idx, title in pool["title"].items():
