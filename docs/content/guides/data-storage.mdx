@@ -23,10 +23,10 @@ source → normalize → local JSONL (exports/jsonl/…) → GCS staging object 
 
 | Bucket setting | Contents | Written by |
 |---|---|---|
-| `image_bucket` | `images/<set>/<subset>/<parallel|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies; `uploads/<yyyy-mm>/<id>.jpg` photos staged from the iOS app (give these a 30-day lifecycle rule) | `ImageLogClient.upload_image`, relist pipelines, `POST /images` |
+| `image_bucket` | `images/<set>/<subset>/<parallel\|base>/<card#>/<side>__<file>` card scans; `other/<sku>_<side>.png` relist image copies; `uploads/<yyyy-mm>/<id>.jpg` photos staged from the iOS app (give these a 30-day lifecycle rule) | `ImageLogClient.upload_image`, relist pipelines, `POST /images` |
 | `metadata_bucket` | `metadata/checklist/…`, `metadata/parallels/…` staging JSONL | `sync-metadata` (`TableAsset`) |
 | `ebay_bucket` | `logs/orders/…`, `logs/active_listings/…`, `logs/active_listing_details/…`, `logs/watch_list/…`, `logs/ebay_listings/…`, `logs/search_hits/…` staging JSONL | monitoring pipelines, listing-result sync, saved-search watcher |
-| (bucket in `paths.queue_uri`) | `…/listing_queue_enriched.jsonl` (the queue `create-listings` reads), `…/listing_queue_draft.json` (raw rows of the last save), `…/runs/<run_id>.json` (app-triggered listing runs: state, progress, per-row results) | `shoebox api`, `create-listings --run-request` ([api.md](api.md)) |
+| (bucket in `paths.queue_uri`) | `…/listing_queue_enriched.jsonl` (the queue `create-listings` reads), `…/listing_queue_draft.json` (raw rows of the last save), `…/runs/<run_id>.json` (app-triggered listing runs: state, progress, per-row results) | `shoebox api`, `create-listings --run-request` ([api.md](/guides/api)) |
 | (bucket in `onedrive.token_cache_uri`) | the MSAL token cache the cloud job uses to read scans from OneDrive; rewritten when the refresh token rotates | `scripts/onedrive_login.py --upload`, `create-listings --run-request` |
 | `image_log_bucket` | `logs/image_log/…` staging JSONL | `ImageLogClient.flush_append_log` |
 
@@ -86,7 +86,7 @@ same names: `search_state.json`, `<channel>_seen.jsonl`,
 `search_hits_append.jsonl`, and `.lock`, which becomes a GCS object created
 with `ifGenerationMatch=0`. Each run downloads them to a scratch directory and
 uploads the changed ones after every search. See
-[deployment.md](deployment.md#saved-searches-watch-searches).
+[deployment.md](/guides/deployment#saved-searches-watch-searches).
 | `data/checklist.csv`, `data/parallels.csv` | Overwritten per sync | Normalized metadata extracts |
 | `data/Inputs (Param).xlsm` | User-maintained | Excel queue input |
 | `scans_dir/<scan_prefix><id><scan_extension>` | User-maintained | Source card scans (naming set by `scan_prefix`/`scan_number_padding`/`scan_extension`) |

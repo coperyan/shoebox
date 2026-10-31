@@ -1,6 +1,6 @@
 # Pipelines & Services
 
-Detailed reference for each workflow. CLI flags are covered in [cli.md](cli.md);
+Detailed reference for each workflow. CLI flags are covered in [cli.md](/guides/cli);
 this document explains what each one actually does internally.
 
 ---
@@ -23,7 +23,7 @@ this document explains what each one actually does internally.
    `<checklist_dataset>.checklist` / `.parallels` with **`WRITE_TRUNCATE`**.
 
 Downstream consumers never read the tables directly — they query the views
-`cards.v_checklist` / `cards.v_parallels` (see [data-storage.md](data-storage.md)).
+`cards.v_checklist` / `cards.v_parallels` (see [data-storage.md](/guides/data-storage)).
 
 ---
 
@@ -41,7 +41,7 @@ Both entry points end at the same file: `exports/jsonl/listing_queue_enriched.js
 - Image paths can be typed or picked via a native (tkinter) file dialog rooted
   at `scans_dir`; `ui/helpers.handle_image_path` resolves a bare scan number to
   `scans_dir/<scan_prefix><zero-padded><scan_extension>` using the configured
-  scan naming convention (see [configuration.md](configuration.md#paths)).
+  scan naming convention (see [configuration.md](/guides/configuration#paths)).
 - Rows accumulate in session state with add/edit; preview modes show raw queue
   fields, per-row enriched JSON, or a flattened table.
 - "Save Enriched JSONL" enriches every row (`build_enriched_json`) and writes
@@ -63,7 +63,7 @@ Both entry points end at the same file: `exports/jsonl/listing_queue_enriched.js
   and writes `listing_queue_enriched.jsonl` to `paths.queue_uri` in GCS plus a
   `listing_queue_draft.json` with the raw rows for "load last saved".
 - Phone photos go to `uploads/` in the image bucket; the row carries the
-  `gs://` URI. See [api.md](api.md).
+  `gs://` URI. See [api.md](/guides/api).
 - `build_indexes` (the cascading dropdown order) now lives in
   `transforms/queue_indexes.py`, shared by the Streamlit UI and the API.
 
@@ -96,7 +96,7 @@ cannot list the same queue), reads publish/schedule from it, runs with
 usual start/finish messages to Slack, and marks the record `failed` (and
 exits non-zero) on any error. A bare scan number that is not on disk is
 fetched from OneDrive (`clients/onedrive.py`) by `materialize_image`. See
-[api.md](api.md#listing-from-the-app).
+[api.md](/guides/api#listing-from-the-app).
 
 Per queue row:
 
@@ -116,7 +116,7 @@ Per queue row:
    go before the scans upload because uploading a scan deletes the local
    original. The composite is named after the two files, so a re-run is served
    from the cache. Then the front and back upload through `ImageLogClient`
-   (dedup cache; see [data-storage.md](data-storage.md)), producing public
+   (dedup cache; see [data-storage.md](/guides/data-storage)), producing public
    GCS URLs; a scan that was fetched from OneDrive is then moved into
    `<scans_folder>/<onedrive.listed_subfolder>` (`archive_scan`, best-effort),
    the cloud counterpart of the local delete. Picture order is front, back,
@@ -306,7 +306,7 @@ following a partial one only picks up what is actually left.
   and round-tripping that list would strip the back.
 - `--restore-backs`: `find_stored_backs` maps each SKU to a back still in
   GCS. It prefers the scan `create-listings` uploaded (from `ebay_listings`,
-  [`listing_back_images.sql`](../configs/bigquery/queries/listing_back_images.sql))
+  [`listing_back_images.sql`](https://github.com/coperyan/shoebox/blob/main/configs/bigquery/queries/listing_back_images.sql))
   and falls back to relist's `other/<sku>_back.png`. A listing that shows
   one picture and has a stored back is set to front, stored back, combined
   (status `restored`).
@@ -436,7 +436,7 @@ Two failure behaviours worth knowing:
 
 ### `pipelines/watch_searches.py` (CLI: `watch-searches`)
 
-Setup, YAML reference and tuning workflow live in [search.md](search.md); this
+Setup, YAML reference and tuning workflow live in [search.md](/guides/search); this
 section covers the internals.
 
 **YAML-defined eBay searches → Slack.** One cron entry runs the command every
@@ -520,11 +520,11 @@ outputs:
   (`📦 Orders Awaiting Shipment — N buyer(s), M item(s)`) with each section
   posted as a thread reply (non-variation pull list incl. buyer, one table per
   variation listing, one table per buyer). Tables auto-degrade to a stacked
-  layout on mobile-width content (see [slack.md](slack.md)).
+  layout on mobile-width content (see [slack.md](/guides/slack)).
 
 ### `services/slack_bot_service.py`
 
-The chat-command bot; documented in [slack.md](slack.md).
+The chat-command bot; documented in [slack.md](/guides/slack).
 
 ---
 

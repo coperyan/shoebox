@@ -2,7 +2,7 @@
 # Cloud Run jobs and services defined in deploy/jobs.yaml.
 #
 # Wire this to a Cloud Build trigger on pushes to main with the substitution
-# _TAG = $SHORT_SHA (see docs/deployment.md), or run it by hand:
+# _TAG = $SHORT_SHA (see docs/content/guides/deployment.mdx), or run it by hand:
 #
 #   gcloud builds submit --config deploy/cloudbuild.yaml \
 #     --substitutions=_TAG=$(git rev-parse --short HEAD)

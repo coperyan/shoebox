@@ -14,7 +14,7 @@ starts failing with OneDriveAuthError, run --login --reset and --upload again.
 The same two steps are needed whenever ``onedrive.scopes`` changes (for
 example to Files.ReadWrite, which lets the job move listed scans into
 ``onedrive.listed_subfolder``): a cached token keeps its old scopes.
-See docs/deployment.md, "Listing from the app".
+See docs/content/guides/deployment.mdx, "Listing from the app".
 """
 
 from __future__ import annotations

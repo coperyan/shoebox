@@ -1,6 +1,6 @@
 # Listing-queue API (`shoebox api`)
 
-The HTTP backend for the iOS app in [`ios/`](../ios/ShoeboxQueue/README.md). It
+The HTTP backend for the iOS app in [`ios/`](https://github.com/coperyan/shoebox/blob/main/ios/ShoeboxQueue/README.md). It
 does for the phone what the Streamlit UI does on the workstation: serves the
 Set → Subset → Parallel → Card # dropdowns from the BigQuery metadata views,
 enriches queue rows with the same `transforms/queue_enrichment.build_enriched_json`,
@@ -20,7 +20,7 @@ workstation: shoebox create-listings   (reads paths.queue_uri; downloads gs:// p
 
 Every route except `/health` requires the header `X-API-Key: <key>`. The key
 is the `SHOEBOX_API_KEY` environment variable (in Cloud Run, mounted from the
-`shoebox-api-key` secret; see [deployment.md](deployment.md#services)). A
+`shoebox-api-key` secret; see [deployment.md](/guides/deployment#services)). A
 missing or wrong key is a `401`. The server refuses to start without the
 variable, and without `paths.queue_uri` in `app.yaml`.
 
@@ -160,7 +160,7 @@ exactly like a scan, so the dedup cache, the `images/<set>/…` naming, the loca
 mirror and the `images.image_log` table all behave as before (and the download
 is deleted afterwards like any scan). Because the download happens before the
 combined front+back picture is built, a phone photo feeds that third picture too. Add a lifecycle rule that deletes
-`uploads/` objects after 30 days (see [deployment.md](deployment.md#services)).
+`uploads/` objects after 30 days (see [deployment.md](/guides/deployment#services)).
 
 ## Listing from the app
 
@@ -214,7 +214,7 @@ downloads the scans for the next dozen rows eight at a time, uploads a row's
 front, back and combined picture at once, and moves listed scans into
 `Listed` in the background.
 Setup (Azure app registration, device-code sign-in, token cache in GCS) is in
-[deployment.md](deployment.md#listing-from-the-app).
+[deployment.md](/guides/deployment#listing-from-the-app).
 
 ## The workstation side
 

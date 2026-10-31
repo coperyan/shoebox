@@ -4,10 +4,10 @@ Everything about the search feature: what it does, how to set it up from
 nothing, how to write and tune a search, how to schedule it, and what it leaves
 behind on disk and in BigQuery.
 
-Related reference: [cli.md](cli.md#saved-searches) (flag tables),
-[configuration.md](configuration.md#saved-searches-configssearchesyaml) (YAML
-schema), [pipelines.md](pipelines.md#saved-search-watcher) (internals),
-[data-storage.md](data-storage.md) (where the bytes live).
+Related reference: [cli.md](/guides/cli#saved-searches) (flag tables),
+[configuration.md](/guides/configuration#saved-searches-configssearchesyaml) (YAML
+schema), [pipelines.md](/guides/pipelines#saved-search-watcher) (internals),
+[data-storage.md](/guides/data-storage) (where the bytes live).
 
 ---
 
@@ -36,7 +36,7 @@ duplicate-over-miss bias when something fails mid-run.
 ## Quick start
 
 Assuming shoebox is already installed and `configs/app.yaml`,
-`configs/ebay_rest.json` and `configs/gcp.json` exist (see [setup.md](setup.md)):
+`configs/ebay_rest.json` and `configs/gcp.json` exist (see [setup.md](/guides/setup)):
 
 ```bash
 cp configs/searches.example.yml configs/searches.yaml
@@ -75,7 +75,7 @@ one confirmation line. Only listings that appear *after* that alert.
 
 | Need | Why | Where |
 |---|---|---|
-| eBay REST credentials | Browse API calls | `configs/ebay_rest.json` — see [setup.md](setup.md#ebay-setup) |
+| eBay REST credentials | Browse API calls | `configs/ebay_rest.json` — see [setup.md](/guides/setup#ebay-setup) |
 | A Slack bot token + a channel | The alerts | `slack.bot_token`, `slack.search_channel` in `app.yaml` |
 | GCP service account (optional-ish) | Durable `search_hits` log in BigQuery | `configs/gcp.json`, `gcs.ebay_bucket`, `bigquery.ebay_dataset` |
 
@@ -357,12 +357,12 @@ of the repo root, and `StandardOutPath` under `logs/`.
 cron. The state lives in GCS, and `searches.yaml` is deployed to GCS by every
 push to the private searches repo, after it validates. Setup, the cutover from
 a workstation, and day-to-day commands are in
-[deployment.md](deployment.md#saved-searches-watch-searches).
+[deployment.md](/guides/deployment#saved-searches-watch-searches).
 
 **Windows — Task Scheduler:**
 
 The scheduled tasks on the Windows host are generated from
-`scripts/tasks.yaml` — see [scheduling.md](scheduling.md). `watch-searches` is
+`scripts/tasks.yaml` — see [scheduling.md](/guides/scheduling). `watch-searches` is
 already defined there as a logon trigger repeating every 5 minutes:
 
 ```bash
@@ -493,7 +493,7 @@ search. That moves the crash bound below from one duplicate to one search's
 batch. It is how the Cloud Run job works, and a workstation naming the same
 URI shares the state instead of keeping its own. `scripts/migrate_search_state_to_gcs.py`
 moves existing local state across; see
-[deployment.md](deployment.md#cutover).
+[deployment.md](/guides/deployment#cutover).
 
 **Dedup** is item-id based and per search (`search_name` + `item_id`), and runs
 entirely off the local cache — never off BigQuery. That is why a GCS or BigQuery
@@ -639,16 +639,16 @@ ORDER BY alerts DESC;
 
 | File | Role |
 |---|---|
-| [shoebox/models/saved_search.py](../shoebox/models/saved_search.py) | YAML schema, defaults inheritance, validation, channel aliases |
-| [shoebox/transforms/search_filters.py](../shoebox/transforms/search_filters.py) | Browse `filter`/`aspect_filter` builders, post-filters, rejection reasons |
-| [shoebox/clients/ebay/browse.py](../shoebox/clients/ebay/browse.py) | Browse search + aspect refinements |
-| [shoebox/pipelines/watch_searches.py](../shoebox/pipelines/watch_searches.py) | The run loop: fetch → filter → diff → alert → commit |
-| [shoebox/clients/search_state.py](../shoebox/clients/search_state.py) | Seen-cache, run state, lock, hits append log → GCS → BigQuery |
-| [shoebox/clients/search_state_gcs.py](../shoebox/clients/search_state_gcs.py) | The same state mirrored to `gs://` for Cloud Run: GCS lock, download, per-search upload |
-| [scripts/validate_searches.py](../scripts/validate_searches.py) | Credential-free validation; what the searches-repo deploy build runs |
-| [shoebox/models/search_hit.py](../shoebox/models/search_hit.py) | `SeenEntry` (local dedup) and `SearchHit` (BigQuery row) |
-| [shoebox/utils/search_formatting.py](../shoebox/utils/search_formatting.py) | Slack message builders |
-| [shoebox/pipelines/preview_search.py](../shoebox/pipelines/preview_search.py) | `preview-search` and `search-aspects` |
+| [shoebox/models/saved_search.py](https://github.com/coperyan/shoebox/blob/main/shoebox/models/saved_search.py) | YAML schema, defaults inheritance, validation, channel aliases |
+| [shoebox/transforms/search_filters.py](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/search_filters.py) | Browse `filter`/`aspect_filter` builders, post-filters, rejection reasons |
+| [shoebox/clients/ebay/browse.py](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/browse.py) | Browse search + aspect refinements |
+| [shoebox/pipelines/watch_searches.py](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/watch_searches.py) | The run loop: fetch → filter → diff → alert → commit |
+| [shoebox/clients/search_state.py](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/search_state.py) | Seen-cache, run state, lock, hits append log → GCS → BigQuery |
+| [shoebox/clients/search_state_gcs.py](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/search_state_gcs.py) | The same state mirrored to `gs://` for Cloud Run: GCS lock, download, per-search upload |
+| [scripts/validate_searches.py](https://github.com/coperyan/shoebox/blob/main/scripts/validate_searches.py) | Credential-free validation; what the searches-repo deploy build runs |
+| [shoebox/models/search_hit.py](https://github.com/coperyan/shoebox/blob/main/shoebox/models/search_hit.py) | `SeenEntry` (local dedup) and `SearchHit` (BigQuery row) |
+| [shoebox/utils/search_formatting.py](https://github.com/coperyan/shoebox/blob/main/shoebox/utils/search_formatting.py) | Slack message builders |
+| [shoebox/pipelines/preview_search.py](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/preview_search.py) | `preview-search` and `search-aspects` |
 
 Tests: `tests/test_saved_search_config.py`, `test_search_filters.py`,
 `test_search_state.py`, `test_search_state_gcs.py`, `test_watch_searches_flow.py`,

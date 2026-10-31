@@ -10,7 +10,7 @@ nothing already alerted alerts again.
     python scripts/migrate_search_state_to_gcs.py --apply --uri gs://bucket/searches/state
 
 Run it after the Windows ``watch-searches`` task is disabled and before the
-cloud schedule is enabled (docs/deployment.md, "Saved searches"). It holds both
+cloud schedule is enabled (docs/content/guides/deployment.mdx, "Saved searches"). It holds both
 locks while it copies -- the local ``.lock`` a Windows tick would take and the
 GCS lock a cloud run would take -- so neither can run halfway through.
 

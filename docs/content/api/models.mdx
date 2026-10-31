@@ -1,0 +1,1427 @@
+# Models
+
+Pydantic types for queue rows, image-log entries, listing results, saved searches and typed views of eBay payloads.
+
+- [`shoebox.models.checklist`](#shoeboxmodelschecklist)
+- [`shoebox.models.common`](#shoeboxmodelscommon)
+- [`shoebox.models.ebay.inventory_item`](#shoeboxmodelsebayinventory_item)
+- [`shoebox.models.ebay.item_summary`](#shoeboxmodelsebayitem_summary)
+- [`shoebox.models.ebay.negotiation_offer`](#shoeboxmodelsebaynegotiation_offer)
+- [`shoebox.models.ebay.offer`](#shoeboxmodelsebayoffer)
+- [`shoebox.models.ebay.order`](#shoeboxmodelsebayorder)
+- [`shoebox.models.ebay_listing`](#shoeboxmodelsebay_listing)
+- [`shoebox.models.image_log`](#shoeboxmodelsimage_log)
+- [`shoebox.models.listing_queue`](#shoeboxmodelslisting_queue)
+- [`shoebox.models.saved_search`](#shoeboxmodelssaved_search)
+- [`shoebox.models.search_hit`](#shoeboxmodelssearch_hit)
+- [`shoebox.models.tcdb`](#shoeboxmodelstcdb)
+- [`shoebox.models.topps_release`](#shoeboxmodelstopps_release)
+
+### `shoebox.models.checklist`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/checklist.py)
+
+#### `class ChecklistRow(Model)`
+
+**Fields**
+
+```
+set_name: str = Field(..., description='2025 Topps Chrome, 2020 Bowman')
+subset_name: str = Field(..., description='Base or Insert Name')
+subset_type: str = Field(..., description='Base or Insert')
+card_number: str = Field(..., description='')
+player: str = Field(..., description='')
+team: str | None = None
+note: str | None = None
+```
+
+#### `class ParallelRow(Model)`
+
+**Fields**
+
+```
+set_name: str
+subset_name: str
+parallel_variety: str
+print_run: int | None = None
+other_note: str | None = None
+```
+
+---
+
+### `shoebox.models.common`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/common.py)
+
+#### `class Model(BaseModel)`
+
+```
+Base for all models: consistent config + JSONL-safe dumps.
+```
+
+##### `to_bq_json() -> dict[str, Any]`
+
+```
+BigQuery load-friendly dict (JSON serializable).
+```
+
+#### `class RawBlob(Model)`
+
+```
+A small wrapper for storing raw request/response payloads.
+```
+
+**Fields**
+
+```
+data: dict[str, Any] = Field(default_factory=dict)
+```
+
+---
+
+### `shoebox.models.ebay.inventory_item`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/ebay/inventory_item.py)
+
+#### `class Dimensions(Model)`
+
+**Fields**
+
+```
+height: float | None = None
+length: float | None = None
+width: float | None = None
+unit: str | None = None
+```
+
+#### `class Weight(Model)`
+
+**Fields**
+
+```
+unit: str | None = None
+value: float | None = None
+```
+
+#### `class PackageWeightAndSize(Model)`
+
+**Fields**
+
+```
+dimensions: Dimensions | None = None
+package_type: str | None = None
+shipping_irregular: bool | None = None
+weight: Weight | None = None
+```
+
+#### `class ShipToLocationAvailability(Model)`
+
+**Fields**
+
+```
+allocation_by_format: dict[str, int] | None = None
+availability_distributions: Any | None = None
+quantity: int | None = None
+```
+
+#### `class Availability(Model)`
+
+**Fields**
+
+```
+pickup_at_location_availability: Any | None = None
+ship_to_location_availability: ShipToLocationAvailability | None = None
+```
+
+#### `class ConditionDescriptor(Model)`
+
+**Fields**
+
+```
+additional_info: Any | None = None
+name: str | None = None
+values: list[str] = Field(default_factory=list)
+```
+
+#### `class Product(Model)`
+
+**Fields**
+
+```
+title: str | None = None
+subtitle: str | None = None
+description: str | None = None
+brand: str | None = None
+mpn: str | None = None
+epid: str | None = None
+upc: str | None = None
+ean: str | None = None
+isbn: str | None = None
+image_urls: list[str] = Field(default_factory=list)
+video_ids: Any | None = None
+aspects: dict[str, AspectValue] = Field(default_factory=dict)
+```
+
+##### `classmethod normalize_aspects(v: Any) -> dict[str, AspectValue]`
+
+```
+Normalize to dict[str, str | list[str]] with rules:
+  - len(list)==1 -> scalar string
+  - len(list)>1 -> list[str]
+  - scalar -> string
+  - empty/None -> "" (adjust to None if you prefer)
+Also parses stringified python dicts (single quotes) via ast.literal_eval.
+```
+
+#### `class InventoryItem(Model)`
+
+```
+Parse directly from the inner dict returned by getInventoryItem.
+```
+
+**Fields**
+
+```
+sku: str
+locale: str | None = None
+availability: Availability | None = None
+condition: str | None = None
+condition_description: Any | None = None
+condition_descriptors: list[ConditionDescriptor] = Field(default_factory=list)
+inventory_item_group_keys: Any | None = None
+package_weight_and_size: PackageWeightAndSize | None = None
+product: Product | None = None
+raw: dict[str, Any] = Field(default_factory=dict)
+```
+
+##### `property aspects`
+
+```
+Convenience: access normalized aspects at the InventoryItem level.
+```
+
+---
+
+### `shoebox.models.ebay.item_summary`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/ebay/item_summary.py)
+
+#### `class ItemPrice(Model)`
+
+**Fields**
+
+```
+value: str | None = None
+currency: str | None = None
+```
+
+#### `class ItemImage(Model)`
+
+**Fields**
+
+```
+image_url: str | None = None
+```
+
+#### `class ItemLocation(Model)`
+
+**Fields**
+
+```
+postal_code: str | None = None
+country: str | None = None
+state_or_province: str | None = None
+city: str | None = None
+```
+
+#### `class ItemSeller(Model)`
+
+**Fields**
+
+```
+username: str | None = None
+feedback_score: int | None = None
+feedback_percentage: str | None = None
+```
+
+#### `class ShippingCost(Model)`
+
+**Fields**
+
+```
+shipping_cost: ItemPrice | None = None
+shipping_cost_type: str | None = None
+shipping_service_code: str | None = None
+```
+
+#### `class ItemCategory(Model)`
+
+**Fields**
+
+```
+category_id: str | None = None
+category_name: str | None = None
+```
+
+#### `class ItemSummary(Model)`
+
+**Fields**
+
+```
+item_id: str | None = None
+title: str | None = None
+leaf_category_ids: list[str] = Field(default_factory=list)
+categories: list[ItemCategory] = Field(default_factory=list)
+image: ItemImage | None = None
+price: ItemPrice | None = None
+item_href: str | None = None
+seller: ItemSeller | None = None
+condition: str | None = None
+condition_id: str | None = None
+item_location: ItemLocation | None = None
+buying_options: list[str] = Field(default_factory=list)
+item_web_url: str | None = None
+item_end_date: str | None = None
+item_origin_date: str | None = None
+current_bid_price: ItemPrice | None = None
+shipping_options: list[ShippingCost] = Field(default_factory=list)
+epid: str | None = None
+item_group_href: str | None = None
+thumbnail_images: list[ItemImage] = Field(default_factory=list)
+```
+
+##### `thumbnail(size: int | None=None) -> str | None`
+
+```
+Best available image URL, or None when the listing has no picture.
+
+``thumbnail_images`` is preferred over ``image`` only because eBay
+populates it more consistently in Browse search results.
+
+``size`` rewrites the ``s-l<n>`` segment eBay embeds in the path. The
+default thumbnail is 225px -- fine as a chat avatar, mushy as a picture
+of a card -- and every size is served off the same CDN path, so asking
+for a bigger one costs no extra API call.
+```
+
+---
+
+### `shoebox.models.ebay.negotiation_offer`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/ebay/negotiation_offer.py)
+
+#### `class NegotiationOffer(Model)`
+
+**Fields**
+
+```
+listing_id: str
+price: float
+quantity: int
+allow_counter_offer: bool = False
+message: str = Field(default_factory=_default_offer_message)
+currency: str = 'USD'
+```
+
+---
+
+### `shoebox.models.ebay.offer`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/ebay/offer.py)
+
+#### `class Money(Model)`
+
+**Fields**
+
+```
+currency: str | None = None
+value: str | None = None
+```
+
+#### `class PricingSummary(Model)`
+
+**Fields**
+
+```
+price: Money | None = None
+auction_start_price: Money | None = None
+auction_reserve_price: Money | None = None
+minimum_advertised_price: Money | None = None
+original_retail_price: Money | None = None
+pricing_visibility: str | None = None
+```
+
+#### `class Listing(Model)`
+
+**Fields**
+
+```
+listing_id: str | None = None
+listing_status: str | None = None
+sold_quantity: int | None = None
+listing_on_hold: Any | None = None
+```
+
+#### `class ListingPolicies(Model)`
+
+**Fields**
+
+```
+fulfillment_policy_id: str | None = None
+payment_policy_id: str | None = None
+return_policy_id: str | None = None
+best_offer_terms: Any | None = None
+e_bay_plus_if_eligible: bool | None = None
+product_compliance_policy_ids: Any | None = None
+regional_product_compliance_policies: Any | None = None
+regional_take_back_policies: Any | None = None
+shipping_cost_overrides: Any | None = None
+take_back_policy_id: Any | None = None
+```
+
+#### `class Tax(Model)`
+
+**Fields**
+
+```
+apply_tax: bool | None = None
+third_party_tax_category: Any | None = None
+vat_percentage: Any | None = None
+```
+
+#### `class Offer(Model)`
+
+```
+Typed view over an eBay offer record (sell/inventory offer).
+Designed to match your sample payload; unknown fields are ignored.
+```
+
+**Fields**
+
+```
+offer_id: str
+sku: str | None = None
+marketplace_id: str | None = None
+merchant_location_key: str | None = None
+format: str | None = None
+status: str | None = None
+category_id: str | None = None
+secondary_category_id: str | None = None
+listing_duration: str | None = None
+listing_start_date: str | None = None
+available_quantity: int | None = None
+quantity_limit_per_buyer: int | None = None
+lot_size: int | None = None
+hide_buyer_details: bool | None = None
+include_catalog_product_details: bool | None = None
+listing: Listing | None = None
+listing_policies: ListingPolicies | None = None
+pricing_summary: PricingSummary | None = None
+listing_description: str | None = None
+store_category_names: list[str] = Field(default_factory=list)
+tax: Tax | None = None
+raw: dict[str, Any] = Field(default_factory=dict)
+```
+
+##### `property price`
+
+```
+Returns Decimal price (e.g., Decimal('1.49')) if available.
+```
+
+---
+
+### `shoebox.models.ebay.order`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/ebay/order.py)
+
+#### `class Amount(Model)`
+
+**Fields**
+
+```
+currency: str | None = None
+value: str | None = None
+converted_from_currency: str | None = None
+converted_from_value: str | None = None
+```
+
+#### `class ContactAddress(Model)`
+
+**Fields**
+
+```
+address_line1: str | None = None
+address_line2: str | None = None
+city: str | None = None
+country_code: str | None = None
+county: str | None = None
+postal_code: str | None = None
+state_or_province: str | None = None
+```
+
+#### `class Phone(Model)`
+
+**Fields**
+
+```
+phone_number: str | None = None
+```
+
+#### `class BuyerRegistrationAddress(Model)`
+
+**Fields**
+
+```
+company_name: str | None = None
+contact_address: ContactAddress | None = None
+email: str | None = None
+full_name: str | None = None
+primary_phone: Phone | None = None
+```
+
+#### `class TaxAddress(Model)`
+
+**Fields**
+
+```
+city: str | None = None
+country_code: str | None = None
+postal_code: str | None = None
+state_or_province: str | None = None
+```
+
+#### `class Buyer(Model)`
+
+**Fields**
+
+```
+buyer_registration_address: BuyerRegistrationAddress | None = None
+tax_address: TaxAddress | None = None
+tax_identifier: Any | None = None
+username: str | None = None
+```
+
+#### `class CancelStatus(Model)`
+
+**Fields**
+
+```
+cancelled_date: str | None = None
+cancel_requests: list[Any] = Field(default_factory=list)
+cancel_state: str | None = None
+```
+
+#### `class ShipTo(Model)`
+
+**Fields**
+
+```
+company_name: str | None = None
+contact_address: ContactAddress | None = None
+email: str | None = None
+full_name: str | None = None
+primary_phone: Phone | None = None
+```
+
+#### `class ShippingStep(Model)`
+
+**Fields**
+
+```
+shipping_carrier_code: str | None = None
+shipping_service_code: str | None = None
+ship_to: ShipTo | None = None
+ship_to_reference_id: Any | None = None
+```
+
+#### `class FulfillmentStartInstruction(Model)`
+
+**Fields**
+
+```
+appointment: Any | None = None
+ebay_supported_fulfillment: bool | None = None
+final_destination_address: Any | None = None
+fulfillment_instructions_type: str | None = None
+max_estimated_delivery_date: str | None = None
+min_estimated_delivery_date: str | None = None
+pickup_step: Any | None = None
+shipping_step: ShippingStep | None = None
+```
+
+#### `class DeliveryCost(Model)`
+
+**Fields**
+
+```
+discount_amount: Any | None = None
+handling_cost: Any | None = None
+import_charges: Any | None = None
+shipping_cost: Amount | None = None
+shipping_intermediation_fee: Any | None = None
+```
+
+#### `class EbayCollectAndRemitTax(Model)`
+
+**Fields**
+
+```
+amount: Amount | None = None
+ebay_reference: Any | None = None
+tax_type: str | None = None
+collection_method: str | None = None
+```
+
+#### `class ItemLocation(Model)`
+
+**Fields**
+
+```
+country_code: str | None = None
+location: str | None = None
+postal_code: str | None = None
+```
+
+#### `class VariationAspect(Model)`
+
+**Fields**
+
+```
+name: str | None = None
+value: str | None = None
+```
+
+#### `class LineItemFulfillmentInstructions(Model)`
+
+**Fields**
+
+```
+guaranteed_delivery: bool | None = None
+max_estimated_delivery_date: str | None = None
+min_estimated_delivery_date: str | None = None
+ship_by_date: str | None = None
+```
+
+#### `class LineItemProperties(Model)`
+
+**Fields**
+
+```
+buyer_protection: bool | None = None
+from_best_offer: Any | None = None
+sold_via_ad_campaign: bool | None = None
+```
+
+#### `class LineItem(Model)`
+
+**Fields**
+
+```
+applied_promotions: list[Any] = Field(default_factory=list)
+compatibility_properties: Any | None = None
+delivery_cost: DeliveryCost | None = None
+discounted_line_item_cost: Any | None = None
+ebay_collect_and_remit_taxes: list[EbayCollectAndRemitTax] | None = None
+ebay_collected_charges: Any | None = None
+gift_details: Any | None = None
+item_location: ItemLocation | None = None
+legacy_item_id: str | None = None
+legacy_variation_id: Any | None = None
+line_item_cost: Amount | None = None
+line_item_fulfillment_instructions: LineItemFulfillmentInstructions | None = None
+line_item_fulfillment_status: str | None = None
+line_item_id: str | None = None
+linked_order_line_items: Any | None = None
+listing_marketplace_id: str | None = None
+properties: LineItemProperties | None = None
+purchase_marketplace_id: str | None = None
+quantity: int | None = None
+refunds: Any | None = None
+sku: str | None = None
+sold_format: str | None = None
+taxes: list[Any] = Field(default_factory=list)
+title: str | None = None
+total: Amount | None = None
+variation_aspects: list[VariationAspect] | None = None
+legacy_variation_id: str | None = None
+```
+
+#### `class Payment(Model)`
+
+**Fields**
+
+```
+amount: Amount | None = None
+payment_date: str | None = None
+payment_holds: Any | None = None
+payment_method: str | None = None
+payment_reference_id: str | None = None
+payment_status: str | None = None
+```
+
+#### `class PaymentSummary(Model)`
+
+**Fields**
+
+```
+payments: list[Payment] = Field(default_factory=list)
+refunds: list[Any] = Field(default_factory=list)
+total_due_seller: Amount | None = None
+```
+
+#### `class PricingSummary(Model)`
+
+**Fields**
+
+```
+adjustment: Any | None = None
+delivery_cost: Amount | None = None
+delivery_discount: Any | None = None
+fee: Any | None = None
+price_discount: Any | None = None
+price_subtotal: Amount | None = None
+tax: Any | None = None
+total: Amount | None = None
+```
+
+#### `class Order(Model)`
+
+**Fields**
+
+```
+order_id: str
+buyer: Buyer | None = None
+buyer_checkout_notes: Any | None = None
+cancel_status: CancelStatus | None = None
+creation_date: str | None = None
+last_modified_date: str | None = None
+ebay_collect_and_remit_tax: bool | None = None
+fulfillment_hrefs: list[Any] = Field(default_factory=list)
+fulfillment_start_instructions: list[FulfillmentStartInstruction] = Field(default_factory=list)
+line_items: list[LineItem] = Field(default_factory=list)
+order_fulfillment_status: str | None = None
+order_payment_status: str | None = None
+payment_summary: PaymentSummary | None = None
+pricing_summary: PricingSummary | None = None
+program: Any | None = None
+sales_record_reference: str | None = None
+seller_id: str | None = None
+total_fee_basis_amount: Amount | None = None
+total_marketplace_fee: Amount | None = None
+raw: dict[str, Any] = Field(default_factory=dict)
+```
+
+##### `property total_paid`
+
+```
+Common “what did the buyer pay?” convenience.
+Uses pricing_summary.total if present.
+```
+
+##### `property ship_to`
+
+```
+Convenience: primary ship_to from first fulfillment instruction (SHIP_TO).
+```
+
+---
+
+### `shoebox.models.ebay_listing`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/ebay_listing.py)
+
+#### `class EbayListingDraft(Model)`
+
+```
+A normalized, repo-owned representation of a listing we intend to create.
+
+This keeps your transforms stable even if you change eBay API libraries.
+```
+
+**Fields**
+
+```
+sku: str
+title: str
+description: str
+item_description: str | None = None
+quantity: int = 1
+price: float = 0.0
+category_id: str | None = None
+condition_id: str | None = None
+store_category: str | None = None
+store_categories: list[str] = Field(default_factory=list)
+listing_start_date: str | None = None
+image_urls: list[str] = Field(default_factory=list)
+aspects: dict[str, Any] = Field(default_factory=dict)
+inventory_item: dict[str, Any] = Field(default_factory=dict)
+offer: dict[str, Any] = Field(default_factory=dict)
+```
+
+#### `class EbayListingResult(Model)`
+
+```
+What happened when we attempted to create/publish a listing.
+```
+
+**Fields**
+
+```
+card_id: str | None = None
+sku: str
+created_at_utc: datetime = Field(default_factory=utc_now)
+inventory_item_group_key: str | None = None
+offer_id: str | None = None
+listing_id: str | None = None
+success: bool = True
+error_message: str | None = None
+request: RawBlob = Field(default_factory=RawBlob)
+response: RawBlob = Field(default_factory=RawBlob)
+```
+
+---
+
+### `shoebox.models.image_log`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/image_log.py)
+
+#### `class ImageLogEntry(Model)`
+
+```
+One uploaded image (front/back/combined/etc.) persisted to BigQuery via JSONL.
+
+We log *listing metadata* rather than an opaque card_id.
+
+Privacy / size notes:
+- We intentionally do NOT log file bytes.
+- We intentionally do NOT log file size.
+- We intentionally do NOT log a file-content SHA256.
+
+Cache behavior:
+- We cache by a deterministic `cache_key` derived from
+  (set_name, subset_name, parallel_variety, card_number, side, original filename)
+  and the target bucket/prefix.
+```
+
+**Fields**
+
+```
+set_name: str = Field(..., description='Checklist set name')
+subset_name: str = Field(..., description='Checklist subset name')
+parallel_variety: str | None = Field(default=None, description='Parallel/variety (nullable)')
+card_number: str = Field(..., description='Card number')
+side: str | None = Field(default=None, description='front|back|combined|other')
+local_path: str = Field(..., description='Original local file path')
+original_filename: str = Field(..., description='Original filename')
+content_type: str | None = Field(default=None, description='image/jpeg, image/png, image/webp')
+gcs_bucket: str
+gcs_object: str
+public_url: str | None = None
+uploaded_at_utc: datetime = Field(default_factory=utc_now)
+cache_key: str = Field(..., description='Deterministic cache key (bucket|metadata|side|filename)')
+```
+
+---
+
+### `shoebox.models.listing_queue`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/listing_queue.py)
+
+#### `class ListingQueueRow(BaseModel)`
+
+**Fields**
+
+```
+card_id: str | None = None
+checklist_id: str | None = None
+subset_id: str | None = None
+parallel_id: str | None = None
+set_year: str | None = None
+set_name: str = ''
+subset_name: str = ''
+subset_type: str | None = None
+derived_card_number: str | None = None
+card_number: str = ''
+player: str | None = None
+team: str | None = None
+note: str | None = None
+note_check: str | None = None
+parallel_variety: str | None = ''
+print_run: int | None = None
+parallel_note: str | None = Field(default=None, description='p.other_note AS parallel_note')
+quantity: int = 1
+price: float = 0.0
+image_front: str = ''
+image_back: str = ''
+```
+
+---
+
+### `shoebox.models.saved_search`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/saved_search.py)
+
+Saved eBay search definitions loaded from ``configs/searches.yaml``.
+
+```
+Three layers:
+
+- ``SearchDefaults`` — inheritable settings with concrete defaults.
+- ``SavedSearch`` — one search as written in YAML. Every inheritable field is
+  ``None`` by default, where ``None`` means *inherit* and ``[]`` means
+  *explicitly empty*. A plain ``dict.update`` merge would destroy that
+  distinction, so the merge walks the fields explicitly.
+- ``ResolvedSearch`` — post-merge, all values concrete. Cross-field rules that
+  depend on merged values are validated here.
+
+Validation is deliberately strict (``extra="forbid"``, no bare-int intervals):
+a saved search that silently searches for the wrong thing is worse than one
+that refuses to load.
+```
+
+#### `parse_interval(value: object) -> timedelta`
+
+```
+Parse ``"15m"``-style intervals into a timedelta.
+
+Bare numbers are rejected on purpose. Pydantic would happily coerce ``15``
+into 15 *seconds*, but in a config full of polling intervals ``15`` reads as
+minutes — so the ambiguity is worth an error rather than a guess.
+```
+
+#### `class PriceRange(_ConfigModel)`
+
+**Fields**
+
+```
+min: Decimal | None = None
+max: Decimal | None = None
+```
+
+#### `class SearchDefaults(_ConfigModel)`
+
+```
+Inheritable defaults. Scalars and flat lists only — no nested ``filters``
+block, because deep-merge semantics are ambiguous and every reader would
+guess differently.
+```
+
+**Fields**
+
+```
+enabled: bool = True
+category_ids: list[str] = Field(default_factory=list)
+interval: Interval = timedelta(minutes=30)
+sort: SortValue = 'newlyListed'
+max_results: int = Field(default=200, ge=1)
+seed_max_results: int = Field(default=2000, ge=1)
+max_notify: int = Field(default=10, ge=1)
+notify_on_seed: bool = False
+defer_missing_image: bool = True
+channel: str | None = None
+currency: str = 'USD'
+buying_options: list[BuyingOption] = Field(default_factory=lambda: ['FIXED_PRICE', 'AUCTION'])
+conditions: list[ConditionValue] = Field(default_factory=list)
+item_location_countries: list[str] = Field(default_factory=lambda: ['US'])
+delivery_country: str | None = 'US'
+sellers: list[str] = Field(default_factory=list)
+exclude_sellers: list[str] = Field(default_factory=list)
+free_shipping_only: bool = False
+require_query_in_title: bool = True
+verify_aspects: bool = True
+verify_aspects_budget: int = Field(default=40, ge=1)
+title_exclude: list[str] = Field(default_factory=list)
+title_must_include_all: list[str] = Field(default_factory=list)
+title_must_include_any: list[str] = Field(default_factory=list)
+seller_min_feedback_score: int | None = None
+max_total_price: Decimal | None = None
+prune_seen_after_days: int = Field(default=90, ge=1)
+```
+
+#### `class SavedSearch(_ConfigModel)`
+
+```
+One entry under ``searches:``. ``None`` means inherit from defaults.
+```
+
+**Fields**
+
+```
+name: str
+query: str | None = None
+price: PriceRange | None = None
+aspects: dict[str, list[str]] = Field(default_factory=dict)
+enabled: bool | None = None
+category_ids: list[str] | None = None
+interval: Interval | None = None
+sort: SortValue | None = None
+max_results: int | None = Field(default=None, ge=1)
+seed_max_results: int | None = Field(default=None, ge=1)
+max_notify: int | None = Field(default=None, ge=1)
+notify_on_seed: bool | None = None
+defer_missing_image: bool | None = None
+channel: str | None = None
+currency: str | None = None
+buying_options: list[BuyingOption] | None = None
+conditions: list[ConditionValue] | None = None
+item_location_countries: list[str] | None = None
+delivery_country: str | None = None
+sellers: list[str] | None = None
+exclude_sellers: list[str] | None = None
+free_shipping_only: bool | None = None
+require_query_in_title: bool | None = None
+verify_aspects: bool | None = None
+verify_aspects_budget: int | None = Field(default=None, ge=1)
+title_exclude: list[str] | None = None
+title_must_include_all: list[str] | None = None
+title_must_include_any: list[str] | None = None
+seller_min_feedback_score: int | None = None
+max_total_price: Decimal | None = None
+prune_seen_after_days: int | None = Field(default=None, ge=1)
+```
+
+#### `class ResolvedSearch(_ConfigModel)`
+
+```
+A search with defaults merged in. All values concrete.
+```
+
+**Fields**
+
+```
+name: str
+query: str | None = None
+category_ids: list[str] = Field(default_factory=list)
+price: PriceRange | None = None
+aspects: dict[str, list[str]] = Field(default_factory=dict)
+enabled: bool
+interval: timedelta
+sort: SortValue
+max_results: int
+seed_max_results: int
+max_notify: int
+notify_on_seed: bool
+defer_missing_image: bool
+channel: str | None
+currency: str
+buying_options: list[BuyingOption]
+conditions: list[ConditionValue]
+item_location_countries: list[str]
+delivery_country: str | None
+sellers: list[str]
+exclude_sellers: list[str]
+free_shipping_only: bool
+require_query_in_title: bool
+verify_aspects: bool
+verify_aspects_budget: int
+title_exclude: list[str]
+title_must_include_all: list[str]
+title_must_include_any: list[str]
+seller_min_feedback_score: int | None
+max_total_price: Decimal | None
+prune_seen_after_days: int
+```
+
+#### `class SearchesFile(_ConfigModel)`
+
+```
+The whole ``configs/searches.yaml`` document.
+```
+
+**Fields**
+
+```
+version: Literal[1] = 1
+channels: dict[str, str] = Field(default_factory=dict)
+defaults: SearchDefaults = Field(default_factory=SearchDefaults)
+searches: list[SavedSearch] = Field(default_factory=list)
+```
+
+##### `resolve_channel(value: str | None) -> str | None`
+
+```
+Turn an alias into a channel ID, passing raw IDs through.
+
+A value that is neither a known alias nor ID-shaped is a typo, and
+saying so at load time beats a ``channel_not_found`` from Slack at 3am.
+```
+
+##### `resolved() -> list[ResolvedSearch]`
+
+```
+Merge defaults into each search.
+```
+
+#### `load_searches_file(path: str | Path) -> SearchesFile`
+
+```
+Load and validate a searches YAML document.
+
+Mirrors ``settings.get_settings`` but is deliberately *not* cached — a
+long-running process should pick up edits to the file.
+
+``path`` may be a ``gs://bucket/object`` URI, which is how the Cloud Run
+job reads the copy a push to the searches repo deploys (see
+docs/deployment.md). It is re-downloaded on every call for the same reason
+a local file is re-read.
+```
+
+---
+
+### `shoebox.models.search_hit`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/search_hit.py)
+
+Rows produced by the saved-search watcher.
+
+```
+Two distinct shapes:
+
+- ``SeenEntry`` — local only. The dedup record: "search X has already seen item
+  Y". Refreshed on every run so ``last_price`` stays current, which is the seam
+  a future price-drop alert would build on.
+- ``SearchHit`` — the durable BigQuery row for ``ebay.search_hits``. Flat, since
+  ``BigQueryClient._load_schema`` has no nested RECORD support.
+```
+
+#### `build_cache_key(search_name: str, item_id: str) -> str`
+
+```
+Dedup key. Deliberately not '|'-joined: eBay item IDs are themselves
+pipe-delimited (``v1|123456789|0``), so that separator would be ambiguous.
+```
+
+#### `class SeenEntry(Model)`
+
+```
+One item a search has already observed. Local cache only.
+```
+
+**Fields**
+
+```
+search_name: str
+item_id: str
+first_seen_at: datetime = Field(default_factory=utc_now)
+last_seen_at: datetime = Field(default_factory=utc_now)
+last_price: Decimal | None = None
+last_price_currency: str | None = None
+title: str | None = None
+notified: bool = False
+deferred: bool = False
+```
+
+#### `class SearchHit(Model)`
+
+```
+One row of ``ebay.search_hits``. Field order matches the BQ schema.
+```
+
+**Fields**
+
+```
+run_id: str
+search_name: str
+item_id: str
+cache_key: str
+hit_type: str = HIT_TYPE_NEW_LISTING
+hit_at: datetime = Field(default_factory=utc_now)
+first_seen_at: datetime = Field(default_factory=utc_now)
+is_seed: bool = False
+notified: bool = False
+notified_at: datetime | None = None
+slack_channel: str | None = None
+slack_parent_ts: str | None = None
+title: str | None = None
+item_web_url: str | None = None
+thumbnail_url: str | None = None
+item_origin_date: datetime | None = None
+last_price: Decimal | None = None
+last_price_currency: str | None = None
+current_bid: Decimal | None = None
+shipping_cost: Decimal | None = None
+free_shipping: bool | None = None
+buying_options: list[str] = Field(default_factory=list)
+condition: str | None = None
+condition_id: str | None = None
+seller_username: str | None = None
+seller_feedback_score: int | None = None
+item_location_country: str | None = None
+leaf_category_id: str | None = None
+item_end_date: datetime | None = None
+```
+
+---
+
+### `shoebox.models.tcdb`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/tcdb.py)
+
+Models for the Trading Card Database (tcdb.com) automation.
+
+```
+``AdvancedSearchQuery`` mirrors the fields on https://www.tcdb.com/AdvancedSearch.cfm
+one-to-one, so adding a new site field is a one-line change here plus an entry
+in ``_FORM_FIELDS``. Everything the interactive session lets you tweak
+("set year=1993") resolves to an attribute on this model.
+```
+
+#### `normalize_category(value: str) -> str`
+
+```
+Map user input to the exact <option> value TCDB expects (case-insensitive).
+```
+
+#### `normalize_set_type(value: str) -> str`
+
+```
+Accept a set-type code ("M") or label ("Minor League"); return the code.
+```
+
+#### `class AdvancedSearchQuery(Model)`
+
+```
+One advanced-search request. Empty strings mean "leave the field blank".
+```
+
+**Fields**
+
+```
+category: str = 'Baseball'
+year: str = ''
+set_name: str = ''
+set_type: str = ''
+card_number: str = ''
+name: str = ''
+team: str = ''
+note: str = ''
+```
+
+##### `classmethod field_names() -> tuple[str, ...]`
+
+```
+User-facing field names, in form order (for help text and ``set``).
+```
+
+##### `to_params() -> dict[str, str]`
+
+```
+Query-string parameters for ViewResults.cfm (GET works despite the POST form).
+```
+
+##### `with_updates(**changes: str) -> AdvancedSearchQuery`
+
+```
+Return a copy with the given fields replaced (validated).
+```
+
+##### `describe() -> str`
+
+```
+Human-readable one-liner of the non-empty criteria.
+```
+
+#### `class TcdbSearchResult(Model)`
+
+```
+One row of a ViewResults.cfm result table.
+```
+
+**Fields**
+
+```
+index: int
+title: str
+url: str
+set_id: int | None = None
+card_id: int | None = None
+thumb_url: str | None = None
+note: str | None = None
+```
+
+#### `class TcdbSearchPage(Model)`
+
+```
+Parsed results page: the rows plus the site's own result count.
+```
+
+**Fields**
+
+```
+query_url: str
+total_results: int | None = None
+results: list[TcdbSearchResult] = Field(default_factory=list)
+```
+
+##### `property truncated`
+
+```
+True when TCDB reports more matches than rows we parsed.
+```
+
+#### `class CardSpec(Model)`
+
+```
+A card written the way TCDB titles it: ``{year} {set} #{number} {name}``.
+
+e.g. ``2009 Bowman Chrome - X-Fractors #171 Matt Cain`` ->
+year ``2009``, set_name ``Bowman Chrome - X-Fractors``, card_number ``171``,
+name ``Matt Cain``. ``name`` may be empty (match on year/set/number only).
+```
+
+**Fields**
+
+```
+raw: str
+year: str
+set_name: str
+card_number: str
+name: str = ''
+```
+
+##### `property title`
+
+```
+The TCDB title this spec should match exactly.
+```
+
+##### `property search_name`
+
+```
+Name to put in the search form: the first player of a multi-player card.
+```
+
+#### `class TcdbCardPage(Model)`
+
+```
+The identifying bits of a ViewCard.cfm page.
+```
+
+**Fields**
+
+```
+url: str
+title: str
+set_id: int | None = None
+card_id: int | None = None
+```
+
+#### `class CollectionWidget(Model)`
+
+```
+Which collection controls the ViewCard page's ``#colDiv`` box offers.
+
+TCDB fills ``#colDiv`` from ``ViewCard_ajax.cfm`` after the page loads. The
+page script wires ``#quickAddBtn`` (add one copy), ``.addAnotherBtn`` (add
+one more copy) and ``.removeBtn`` (remove a copy); the last two only make
+sense for a card already in the collection.
+```
+
+**Fields**
+
+```
+loaded: bool = False
+quick_add: bool = False
+add_another: bool = False
+remove: bool = False
+```
+
+#### `class CollectionAddResult(Model)`
+
+```
+Outcome of one add-to-collection attempt on a ViewCard.cfm page.
+```
+
+**Fields**
+
+```
+status: str
+card: TcdbCardPage
+detail: str = ''
+request_url: str | None = None
+verified: bool = False
+widget_html: str = ''
+```
+
+#### `class WantlistCard(Model)`
+
+```
+One card on a member's want list (a ``Filter=W`` collection row).
+```
+
+**Fields**
+
+```
+title: str
+url: str
+set_year: str = ''
+set_name: str = ''
+subset_name: str = ''
+card_number: str = ''
+player: str = ''
+team: str = ''
+notes: str = ''
+note_detail: str = ''
+set_id: int | None = None
+card_id: int | None = None
+item_id: int | None = None
+quantity: int = 1
+price: float | None = None
+price_text: str = ''
+status: str = ''
+category: str = ''
+```
+
+#### `class WantlistPage(Model)`
+
+```
+One page of a want list (100 rows) plus what the page says about the rest.
+```
+
+**Fields**
+
+```
+cards: list[WantlistCard] = Field(default_factory=list)
+query_url: str = ''
+category: str = ''
+page_index: int = 1
+total_records: int | None = None
+total_pages: int | None = None
+```
+
+---
+
+### `shoebox.models.topps_release`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/models/topps_release.py)
+
+#### `class ToppsRelease(Model)`
+
+```
+A single product release scraped from topps.com/release-calendar.
+```
+
+**Fields**
+
+```
+name: str
+release_date: date
+url: str | None = None
+sport: str | None = None
+description: str | None = None
+is_pre_order: bool = False
+source_id: str | None = Field(default=None, description='Stable id from the source page if available (e.g. product slug).')
+```
+
+##### `property stable_key`
+
+```
+Stable, idempotent key used to upsert the calendar event.
+
+Combines a slug of the source identifier (or name) with the release
+date so that re-runs match the same event even if the name's casing
+or punctuation drifts slightly between scrapes.
+```
+
+---

@@ -120,7 +120,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (cached an hour, `ETag`/`304`), enriches rows with the unchanged
   `build_enriched_json`, writes `listing_queue_enriched.jsonl` and a
   `listing_queue_draft.json` to the new `paths.queue_uri` GCS object, and
-  stages phone photos under `uploads/` in the image bucket. See `docs/api.md`.
+  stages phone photos under `uploads/` in the image bucket. See `docs/content/guides/api.mdx`.
 - **Listing from the app, in the cloud.** `POST /queue/listings` on the API
   writes a run record (`<queue dir>/runs/<run_id>.json`) and starts the new
   Cloud Run job `create-listings` (`shoebox create-listings --run-request`),
@@ -134,7 +134,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `onedrive` and `cloud_run`; `deploy/jobs.yaml` entries take `bindings:`
   (extra IAM grants) so the API's identity can start the job. `run_listings`
   returns a `RunSummary`, takes a progress `reporter`, and always flushes the
-  image log and syncs results, even when interrupted. See `docs/api.md`.
+  image log and syncs results, even when interrupted. See `docs/content/guides/api.mdx`.
 - `create-listings` reads the queue from `paths.queue_uri` when set, or from
   `--queue PATH_OR_GS_URI`, and refuses a queue carrying enrichment error
   rows. Image references of all three kinds (path, bare scan number, `gs://`
@@ -167,7 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   by row before anything reaches eBay, and creates one variation listing per
   segment, titled with its card range. Every card is listed, with a blank Qty
   showing as sold out, so the dropdown always covers the full checklist. See
-  `docs/cli.md`.
+  `docs/content/guides/cli.mdx`.
 
 - **`watch-searches` on Cloud Run.** The saved-search watcher joins the daily
   syncs as a Cloud Run job on a 5-minute Cloud Scheduler cron (shipped
@@ -185,7 +185,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/validate_searches.py` before copying, so a broken edit fails the
   commit instead of the job. `scripts/migrate_search_state_to_gcs.py` moves
   the workstation's state across with no reseed. In Cloud Run the watcher
-  refuses to start without durable state. See `docs/deployment.md`, "Saved
+  refuses to start without durable state. See `docs/content/guides/deployment.mdx`, "Saved
   searches".
 - `sync-watch-list` is now a Cloud Run job too, at 04:30 daily like its
   Windows task.
@@ -196,7 +196,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   failed run is final, and it would otherwise show up only as a "Completed"
   message that never arrived. `scripts/create_alert_channel.py` points the
   alerts at the Slack channel the pipelines already use, reusing the existing
-  bot token rather than installing a second Slack app. See `docs/deployment.md`.
+  bot token rather than installing a second Slack app. See `docs/content/guides/deployment.mdx`.
 - **Cloud Run deployment** for the four daily syncs (`sync-orders`,
   `sync-active-listings`, `sync-active-listing-details`, `end-oos-listings`),
   so they no longer depend on a workstation being awake. `Dockerfile` builds
@@ -208,7 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   push to `main`. The gitignored config files are mounted from Secret Manager
   and the job's service account replaces `configs/gcp.json`, since the GCS
   and BigQuery clients already fall back to Application Default Credentials.
-  A local macOS or Windows checkout is unaffected. See `docs/deployment.md`.
+  A local macOS or Windows checkout is unaffected. See `docs/content/guides/deployment.mdx`.
 - `tcdb-wantlist`: exports your tcdb.com want list to CSV or JSONL
   (`shoebox tcdb-wantlist`, `--all-categories`, `--format jsonl`). The want
   list is the collection view filtered to want status
@@ -249,7 +249,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Chrome so the card can be added to the collection. New `tcdb` config section,
   `shoebox/clients/tcdb/` package and `models/tcdb.py`, laid out so further
   TCDB actions are one parser plus one browser method each (see
-  `docs/tcdb.md`).
+  `docs/content/guides/tcdb.mdx`).
 
 ### Changed
 
@@ -287,7 +287,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   driver's code signature, so macOS killed it (`Status code was: -9`).
   `clients/chromedriver.py` now downloads `mac-arm64` and ad-hoc re-signs the
   driver after uc patches it. It does nothing on other platforms. See
-  `docs/tcdb.md`, "Apple Silicon Macs".
+  `docs/content/guides/tcdb.mdx`, "Apple Silicon Macs".
 - Variation listings: per-card scans are matched by card number without
   matching longer numbers, so `US1` no longer picks up `US10`–`US199`'s
   images. `create-variation-listings --dry-run` no longer needs eBay
@@ -389,11 +389,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writes new tokens back to `ebay_rest.json`. Includes `--check`, `--reset`,
   `--diagnose` (per-scope endpoint probe), and `--verify`.
 - The `sell.stores` OAuth scope in `configs/ebay_rest.example.json` and the
-  scope/re-mint documentation in `docs/setup.md`.
+  scope/re-mint documentation in `docs/content/guides/setup.mdx`.
 - `send-offers` is now a Cloud Run job. It runs interactively every 15
   minutes from 08:00 to 21:45 Pacific, with a 10-minute reply window and a
   14-minute timeout, so runs never overlap. It needs only the eBay APIs and
-  Slack. See `docs/deployment.md`, "send-offers".
+  Slack. See `docs/content/guides/deployment.mdx`, "send-offers".
 
 ### Changed
 
@@ -485,7 +485,7 @@ API client.
 
 **Saved eBay searches** — YAML-declared eBay Browse queries that run on a
 schedule, diff against previously seen results, and post only net-new listings
-to Slack with photos. See [`docs/search.md`](docs/search.md).
+to Slack with photos. See [`docs/content/guides/search.mdx`](docs/content/guides/search.mdx).
 
 - Three CLI commands: `watch-searches` (run due searches, alert Slack, record
   state), `preview-search` (read-only; shows every listing a search returns and
@@ -504,7 +504,7 @@ to Slack with photos. See [`docs/search.md`](docs/search.md).
 from [`scripts/tasks.yaml`](scripts/tasks.yaml) via
 [`scripts/generate_tasks.py`](scripts/generate_tasks.py) instead of being
 hand-built in the GUI, so schedules and retry policy are reviewable in the repo.
-See [`docs/scheduling.md`](docs/scheduling.md).
+See [`docs/content/guides/scheduling.mdx`](docs/content/guides/scheduling.mdx).
 
 **eBay Store categories** — `eBayLegacyClient` can now read and restructure the
 store category tree via the Trading API: `get_store_categories`,

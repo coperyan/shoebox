@@ -7,7 +7,7 @@ REST pipelines, so no Auth'n'Auth token is involved.
 Requires the ``sell.stores`` OAuth scope on a token from the authorization
 code grant flow. A token without it fails with HTTP 403 / errorId 1100 /
 domain ACCESS; scopes are fixed at consent time, so the user token has to be
-re-minted after adding the scope (see docs/setup.md and
+re-minted after adding the scope (see docs/content/guides/setup.mdx and
 scripts/refresh_ebay_token.py).
 
 Note the calls here bypass the generated ``sell_stores_*`` wrappers: in
