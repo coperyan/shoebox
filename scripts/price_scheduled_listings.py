@@ -60,7 +60,7 @@ _NAME_SUFFIXES = {"jr", "jr.", "sr", "sr.", "ii", "iii", "iv"}
 
 # Comps that aren't a raw single of the card.
 _EXCLUDE_TERMS = [
-    "psa", "bgs", "sgc", "cgc", "beckett", "graded", "lot", "auto", "relic",
+    "psa", "bgs", "sgc", "cgc", "beckett", "graded", "lot", "auto", "signed", "relic",
     "patch", "you pick", "pick your", "choose", "complete", "team set", "break", "pyp",
 ]  # fmt: skip
 
@@ -74,17 +74,20 @@ _FINISH_WORDS = {
     "raywave", "aqua", "magenta", "lava", "geometric", "negative", "speckle", "diamond",
     "teal", "crackle", "canvas", "acetate", "pulsar", "reptilian", "atomic", "shimmer",
     "logofractor", "fuchsia", "rose", "leather", "lightboard", "logo", "apple", "hongbao",
+    "mini", "white", "holiday", "golden", "mirror", "statue", "liberty", "hotdog", "hotdogs",
+    "dog", "dogs", "color", "photo", "boxing", "gloves", "fireworks", "umbrella", "foilboard",
+    "lunar", "glow",
 }  # fmt: skip
 
 # Used too loosely by sellers to decide on either way.
-_WEAK_WORDS = {"foil", "sp", "ssp", "short", "print", "parallel", "white", "image", "printing"}
+_WEAK_WORDS = {"foil", "sp", "ssp", "short", "print", "parallel", "image", "printing"}
 
 _SYNONYMS = {"back": "backs"}
 
 # Releases that share a year and a card-number scheme (Series 1's holiday
 # variations, Chrome vs Chrome Update). A comp must name the same ones the
 # listing's title does.
-_PRODUCT_WORDS = {"series", "update", "sapphire", "platinum", "cosmic"}
+_PRODUCT_WORDS = {"series", "series1", "series2", "update", "sapphire", "platinum", "cosmic", "high"}
 
 # Team names with a finish word in them, removed before finish words are read.
 _TEAM_NAMES = ["red sox", "white sox", "blue jays", "green bay"]
@@ -109,6 +112,10 @@ def tokens(text: str) -> set[str]:
     """
     t = unicodedata.normalize("NFKD", f" {text.lower()} ").encode("ascii", "ignore").decode()
     t = re.sub(r"\bx[\s-]?fractor", "xfractor", t)
+    # "Series 1", "Series One" and "S1" are one product word, so Series 1 and
+    # Series 2 comps don't price each other's cards.
+    t = re.sub(r"\b(?:series\s*(?:1|one)|s1)\b", "series1", t)
+    t = re.sub(r"\b(?:series\s*(?:2|two)|s2)\b", "series2", t)
     for team in _TEAM_NAMES:
         t = t.replace(team, " ")
     return {_SYNONYMS.get(w, w) for w in re.findall(r"/\d+|[a-z0-9]+", t)}
@@ -141,15 +148,31 @@ def insert_tokens(insert: str, search_words: set[str]) -> frozenset[str]:
     return frozenset(w for w in words if not (w.isdigit() and len(w) == 4 and w >= "2000"))
 
 
-def load_scheduled(ebay_api: EbayClient, title_contains: str, workers: int) -> pd.DataFrame:
-    """Matching scheduled listings with player, card, finish and the search to run."""
+def load_scheduled(
+    ebay_api: EbayClient,
+    title_contains: str,
+    workers: int,
+    title_excludes: list[str] | None = None,
+    search_prefix: str | None = None,
+) -> pd.DataFrame:
+    """Matching scheduled listings with player, card, finish and the search to run.
+
+    ``title_excludes`` drops listings whose title also has any of those strings
+    ("High Number" when pricing plain Heritage). ``search_prefix`` replaces
+    ``title_contains`` as the 130point search text ("2024 Allen & Ginter" for
+    sellers who leave out "Topps"); matching still uses ``title_contains``.
+    """
     needle = title_contains.casefold()
+    excludes = [x.casefold() for x in title_excludes or []]
     rows = [
         r
         for r in ebay_api.trading.get_scheduled_listings()
-        if needle in (r.get("title") or "").casefold() and r.get("sku")
+        if needle in (r.get("title") or "").casefold()
+        and not any(x in (r.get("title") or "").casefold() for x in excludes)
+        and r.get("sku")
     ]
     logger.info("%d scheduled listing(s) match %r", len(rows), title_contains)
+    prefix = search_prefix or title_contains
 
     def specifics(item_id: str) -> dict:
         return ebay_api.trading.get_item_details(item_id=item_id).get("item_specifics") or {}
@@ -182,7 +205,7 @@ def load_scheduled(ebay_api: EbayClient, title_contains: str, workers: int) -> p
                 "variant": " ".join(x for x in (insert, parallel) if x) or "base",
                 "insert": insert,
                 "finish": " ".join(sorted(finish(tokens(finish_text) - search_words))),
-                "query": f"{title_contains} {last_name(player)}".lower() if player else None,
+                "query": f"{prefix} {last_name(player)}".lower() if player else None,
             }
         )
     return pd.DataFrame(out)
@@ -432,6 +455,13 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--title-contains", help="Scrape listings whose title has this text")
+    parser.add_argument(
+        "--title-excludes", action="append", default=[],
+        help="Skip listings whose title also has this text (repeatable)",
+    )  # fmt: skip
+    parser.add_argument(
+        "--search-prefix", help="130point search text, in place of --title-contains"
+    )
     parser.add_argument("--from-plan", help="Apply a saved plan workbook's new_price column")
     parser.add_argument("--apply", action="store_true", help="Push the prices to eBay")
     parser.add_argument("--limit", type=int, help="Cap how many listings are repriced")
@@ -445,7 +475,9 @@ def main() -> None:
         apply_plan(Path(args.from_plan), apply=args.apply, limit=args.limit)
         return
 
-    listings = load_scheduled(EbayClient(), args.title_contains, args.workers)
+    listings = load_scheduled(
+        EbayClient(), args.title_contains, args.workers, args.title_excludes, args.search_prefix
+    )
     if listings.empty:
         return
     comps = scrape(sorted(listings["query"].dropna().unique()))
