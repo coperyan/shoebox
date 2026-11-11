@@ -29,7 +29,7 @@ dependencies = [
   "requests",
   "rich",
   "selenium",
-  "setuptools<84",
+  "setuptools<85",
   "streamlit",
   "undetected-chromedriver",
   "unidecode",
