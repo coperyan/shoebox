@@ -36,6 +36,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 
 from shoebox.clients.ebay.client import EbayClient
 from shoebox.clients.price_scraper import PriceScraper
@@ -76,7 +77,7 @@ _FINISH_WORDS = {
     "logofractor", "fuchsia", "rose", "leather", "lightboard", "logo", "apple", "hongbao",
     "mini", "white", "holiday", "golden", "mirror", "statue", "liberty", "hotdog", "hotdogs",
     "dog", "dogs", "color", "photo", "boxing", "gloves", "fireworks", "umbrella", "foilboard",
-    "lunar", "glow",
+    "lunar", "glow", "issue",
 }  # fmt: skip
 
 # Used too loosely by sellers to decide on either way.
@@ -385,11 +386,16 @@ def build_plan(listings: pd.DataFrame, comps: pd.DataFrame, title_contains: str)
 
 
 def _excel_safe(df: pd.DataFrame) -> pd.DataFrame:
-    """Excel can't store tz-aware datetimes."""
+    """Excel can't store tz-aware datetimes or control characters (some sellers'
+    titles carry them; openpyxl refuses the whole workbook)."""
     out = df.copy()
     for col in out.columns:
         if isinstance(out[col].dtype, pd.DatetimeTZDtype):
             out[col] = out[col].dt.tz_localize(None)
+        elif out[col].dtype == object:
+            out[col] = out[col].map(
+                lambda v: ILLEGAL_CHARACTERS_RE.sub("", v) if isinstance(v, str) else v
+            )
     return out
 
 
