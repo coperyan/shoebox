@@ -33,7 +33,7 @@ checked-in `.example` template:
 
 | File | Template | Purpose |
 |---|---|---|
-| `configs/app.yaml` | `app.example.yml` | Central application settings (validated by `settings.py`; see [configuration.md](configuration.md)) |
+| `configs/app.yaml` | `app.example.yml` | Central application settings (validated by `settings.py`; see [configuration.md](/guides/configuration)) |
 | `configs/ebay_rest.json` | `ebay_rest.example.json` | eBay REST credentials for the `ebay_rest` library (applications / users / headers / key_pairs) |
 | `configs/ebay_legacy.json` | `ebay_legacy.example.json` | eBay Trading API auth token (`{"token": "..."}`) |
 | `configs/gcp.json` | `gcp.example.json` | GCP service-account key (standard downloadable JSON) |
@@ -55,7 +55,7 @@ copy is a working starting point. The config path can be overridden with the
 ## eBay setup
 
 1. Create an eBay developer account and a production keyset:
-   <https://developer.ebay.com/api-docs/static/creating-edp-account.html>
+   [https://developer.ebay.com/api-docs/static/creating-edp-account.html](https://developer.ebay.com/api-docs/static/creating-edp-account.html)
 2. Fill the `applications` / `users` sections of `configs/ebay_rest.json`
    (see the instructions block inside the template and the
    [`ebay_rest` docs](https://github.com/matecsaj/ebay_rest)). The entry names
@@ -103,7 +103,7 @@ copy is a working starting point. The config path can be overridden with the
 ## Slack app setup
 
 The Slack integration uses **Socket Mode** (no public URL required) with the
-`slack-bolt` library. One-time setup at <https://api.slack.com/apps>:
+`slack-bolt` library. One-time setup at [https://api.slack.com/apps](https://api.slack.com/apps):
 
 1. **Create the app** (from scratch) in your workspace.
 2. **Socket Mode** → toggle on; create an **app-level token** with the
@@ -130,7 +130,7 @@ The Slack integration uses **Socket Mode** (no public URL required) with the
    `slack.allowed_user_ids` (your member ID: profile → "…" → *Copy member ID*).
    Empty list = anyone in the command channel can run commands.
 
-See [slack.md](slack.md) for how each piece is used at runtime.
+See [slack.md](/guides/slack) for how each piece is used at runtime.
 
 ## First run
 

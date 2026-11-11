@@ -1,4 +1,4 @@
-"""Request/response models for the listing-queue API (docs/api.md)."""
+"""Request/response models for the listing-queue API (docs/content/guides/api.mdx)."""
 
 from __future__ import annotations
 

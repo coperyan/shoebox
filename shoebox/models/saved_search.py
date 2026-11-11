@@ -452,7 +452,7 @@ def load_searches_file(path: str | Path) -> SearchesFile:
 
     ``path`` may be a ``gs://bucket/object`` URI, which is how the Cloud Run
     job reads the copy a push to the searches repo deploys (see
-    docs/deployment.md). It is re-downloaded on every call for the same reason
+    docs/content/guides/deployment.mdx). It is re-downloaded on every call for the same reason
     a local file is re-read.
     """
     if isinstance(path, str) and path.startswith("gs://"):

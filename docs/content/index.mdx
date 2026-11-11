@@ -1,0 +1,48 @@
+# Shoebox
+
+*Every card collector keeps a shoebox. This one runs an eBay store.*
+
+Shoebox is a Python toolkit that runs the operational loop of an eBay
+sports-card store: checklist and parallel metadata in BigQuery, bulk listing
+creation through the eBay Sell APIs, card-scan handling in GCS, order and
+traffic monitoring, lifecycle automation (relists, offers, ending out-of-stock
+items), saved-search alerts, and a Slack layer for notifications, price
+approvals and remote commands.
+
+## Where to start
+
+- [Overview & Architecture](/guides/overview) — what the project does, the layered layout, end-to-end data flow
+- [Setup](/guides/setup) — requirements, installation, credential files, Slack app, GCP and eBay onboarding
+- [Configuration](/guides/configuration) — the full `configs/app.yaml` reference and environment variables
+- [CLI Reference](/guides/cli) — every `shoebox` command and flag
+
+## Day to day
+
+- [Pipelines](/guides/pipelines) — a walkthrough of each pipeline and service
+- [Checklist Metadata](/guides/metadata) — field-by-field definitions of the checklist and parallel sheets
+- [Data & Storage](/guides/data-storage) — GCS buckets, BigQuery datasets and views, local JSONL files
+
+## Integrations
+
+- [Saved eBay Searches](/guides/search) — YAML-defined searches that push new listings to Slack
+- [Slack](/guides/slack) — notifications, price-approval buttons, threading, the command bot
+- [TCDB](/guides/tcdb) — Trading Card Database automation: search, add to collection, want list
+- [Listing-Queue API](/guides/api) — the HTTP backend behind the iOS app (`shoebox api`)
+
+## Operations
+
+- [Scheduled Tasks (Windows)](/guides/scheduling) — `scripts/tasks.yaml` and Task Scheduler
+- [Cloud Run Deployment](/guides/deployment) — the sync pipelines as Cloud Run jobs, the API as a service
+- [API Reference](/api) — module documentation generated from docstrings
+
+## Quick orientation
+
+- **Install**: `pip install -e .` (Python ≥ 3.11), then create the config files
+  from the templates in `configs/*.example` — see [Setup](/guides/setup).
+- **Run something**: the console script is `shoebox` (equivalently
+  `python -m shoebox.cli`). `shoebox --help` lists all commands.
+- **Day-to-day flow**: build a listing queue in the Streamlit UI (`shoebox ui`),
+  from Excel (`create-queue-excel`), or on your phone (the iOS app talking to
+  `shoebox api`), then publish with `create-listings`. Monitoring pipelines
+  (`sync-orders`, `sync-active-listings`, …) snapshot eBay state into BigQuery.
+  Slack receives status notifications and hosts the price-approval flow.

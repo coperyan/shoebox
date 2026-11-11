@@ -1,0 +1,309 @@
+# Services
+
+Long-running components and multi-step listing workflows: ListingService, listing runs, the Slack command bot.
+
+- [`shoebox.services.listing_pictures`](#shoeboxserviceslisting_pictures)
+- [`shoebox.services.listing_runs`](#shoeboxserviceslisting_runs)
+- [`shoebox.services.listings`](#shoeboxserviceslistings)
+- [`shoebox.services.orders_awaiting_shipment`](#shoeboxservicesorders_awaiting_shipment)
+- [`shoebox.services.slack_bot_service`](#shoeboxservicesslack_bot_service)
+
+### `shoebox.services.listing_pictures`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/services/listing_pictures.py)
+
+Keep a live listing's pictures when its inventory item is rewritten.
+
+```
+``createOrReplaceInventoryItem`` replaces the whole item, pictures included,
+so every round-trip has to send the full picture list back. The inventory
+item's own ``imageUrls`` can't supply it: eBay's ``getInventoryItem`` often
+returns only the front for a listing that shows a front and a back, and
+sending that back strips the back from the live listing. The live listing
+(Trading ``GetItem``) is the source of truth; its pictures are copied
+full-size into GCS and those copies are what go on the item.
+```
+
+#### `live_picture_urls(ebay: EbayClient, item_id: str) -> list[str]`
+
+```
+The pictures the live listing actually shows, in order.
+```
+
+#### `rehost_live_pictures(ebay: EbayClient, *, item_id: str, sku: str, gcs: GCSClient, settings) -> list[str]`
+
+```
+GCS copies of the live listing's pictures, ready to put on its item.
+```
+
+---
+
+### `shoebox.services.listing_runs`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/services/listing_runs.py)
+
+Listing runs started from the iOS app: the record in GCS that ties the API, the Cloud Run job and the phone together.
+
+```
+``POST /queue/listings`` writes ``<queue dir>/runs/<run_id>.json`` in state
+``requested`` and starts the ``create-listings`` job. The job
+(``create-listings --run-request``) claims the newest requested record with a
+generation-matched write (so a second execution cannot run the same queue
+twice), reads publish/schedule (and the scans folder) from it, and updates it after every row. The
+app polls ``GET /queue/listings/<run_id>``.
+
+The run id sorts by time (``<UTC timestamp>-<8 hex>``), which is what makes
+"the newest record" a prefix listing plus a sort.
+```
+
+#### `runs_prefix_for(queue_uri: str) -> str`
+
+```
+``gs://b/queue/listing_queue_enriched.jsonl`` -> ``gs://b/queue/runs/``.
+```
+
+#### `class ListingRunResult(BaseModel)`
+
+**Fields**
+
+```
+sku: str
+title: str
+listing_id: str | None = None
+offer_id: str | None = None
+success: bool
+error: str | None = None
+```
+
+#### `class ListingRun(BaseModel)`
+
+**Fields**
+
+```
+run_id: str
+state: RunState = 'requested'
+requested_at: datetime
+started_at: datetime | None = None
+finished_at: datetime | None = None
+publish: bool = True
+schedule: bool = True
+queue_uri: str
+scans_folder: str | None = None
+metadata_version: str | None = None
+rows_total: int = 0
+rows_done: int = 0
+listed: int = 0
+failed: int = 0
+results: list[ListingRunResult] = Field(default_factory=list)
+error: str | None = None
+execution: str | None = None
+host: str | None = None
+```
+
+#### `class ListingRunStore`
+
+```
+Run records under ``prefix`` in one bucket.
+
+``bucket`` is a ``google.cloud.storage.Bucket`` (or a fake with ``blob()``
+and ``list_blobs(prefix=)``). Writes that must not race use
+``if_generation_match``.
+```
+
+##### `active(now: datetime | None=None) -> ListingRun | None`
+
+```
+The newest run that is still requested/running and not stale.
+```
+
+##### `claim(run: ListingRun, generation: int, *, now: datetime | None=None) -> bool`
+
+```
+Move a requested run to running; False if someone else got there first.
+```
+
+#### `class RunRecordReporter`
+
+```
+``run_listings`` progress hook that keeps the record current.
+```
+
+---
+
+### `shoebox.services.listings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/services/listings.py)
+
+Listing workflows that span more than one eBay API.
+
+```
+Each method here is a multi-step recipe: an inventory upsert followed by an
+offer, a publish, and a promotion; a relist that tears down and rebuilds; a
+refresh that deletes the inventory item and recreates it from scratch; a
+retitle that picks the Inventory or Trading route by what identifies the
+listing. None of it is a wrapper around a single eBay call -- that is the
+sub-clients' job -- and none of it belongs to any one sub-client.
+
+This is also the layer allowed to know how request bodies are built
+(``transforms.listing_builder``); the clients under ``clients/ebay`` never do.
+```
+
+#### `class ListingService`
+
+```
+Create, relist, retitle, and recategorize listings through ``EbayClient``.
+```
+
+##### `relist_listing(*, sku: str, inventory_item_body: dict[str, Any], offer_body: dict[str, Any], existing_offer_id: str, existing_ad_id: str | None=None, campaign_id: str | None=None, promote_listing: bool=False, promote_rate: int=7) -> dict[str, Any]`
+
+```
+Relist flow: replace inventory item, replace offer, publish.
+Optionally deletes an existing promoted ad then recreates it after publish.
+```
+
+##### `refresh_listing(*, sku: str, inventory_item_body: dict[str, Any], offer_body: dict[str, Any], existing_ad_id: str | None=None, campaign_id: str | None=None, promote_rate: int=7, settle_seconds: float=5) -> dict[str, Any]`
+
+```
+Fresh-listing flow: delete the inventory item, then build it again.
+
+Where :meth:`relist_listing` keeps the inventory item and swaps only
+the offer, this goes through deleteInventoryItem -- which ends the live
+listing and deletes every offer on the SKU -- and then recreates the
+item and a brand-new offer from the bodies passed in, so the published
+listing shares nothing with the old one but the SKU.
+
+Build both bodies (and re-host the pictures) *before* calling this:
+once the delete goes through, eBay no longer has them. The recreate
+half is :meth:`recreate_listing`, safe to re-run on its own if it fails.
+```
+
+##### `recreate_listing(*, sku: str, inventory_item_body: dict[str, Any], offer_body: dict[str, Any], campaign_id: str | None=None, promote_rate: int=7) -> dict[str, Any]`
+
+```
+Second half of :meth:`refresh_listing`: upsert the item, create (or
+reuse an unpublished) offer, publish, promote when ``campaign_id`` is set.
+
+Idempotent, so it doubles as the recovery step when a refresh fails
+after its delete: an offer a previous attempt already created is
+updated rather than duplicated, and one already published is left alone.
+```
+
+##### `update_title(*, new_title: str, sku: str | None=None, item_id: str | None=None) -> dict[str, Any]`
+
+```
+Change the title of a published single-card listing.
+
+Two routes, because a store accumulates listings from both APIs:
+
+- **With a SKU** (created through the Sell Inventory API) the title
+  lives on the inventory item, so this is a createOrReplaceInventoryItem
+  round-trip: fetch the item, swap ``product.title``, put it back with
+  the live listing's pictures (which needs ``item_id``).
+- **Without one** -- listed via the Trading API or eBay's own form --
+  the inventory API can't see the listing at all, so it goes through
+  Trading `ReviseFixedPriceItem` by item ID.
+
+Either way the listing keeps its ID, watchers, and search standing.
+When the inventory route fails on a listing that also has an item ID,
+Trading is tried as a fallback; the returned ``method`` says which one
+actually did the work.
+```
+
+##### `update_store_categories(*, categories: list[str], category_ids: list[str] | None=None, sku: str | None=None, item_id: str | None=None, live_price: float | None=None) -> dict[str, Any]`
+
+```
+Move a published listing into the given store categories.
+
+Two routes, mirroring :meth:`update_title`:
+
+- **With a SKU** the categories live on the offer, so this is a
+  getOffers/updateOffer round-trip addressing them by name path.
+- **Without one** it goes through Trading `ReviseFixedPriceItem`, which
+  addresses them by numeric ID -- hence ``category_ids``, which the
+  caller resolves from the store tree.
+
+``categories`` is the full replacement list eBay will store, capped at
+two. A listing already in exactly these categories is skipped.
+
+``live_price`` is the listing's current price as eBay shows it
+(GetMyeBaySelling / GetItem). The inventory route is a full PUT of the
+offer, and the offer's own price goes stale the moment the listing is
+repriced outside the Inventory API, so the PUT carries the live price
+instead. Required on the inventory route; the Trading route never
+touches price.
+```
+
+##### `create_variation_listing(*, group_key: str, sku_item_map: dict[str, Any], sku_offer_map: dict[str, Any], item_group: dict[str, Any], publish: bool=True, existing_offer_action: str='delete', promote_listing: bool=True, campaign_id: str | None=None, promote_rate: int=20, volume_discount_tiers: list[dict[int, int]] | None=None) -> dict[str, Any]`
+
+```
+Full flow for a multi-variation listing:
+  1. Upsert one inventory item per SKU.
+  2. Upsert the inventory item group.
+  3. Create/replace one offer per SKU (each with its own price).
+  4. Publish via publishByInventoryItemGroup and optionally promote.
+
+Individual offers per SKU are used instead of a single group offer so
+that per-variation pricing is supported and the inventoryItemGroupKey
+field (which some library versions reject) is avoided in createOffer.
+```
+
+---
+
+### `shoebox.services.orders_awaiting_shipment`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/services/orders_awaiting_shipment.py)
+
+#### `derive_variation_group(aspects_json) -> str | None`
+
+```
+Join every non-Card variation aspect value (e.g. Insert set) into a
+group label; None when the listing only varies by Card.
+```
+
+#### `iter_listing_groups(df_slice: pd.DataFrame)`
+
+```
+Yield (group_label, rows) per extra-variation group of one listing.
+
+Listings that only vary by Card yield a single (None, all rows) so the
+existing single-table behavior is unchanged. Rows without a group in a
+listing that has them are collected under "(other)".
+```
+
+---
+
+### `shoebox.services.slack_bot_service`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/services/slack_bot_service.py)
+
+Slack bot service: listens for messages and runs CLI commands.
+
+#### `parse_command(command: str, args: list[str]) -> tuple[str, list[str]] | None`
+
+```
+Validate command and strip any unrecognized flags. Returns None if command unknown.
+
+Value-taking flags accept both ``--reseed NAME`` and ``--reseed=NAME``. A
+value-taking flag with no value is dropped whole rather than passed on to
+argparse, which would abort the run over what was probably a typo in chat.
+```
+
+#### `run_command(command: str, args: list[str]) -> str`
+
+```
+Run an shoebox command in a subprocess and return combined output.
+```
+
+#### `async dispatch(event: dict, client: AsyncWebClient, command: str, args: list[str]) -> None`
+
+```
+Validate and execute a command, replying in a thread on the triggering message.
+```
+
+#### `start_bot_service() -> None`
+
+```
+Start the Slack command-listener bot. Runs until interrupted.
+```
+
+---

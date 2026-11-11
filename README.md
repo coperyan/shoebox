@@ -21,12 +21,14 @@ Automate common workflows for an eBay sports card store:
 - Watch **YAML-defined eBay searches** and get new listings in Slack
 - **Slack** notifications, interactive price approvals, and a chat command bot
 
-📚 **Full documentation lives in [`docs/`](docs/README.md)** — architecture,
+📚 **Full documentation lives in [`docs/`](docs/content/index.mdx)** — architecture,
 setup, configuration reference, CLI reference, pipeline details, the Slack
-integration, and data/storage layout. This README is a quick orientation.
+integration, data/storage layout, and an API reference generated from the
+docstrings. It is a [Nextra](https://nextra.site) site: `cd docs && npm install
+&& npm run dev`. This README is a quick orientation.
 
 The daily sync pipelines and the saved-search watcher can run as **Cloud Run
-jobs** instead of on a workstation; see [docs/deployment.md](docs/deployment.md).
+jobs** instead of on a workstation; see [docs/deployment](docs/content/guides/deployment.mdx).
 
 ---
 
@@ -65,7 +67,7 @@ flowchart LR
 ```
 
 > A fuller architecture diagram and component map live in
-> [`docs/overview.md`](docs/overview.md).
+> [`docs/overview`](docs/content/guides/overview.mdx).
 
 ---
 
@@ -111,14 +113,14 @@ Required permissions:
 All runtime configuration is centralized in `configs/app.yaml`, validated by
 `settings.py`. Copy `configs/app.example.yml` (and the other
 `configs/*.example` templates) to get started — see
-[docs/configuration.md](docs/configuration.md) for the full reference.
+[docs/configuration](docs/content/guides/configuration.mdx) for the full reference.
 
 Key settings:
 - `settings.gcs.image_bucket` / `image_log_bucket` / `ebay_bucket` / `metadata_bucket`
 - `settings.bigquery.checklist_dataset` / `ebay_dataset` / `images_dataset`
 - `settings.paths.scans_dir` / `query_dir` / `exports_dir`
 - `settings.ebay.path`
-- `settings.slack.*` (see [docs/slack.md](docs/slack.md))
+- `settings.slack.*` (see [docs/slack](docs/content/guides/slack.mdx))
 - `settings.store.*` — store-specific eBay values (name, merchant location key,
   category, business-policy IDs, ad campaigns, offer message). These are **not**
   hardcoded; set your own under `store:` in `app.yaml`.
@@ -148,7 +150,7 @@ Purpose:
 
 A SwiftUI app under [`ios/ShoeboxQueue`](ios/ShoeboxQueue/README.md) does the
 same queue building on an iPhone, against the `shoebox api` Cloud Run service
-([docs/api.md](docs/api.md)). Scan numbers work as in the Excel sheet; photos
+([docs/api](docs/content/guides/api.mdx)). Scan numbers work as in the Excel sheet; photos
 from the camera roll upload to GCS and flow through `create-listings` like
 scans.
 
@@ -171,7 +173,7 @@ shoebox variation-template upload exports/variation_templates/2026_topps_update_
 
 Every mutating pipeline (`create-listings`, `create-variation-listings`,
 `relist-listings`, `send-offers`) supports `--dry-run` and creates offers
-unpublished unless `--publish` is passed. See [docs/cli.md](docs/cli.md) for
+unpublished unless `--publish` is passed. See [docs/cli](docs/content/guides/cli.mdx) for
 every command and flag.
 
 ### Watch saved eBay searches
@@ -199,7 +201,7 @@ shoebox watch-searches                     # what cron runs
 A single cron entry drives everything — each search's own `interval` decides
 when it fires, so adding a search means editing YAML only. The first run of a
 search seeds silently, so you only ever get alerted about genuinely new
-listings. See [docs/cli.md](docs/cli.md#watch-searches).
+listings. See [docs/cli](docs/content/guides/cli.mdx#watch-searches).
 
 ### Sync Topps release calendar
 

@@ -6,9 +6,9 @@ awake, and which pipelines deliberately stay put.
 
 The container is an **additional host**, not a replacement. A Mac or Windows
 checkout runs every command exactly as before, and the two schedulers coexist:
-[`scripts/tasks.yaml`](../scripts/tasks.yaml) stays the source of truth for
-Windows Task Scheduler ([scheduling.md](scheduling.md)), and
-[`deploy/jobs.yaml`](../deploy/jobs.yaml) is its cloud counterpart.
+[`scripts/tasks.yaml`](https://github.com/coperyan/shoebox/blob/main/scripts/tasks.yaml) stays the source of truth for
+Windows Task Scheduler ([scheduling.md](/guides/scheduling)), and
+[`deploy/jobs.yaml`](https://github.com/coperyan/shoebox/blob/main/deploy/jobs.yaml) is its cloud counterpart.
 
 ```
 Dockerfile                    one image; ENTRYPOINT is the `shoebox` CLI
@@ -27,7 +27,7 @@ deploy/searches-cloudbuild.yaml  Cloud Build: validate searches.yaml -> copy it 
 | `sync-orders`, `sync-active-listings`, `sync-active-listing-details`, `sync-watch-list`, `end-oos-listings` | **Cloud Run job** | API → JSONL → GCS → BigQuery. No browser, no local input, no state between runs |
 | `watch-searches` | **Cloud Run job** | Seen-caches, run state and lock live in GCS (`paths.searches_state_uri`); `searches.yaml` is deployed to GCS on every push to the searches repo. See [Saved searches](#saved-searches-watch-searches) |
 | `send-offers` | **Cloud Run job** | eBay Negotiation/Trading API + Slack only. Interactive replies arrive over Socket Mode, an outbound connection that works from a container. See [send-offers](#send-offers) |
-| `shoebox-api` (`shoebox api`) | **Cloud Run service** | The iOS app's backend: BigQuery metadata, enrichment, queue + photo writes to GCS. HTTP, so a service rather than a job. See [Services](#services) and [api.md](api.md) |
+| `shoebox-api` (`shoebox api`) | **Cloud Run service** | The iOS app's backend: BigQuery metadata, enrichment, queue + photo writes to GCS. HTTP, so a service rather than a job. See [Services](#services) and [api.md](/guides/api) |
 | `slack-bot` | Workstation (for now) | Long-running Socket Mode listener; would be a Cloud Run *service*, not a job |
 | `create-listings` **from the iOS app** | **Cloud Run job** (`create-listings`, manual) | Started by `shoebox-api` on `POST /queue/listings`. Scans come from OneDrive, phone photos from GCS, no price scraping. See [Listing from the app](#listing-from-the-app) |
 | `create-listings` by hand, `create-variation-listings`, `relist-listings` | Workstation | Read card scans and Excel workbooks from local paths; scrape prices via Chrome; wait on Slack replies |
@@ -131,7 +131,7 @@ why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`
 
 `services:` in `deploy/jobs.yaml` declares Cloud Run **services** alongside
 the jobs. There is one, `shoebox-api`, the HTTP backend of the iOS app
-([api.md](api.md)):
+([api.md](/guides/api)):
 
 ```yaml
 services:
@@ -560,7 +560,7 @@ Cloud Scheduler */5 ──▶ Cloud Run job watch-searches ◀── reads ─�
 
 **The config is pushed, not pulled.** When a push to `main` of the searches
 repo touches `searches.yaml`, it runs
-[`deploy/searches-cloudbuild.yaml`](../deploy/searches-cloudbuild.yaml). That
+[`deploy/searches-cloudbuild.yaml`](https://github.com/coperyan/shoebox/blob/main/deploy/searches-cloudbuild.yaml). That
 build validates the file with the watcher's own loader
 (`scripts/validate_searches.py`) and then copies it to GCS. Compared with a
 `git pull` on every tick:
@@ -779,7 +779,7 @@ only as a message that never arrives. Nobody notices a silence at 04:00. Worse,
 the jobs run with `--max-retries 0` by design, so a failed run is final rather
 than something that quietly recovers.
 
-[`deploy/alerts/job-failed.yaml`](../deploy/alerts/job-failed.yaml) closes that
+[`deploy/alerts/job-failed.yaml`](https://github.com/coperyan/shoebox/blob/main/deploy/alerts/job-failed.yaml) closes that
 gap: a Cloud Monitoring policy on `run.googleapis.com/job/completed_execution_count`
 filtered to `result = "failed"`, grouped per job so the alert names the pipeline
 that broke. It fires on the first failure rather than waiting for a pattern,
@@ -858,7 +858,7 @@ gcloud run jobs delete alert-test --region us-central1 --quiet
 
 | Symptom | Cause |
 |---|---|
-| `error: \`gcloud\` is not on PATH` | Step 0 |
+| `` error: `gcloud` is not on PATH `` | Step 0 |
 | `Permission ... iam.serviceAccounts.actAs denied` on deploy | The deploying identity needs `roles/iam.serviceAccountUser` on the runner SA (step 8) |
 | Deploy fails with `Permission denied on secret` | The runner SA lacks `secretmanager.secretAccessor` on that secret (step 5) |
 | Job fails instantly with a pydantic `validation error` listing missing fields | The uploaded `app.yaml` is incomplete (only the excerpt was uploaded). Upload a full copy as a new secret version |
@@ -866,7 +866,7 @@ gcloud run jobs delete alert-test --region us-central1 --quiet
 | Job fails instantly: `PermissionError: ... /users/...` | A `paths.*_dir` in the uploaded `app.yaml` is a workstation path. Make them relative and add a secret version |
 | `FileNotFoundError` on a `.sql` file | `paths.query_dir` in the uploaded `app.yaml` is not `configs/bigquery/queries` |
 | eBay calls fail with a consent/browser error | The uploaded `ebay_rest.json` has no `refresh_token` — step 1 |
-| eBay 403, `errorId` 1100, `domain: ACCESS` | A missing scope, not a deployment problem; see [setup.md](setup.md) |
+| eBay 403, `errorId` 1100, `domain: ACCESS` | A missing scope, not a deployment problem; see [setup.md](/guides/setup) |
 | `Missing Trading API token file` | `ebay.trading_token_path` in the uploaded `app.yaml` is not `/secrets/ebay-legacy/ebay_legacy.json` |
 | `gcloud builds submit`: `could not resolve source ... storage.objects.get` | The builder cannot read the `PROJECT_cloudbuild` source bucket (step 8) |
 | Cloud Build `test` step: `FileNotFoundError: ... 'git'` | The test step installs git before pytest; the saved-search tests need it. Check `deploy/cloudbuild.yaml` was not trimmed |
@@ -932,7 +932,7 @@ behave exactly like the workstation anyway, uncomment `TZ` under `env` in
 Scheduler is free for the first three jobs and $0.10/month for each after,
 so $0.30 for six. The searches bucket, Secret Manager and Artifact Registry
 are pennies. The eBay Browse call budget is unchanged: one call per due
-search, the same as on Windows ([search.md](search.md#scheduling)).
+search, the same as on Windows ([search.md](/guides/search#scheduling)).
 
 **Job overlap.** Cloud Run has no equivalent of Task Scheduler's
 `IgnoreNew`; a second `execute` while one is running starts a second
@@ -950,6 +950,6 @@ workstation's `app.yaml` names the shared `searches_state_uri`.
 
 ## See also
 
-- [scheduling.md](scheduling.md) — the Windows Task Scheduler setup, unchanged
-- [configuration.md](configuration.md) — `SHOEBOX_LOG_DIR` and the other environment variables
-- [data-storage.md](data-storage.md) — what each pipeline writes to GCS and BigQuery
+- [scheduling.md](/guides/scheduling) — the Windows Task Scheduler setup, unchanged
+- [configuration.md](/guides/configuration) — `SHOEBOX_LOG_DIR` and the other environment variables
+- [data-storage.md](/guides/data-storage) — what each pipeline writes to GCS and BigQuery

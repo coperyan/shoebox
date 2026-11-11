@@ -51,12 +51,12 @@ paths:
   # default) means exports/jsonl/searches/. A gs://bucket/prefix URI keeps them
   # in GCS instead -- required by the Cloud Run job, and set to the same URI on
   # a workstation so both hosts share one state and one lock. searches_file
-  # may likewise be a gs:// object. See docs/deployment.md, "Saved searches".
+  # may likewise be a gs:// object. See docs/content/guides/deployment.mdx, "Saved searches".
   # searches_state_uri: gs://my-project-shoebox-searches/state
   # The listing queue as a GCS object, written by the iOS app's API (`shoebox api`
   # on Cloud Run) and read by `create-listings` instead of the local
   # exports/jsonl/listing_queue_enriched.jsonl. Set the same URI on both hosts.
-  # See docs/api.md.
+  # See docs/content/guides/api.mdx.
   # queue_uri: gs://my-ebay-bucket/queue/listing_queue_enriched.jsonl
 
 ebay:
@@ -98,7 +98,7 @@ google_calendar:
   calendar_id: your-calendar-id@group.calendar.google.com
 
 # Trading Card Database (tcdb.com) browser automation -- `shoebox tcdb-search` / `tcdb-add`.
-# Optional: every key has a default. See docs/tcdb.md.
+# Optional: every key has a default. See docs/content/guides/tcdb.mdx.
 tcdb:
   # Persistent Chrome profile so the Cloudflare clearance and your TCDB login
   # survive between runs (log in by hand once, tick "Remember").
@@ -117,7 +117,7 @@ tcdb:
 # Cloud Run `create-listings` job started from the iOS app fetch SCAN_0234.jpg
 # when it is not on local disk (on the workstation, where scans_dir is the
 # OneDrive sync folder, local files are still used first). Sign in once with
-# `python scripts/onedrive_login.py --login`, then `--upload`. See docs/api.md.
+# `python scripts/onedrive_login.py --login`, then `--upload`. See docs/content/guides/api.mdx.
 onedrive:
   # Application (client) ID of your Azure app registration (public client,
   # personal Microsoft accounts, "Allow public client flows" on).

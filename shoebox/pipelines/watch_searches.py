@@ -700,7 +700,7 @@ def _require_durable_state_in_cloud(state_uri: str | None) -> None:
     raise RuntimeError(
         "watch-searches is running in Cloud Run with local state, which is "
         "discarded after every run. Set paths.searches_state_uri to a gs:// URI "
-        "in the uploaded app.yaml (docs/deployment.md, 'Saved searches')."
+        "in the uploaded app.yaml (docs/content/guides/deployment.mdx, 'Saved searches')."
     )
 
 

@@ -1,0 +1,1060 @@
+# Pipelines
+
+End-to-end runnable workflows, roughly one per CLI command.
+
+- [`shoebox.pipelines.add_combined_images`](#shoeboxpipelinesadd_combined_images)
+- [`shoebox.pipelines.assign_store_categories`](#shoeboxpipelinesassign_store_categories)
+- [`shoebox.pipelines.create_listings`](#shoeboxpipelinescreate_listings)
+- [`shoebox.pipelines.create_store_categories`](#shoeboxpipelinescreate_store_categories)
+- [`shoebox.pipelines.create_variation_listing`](#shoeboxpipelinescreate_variation_listing)
+- [`shoebox.pipelines.end_oos_listings`](#shoeboxpipelinesend_oos_listings)
+- [`shoebox.pipelines.enhance_listing_titles`](#shoeboxpipelinesenhance_listing_titles)
+- [`shoebox.pipelines.load_listing_queue_from_excel`](#shoeboxpipelinesload_listing_queue_from_excel)
+- [`shoebox.pipelines.plan_store_categories`](#shoeboxpipelinesplan_store_categories)
+- [`shoebox.pipelines.preview_search`](#shoeboxpipelinespreview_search)
+- [`shoebox.pipelines.refresh_listings`](#shoeboxpipelinesrefresh_listings)
+- [`shoebox.pipelines.relist_listings`](#shoeboxpipelinesrelist_listings)
+- [`shoebox.pipelines.send_offers`](#shoeboxpipelinessend_offers)
+- [`shoebox.pipelines.sync_active_listing_details`](#shoeboxpipelinessync_active_listing_details)
+- [`shoebox.pipelines.sync_active_listings`](#shoeboxpipelinessync_active_listings)
+- [`shoebox.pipelines.sync_metadata`](#shoeboxpipelinessync_metadata)
+- [`shoebox.pipelines.sync_orders`](#shoeboxpipelinessync_orders)
+- [`shoebox.pipelines.sync_topps_calendar`](#shoeboxpipelinessync_topps_calendar)
+- [`shoebox.pipelines.sync_watch_list`](#shoeboxpipelinessync_watch_list)
+- [`shoebox.pipelines.tcdb_add`](#shoeboxpipelinestcdb_add)
+- [`shoebox.pipelines.tcdb_search`](#shoeboxpipelinestcdb_search)
+- [`shoebox.pipelines.tcdb_wantlist`](#shoeboxpipelinestcdb_wantlist)
+- [`shoebox.pipelines.variation_template`](#shoeboxpipelinesvariation_template)
+- [`shoebox.pipelines.watch_searches`](#shoeboxpipelineswatch_searches)
+
+### `shoebox.pipelines.add_combined_images`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/add_combined_images.py)
+
+Add a combined front+back picture to listings already live on eBay.
+
+```
+New listings get this picture from ``create-listings``. This backfills it on
+the existing ones: for every single-card listing with exactly two pictures
+(front, back), the two are copied full-size into GCS, combined side by side,
+and the listing's pictures are set to front, back, combined. The front stays
+picture 1, so search thumbnails and the send-offers Slack prompts don't change.
+
+With ``--restore-backs``, listings that lost their back picture (old title
+round-trips sent eBay the front only) get it back too: the back is found in
+GCS -- the scan ``create-listings`` uploaded, else the copy an earlier relist
+made -- and the listing is set to front, restored back, combined.
+
+    shoebox add-combined-images                                   # preview
+    shoebox add-combined-images --restore-backs                   # preview, with restores
+    shoebox add-combined-images --restore-backs --apply --limit 5 # update the first 5
+
+Nothing is sent to eBay without ``--apply``. Re-running is safe: every
+listing's live picture count is checked right before writing, and only a
+listing with two pictures (or one, with a stored back) is changed, so none
+gets a second composite.
+```
+
+#### `find_stored_backs(skus: list[str], *, bq: BigQueryClient | None=None, gcs: GCSClient | None=None, settings: Settings | None=None) -> dict[str, str]`
+
+```
+Map each SKU to a back picture still in GCS.
+
+Prefers the scan ``create-listings`` uploaded (logged in ebay_listings);
+falls back to ``other/<sku>_back.png``, the copy relist makes. Either one
+only counts if the object still exists.
+```
+
+#### `build_image_plan(df: pd.DataFrame, stored_backs: dict[str, str] | None=None) -> pd.DataFrame`
+
+```
+One report row per listing, saying what it gets.
+
+``action`` is ``combine`` for a two-picture listing and ``restore_back``
+for a one-picture listing with a back in ``stored_backs`` (only passed
+with --restore-backs). Without a ``picture_urls`` column the count is left
+blank and the live check at apply time decides.
+```
+
+#### `add_combined_image(sku: str, item_id: str, *, ebay: EbayClient, gcs: GCSClient, settings: Settings, back_url: str | None=None) -> str`
+
+```
+Give one listing three pictures: front, back, and the composite.
+
+The live listing's pictures (Trading GetItem) are the source of truth;
+see services/listing_pictures.py for why the inventory item's are not.
+They are re-hosted the way ``relist-listings`` does it (full-size copies
+in GCS) and all three go back on the item.
+
+A two-picture listing returns "updated". A one-picture listing with a
+``back_url`` (a back stored in GCS) gets that back restored and returns
+"restored". Anything else is left alone and returns "skipped" -- the
+report source can be a day stale.
+```
+
+#### `apply_combined_images(plan: pd.DataFrame, *, ebay: EbayClient | None=None, gcs: GCSClient | None=None, limit: int | None=None) -> pd.DataFrame`
+
+```
+Update the eligible listings one at a time; a failure doesn't stop the run.
+
+``limit`` caps listings actually changed (updated or restored), not
+listings looked at: a candidate skipped by the live check doesn't count.
+```
+
+---
+
+### `shoebox.pipelines.assign_store_categories`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/assign_store_categories.py)
+
+Move live listings into their planned store categories.
+
+```
+Reads the working plan from ``shoebox plan-store-categories`` and pushes each
+listing's team category onto the live listing. Defaults to baseball, which is
+the branch broken out by team.
+
+    shoebox assign-store-categories                       # preview baseball
+    shoebox assign-store-categories --apply --limit 25    # push the first 25
+    shoebox assign-store-categories --sport Basketball    # a different branch
+    shoebox assign-store-categories --with-hits           # push planned Hits too
+
+Nothing is sent to eBay without ``--apply``.
+
+**On the second category slot.** ``storeCategoryNames`` is a full replacement,
+not a merge, so pushing just the team category would wipe anything else the
+listing is filed under -- including Hits categories set by hand. By default the
+listing's *current* second category is read off the offer and carried across
+untouched, so hand-curated Hits survive. ``--with-hits`` instead pushes the
+Hits category the plan worked out, overwriting whatever is there.
+
+Listings with no SKU go through Trading, which addresses categories by numeric
+ID rather than name; those IDs are resolved from the live store tree, and a
+listing whose category does not exist yet is skipped rather than guessed at.
+```
+
+#### `category_ids(ebay_api: EbayClient) -> dict[str, str]`
+
+```
+Live store tree as ``{'/path': category_id}``, matched case-insensitively.
+```
+
+#### `build_assignments(plan: pd.DataFrame, *, sport: str | None='Baseball', with_hits: bool=False) -> pd.DataFrame`
+
+```
+One row per listing to move, with the categories it should end up in.
+
+Variation listings are left out: they are already in the You Pick branch
+and have no team.
+```
+
+#### `apply_assignments(assignments: pd.DataFrame, *, ebay_api: EbayClient, with_hits: bool=False, limit: int | None=None) -> pd.DataFrame`
+
+```
+Push each listing's categories, carrying on past individual failures.
+```
+
+---
+
+### `shoebox.pipelines.create_listings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/create_listings.py)
+
+#### `default_queue_source(settings: Settings) -> str | Path`
+
+```
+Where the queue is read from unless ``--queue`` says otherwise: the
+``paths.queue_uri`` GCS object when set (the iOS app's API writes it),
+else the local file the Streamlit UI / Excel loader write.
+```
+
+#### `read_queue(source: str | Path) -> list[ListingQueueRow]`
+
+```
+Load queue rows from a local JSONL path or a ``gs://`` object.
+
+Rows carrying an ``error`` key (``build_enriched_json``'s "No checklist
+match" records) are rejected up front: as ``ListingQueueRow`` they would
+have no ids or player and only fail deep inside the eBay calls.
+```
+
+#### `class RunSummary`
+
+```
+What a run did: one entry per queue row, in order.
+```
+
+**Fields**
+
+```
+listed: int = 0
+failed: int = 0
+results: list[EbayListingResult] = field(default_factory=list)
+failures: list[dict[str, str]] = field(default_factory=list)
+```
+
+#### `run_listings(*, queue_items: list[ListingQueueRow] | None=None, queue: str | Path | None=None, publish: bool=True, dry_run: bool=False, schedule: bool=True, scrape_prices: bool=False, reporter=None, on_complete: Callable[[RunSummary], None] | None=None, settings: Settings | None=None) -> RunSummary`
+
+```
+List every queue row. ``reporter`` (``services.listing_runs.RunRecordReporter``
+or anything with ``start(total)`` / ``row(**kw)``) is told about progress;
+the image log flush and the results sync run even when the loop is
+interrupted, so a SIGTERM at the job timeout loses nothing already listed.
+
+Rows list one at a time, but their scans are downloaded ahead of the loop
+and the OneDrive moves run behind it. ``on_complete`` is called once every
+row is done and every move has finished, before the GCS / BigQuery sync,
+so the app can show the run as done without waiting for it.
+```
+
+#### `run_listing_request(*, store=None, settings=None) -> int`
+
+```
+Cloud Run job mode (``create-listings --run-request``): list the queue
+the iOS app asked for.
+
+Claims the newest ``requested`` run record, reads publish/schedule (and
+the OneDrive scans folder, when the app chose one) from it -- prices are
+never scraped here --, reports progress to it, and posts the usual
+start/finish messages to Slack. The record is marked done as soon as the
+last row is listed; the GCS / BigQuery results sync runs after that. Returns the process exit code: 0
+when there was nothing to do or everything ran; a failure re-raises so the
+job-failed alert fires.
+```
+
+#### `main(generate_from_excel: bool=False, **listing_kwargs) -> None`
+
+```
+Direct-run entrypoint; prefer `shoebox create-listings` for flag handling.
+```
+
+---
+
+### `shoebox.pipelines.create_store_categories`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/create_store_categories.py)
+
+Create the planned eBay store categories, without moving any listings.
+
+```
+Reads the working plan written by ``shoebox plan-store-categories``, works out
+which of its category paths the store does not have yet, and creates them
+parent-first.
+
+    shoebox create-store-categories                 # preview what would be created
+    shoebox create-store-categories --apply         # create them
+
+Nothing is created without ``--apply``, and nothing is ever deleted or
+renamed -- categories already in the store are left exactly as they are, so
+this is safe to re-run. Listings keep whatever categories they have now:
+assigning them is a separate step.
+```
+
+#### `desired_paths(plan: pd.DataFrame) -> list[tuple[str, ...]]`
+
+```
+Every category path the plan needs, ancestors included, shallowest first.
+
+``/Baseball Singles/Chicago Cubs`` implies ``/Baseball Singles``, which has
+to exist before the child can be hung off it.
+```
+
+#### `existing_paths(ebay_api: EbayClient) -> dict[tuple[str, ...], str]`
+
+```
+Current store tree as ``{path: category_id}``.
+
+Names are compared case-insensitively: eBay preserves the casing it was
+given, and re-creating a category that differs only in case would split it.
+```
+
+#### `plan_creations(plan: pd.DataFrame, existing: dict[tuple[str, ...], str]) -> list[tuple[str, ...]]`
+
+```
+Paths the store is missing, shallowest first so parents come first.
+```
+
+#### `create_categories(missing: list[tuple[str, ...]], *, ebay_api: EbayClient, existing: dict[tuple[str, ...], str]) -> pd.DataFrame`
+
+```
+Create the missing categories one level at a time, parents first.
+
+Each level is created, then the tree is re-read so the next level can
+address its parents by the IDs eBay assigned. A failure on one category is
+recorded and the run continues -- one bad name should not strand the rest.
+```
+
+---
+
+### `shoebox.pipelines.create_variation_listing`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/create_variation_listing.py)
+
+#### `load_checklist_from_excel(excel_path: Path, sheet_name: str='Checklist', in_stock_only: bool=True) -> dict[str, list[ChecklistVariationRow]]`
+
+```
+Read the Checklist sheet and group rows by Subset ID.
+When in_stock_only=True, rows with no Qty are excluded from the listing
+but the variation slot is still reserved in the group for future restocks
+by passing include_all_in_group=True to run_variation_listing.
+```
+
+#### `run_variation_listing(*, excel_path: Path, sheet_name: str='Checklist', publish: bool=False, dry_run: bool=False, schedule: bool=False, in_stock_only: bool=False, images_dir: Path | None=None, default_image_path: Path | None=None, promote_rate: int=20, volume_discount_tiers: list[dict[int, int]] | None=None) -> None`
+
+```
+Create one variation listing per Subset ID group in the Excel sheet.
+
+See list_variation_groups for the steps and the image options.
+```
+
+#### `list_variation_groups(groups: dict[str, list[ChecklistVariationRow]], *, publish: bool=False, dry_run: bool=False, schedule: bool=False, images_dir: Path | None=None, default_image_path: Path | None=None, promote_rate: int=20, volume_discount_tiers: list[dict[int, int]] | None=None) -> list[EbayListingResult]`
+
+```
+Create one variation listing per group. Group ids are hashed into the
+eBay inventory item group key, so the same id always addresses the same
+listing. For each group:
+  1. Optionally upload a default listing image from default_image_path.
+  2. Optionally discover and upload per-card images from images_dir.
+  3. Create one inventory item per variation (card).
+  4. Create the inventory item group linking all SKUs.
+  5. Create a single offer referencing the group.
+  6. Publish and promote the listing (promote_rate 0 skips promotion).
+
+default_image_path: local image file used as the item group hero image
+(shown before a buyer selects a specific variation). Uploaded once and
+prepended to the group imageUrls.
+
+images_dir: directory of card scans named with the card number
+(e.g. "BCP-1_front.jpg"). Each card's front image is set on its own
+inventory item so eBay shows it when that variation is selected. The first
+_GROUP_IMAGE_LIMIT such front images are also appended to the group imageUrls.
+```
+
+#### `main(excel_path: Path, **kwargs) -> None`
+
+```
+Direct-run entrypoint; prefer `shoebox create-variation-listings` for flag handling.
+
+If no default_image_path is given, tries to derive a hero image from the
+set name under settings.paths.set_images_dir.
+```
+
+---
+
+### `shoebox.pipelines.end_oos_listings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/end_oos_listings.py)
+
+---
+
+### `shoebox.pipelines.enhance_listing_titles`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/enhance_listing_titles.py)
+
+Enhance the titles of listings already live on eBay.
+
+```
+Works from a dataframe of listings: by default the BigQuery view
+``<ebay_dataset>.v_active_listing_details``, or any file passed to ``--input``
+carrying ``item_id``/``sku``/``title``/``team`` columns. Works out the better
+title for each, and -- only when asked -- pushes the changes to eBay.
+
+    shoebox enhance-listing-titles                       # preview from BigQuery
+    shoebox enhance-listing-titles --input pull.csv      # preview a local export
+    shoebox enhance-listing-titles --apply --limit 25    # push the first 25
+
+Nothing is sent to eBay without ``--apply``. The report CSV is written on every
+run, so the preview is the thing to read before applying.
+```
+
+#### `load_listings_from_bigquery(bq_client: BigQueryClient | None=None) -> pd.DataFrame`
+
+```
+Read the active-listing view -- the default source when no file is given.
+```
+
+#### `load_listings(path: Path) -> pd.DataFrame`
+
+```
+Load listings from a .jsonl or .csv export into a dataframe.
+```
+
+#### `extract_team(row: pd.Series) -> object`
+
+```
+Pull the Team item specific from whichever shape the export carries.
+
+A flattened ``team`` column wins when present; otherwise it comes out of
+``item_specifics`` (a dict from the JSONL export, a JSON string from a
+BigQuery CSV). A repeated BigQuery column arrives as a numpy array rather
+than a list, hence the general iterable check.
+```
+
+#### `build_title_changes(df: pd.DataFrame, *, max_length: int=MAX_TITLE_LENGTH) -> pd.DataFrame`
+
+```
+Evaluate every listing and return one report row each.
+
+Every input row comes back -- including the unchanged ones -- so the report
+doubles as a record of what was considered and why it was left alone.
+```
+
+#### `apply_title_changes(changes: pd.DataFrame, *, listings: ListingService | None=None, limit: int | None=None) -> pd.DataFrame`
+
+```
+Push the changed titles to eBay, one listing at a time.
+
+A failure on one listing is recorded and the run continues -- a bad SKU
+partway through a 1,000-listing sweep shouldn't strand the rest.
+```
+
+---
+
+### `shoebox.pipelines.load_listing_queue_from_excel`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/load_listing_queue_from_excel.py)
+
+#### `upload_queue_file(local_path: Path, queue_uri: str, gcs: GCSClient | None=None) -> None`
+
+```
+Copy the local queue over the ``paths.queue_uri`` object, which is what
+``create-listings`` reads when that setting is on -- without this it would
+list whatever the GCS queue last held instead of the file just written.
+```
+
+---
+
+### `shoebox.pipelines.plan_store_categories`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/plan_store_categories.py)
+
+Work out the new eBay store category for every active listing.
+
+```
+Reads the active listings -- by default the BigQuery view
+``<ebay_dataset>.v_active_listing_details``, or any export passed to
+``--input`` -- runs each through the store-category rules, and writes a report
+CSV of what each listing should be filed under.
+
+    shoebox plan-store-categories                                  # from BigQuery
+    shoebox plan-store-categories --input exports/jsonl/active_listing_details.jsonl
+    shoebox plan-store-categories --sport Baseball                 # one branch only
+
+This reports; it does not write to eBay. Applying the plan means pushing
+``storeCategoryNames`` on each offer, and creating the categories themselves
+first via ``StoresClient`` -- neither of which happens here.
+```
+
+#### `load_listings_from_bigquery(bq_client: BigQueryClient | None=None) -> pd.DataFrame`
+
+```
+Read the active-listing view -- the default source when no file is given.
+```
+
+#### `load_listings(path: Path) -> pd.DataFrame`
+
+```
+Load listings from a .jsonl or .csv export into a dataframe.
+```
+
+#### `read_fields(row: pd.Series) -> dict`
+
+```
+The rule inputs for one listing, from either shape of export.
+
+The flattened view columns win when present; otherwise the values come out
+of ``item_specifics``, so the raw JSONL export from
+``sync-active-listing-details`` works as an ``--input`` without a round
+trip through BigQuery.
+```
+
+#### `build_category_plan(df: pd.DataFrame) -> pd.DataFrame`
+
+```
+Plan a category for every listing carrying a Sport item specific.
+
+Listings with no Sport are skipped rather than guessed at: the sport picks
+the top-level branch, and a card filed under the wrong one is worse than a
+card left where it is until the item specific is fixed. The caller reports
+how many were dropped by comparing lengths.
+```
+
+#### `write_report(plan: pd.DataFrame, exports_dir: Path) -> tuple[Path, Path]`
+
+```
+Write the timestamped report and refresh the working copy.
+
+Returns ``(timestamped, working)``. The timestamped file is the record of
+what a given run decided; the working file is the one to hand-edit and feed
+downstream, so it always holds the newest full plan.
+```
+
+#### `category_counts(plan: pd.DataFrame) -> pd.DataFrame`
+
+```
+Every category the plan uses, with how many listings land in it.
+
+Both slots are counted, so a baseball hit shows up under its team and under
+Hits -- which is the point of the second slot.
+```
+
+---
+
+### `shoebox.pipelines.preview_search`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/preview_search.py)
+
+Inspect what a saved search actually returns, without alerting anyone.
+
+```
+``watch-searches --dry-run`` prints a short sample, which is enough to sanity
+check a query but not to *tune* one. This module returns the full result set as
+a DataFrame — including the listings your post-filters rejected and the reason
+each was rejected — so "are my parameters right?" becomes a question you can
+answer by looking at data rather than by guessing.
+
+Nothing here touches Slack, the seen-cache, or BigQuery. It is safe to run as
+often as you like, subject only to the eBay Browse API quota.
+
+Typical use from a REPL or notebook::
+
+    from shoebox.pipelines.preview_search import preview_search
+
+    df = preview_search("matt_cain_autos")
+    df[df.passed]                          # what would alert
+    df[~df.passed].dropped_by.value_counts()   # what your filters are costing
+    df.sort_values("total_price").head(20)
+```
+
+#### `resolve_search(name: str, *, config_path: str | Path | None=None) -> ResolvedSearch`
+
+```
+Look up one search by name, with defaults merged in.
+```
+
+#### `describe_request(search: ResolvedSearch) -> dict[str, str | None]`
+
+```
+Exactly what would be sent to eBay, for printing next to the results.
+```
+
+#### `preview_search(name: str, *, config_path: str | Path | None=None, max_results: int | None=None, passed_only: bool=False, fetch=None) -> pd.DataFrame`
+
+```
+Return every listing a saved search matches, with a pass/fail verdict.
+
+Args:
+    name: Search name from searches.yaml.
+    config_path: Override ``paths.searches_file``.
+    max_results: Cap the fetch. Defaults to the search's ``seed_max_results``
+        so you see the same breadth a seed would, not just one poll window.
+    passed_only: Drop the rejected rows. Off by default — the rejected rows
+        are usually the interesting ones when tuning.
+    fetch: Injected fetcher, for tests.
+
+Returns:
+    A DataFrame with one row per listing. ``passed`` is the verdict and
+    ``dropped_by`` names the config key that rejected it. Empty results
+    still return a correctly-shaped (zero-row) frame.
+```
+
+#### `aspect_options(name: str, *, config_path: str | Path | None=None, fetch=None) -> pd.DataFrame`
+
+```
+List the eBay aspects this search could filter on, with match counts.
+
+Aspects are eBay's structured item attributes (Player, Season, Grade,
+Parallel/Variety...). They vary by category and by what the current result
+set actually contains, so this is scoped to one saved search rather than
+being a static list.
+
+Returns a frame of ``aspect``, ``value``, ``count``, ``values_in_aspect`` —
+one row per selectable value, ordered by aspect then descending count. Copy
+an ``aspect`` / ``value`` pair straight into the search's ``aspects:`` block.
+```
+
+#### `run_aspects(name: str, *, config_path: str | Path | None=None, top: int=8, csv_path: str | Path | None=None) -> pd.DataFrame`
+
+```
+CLI entry point: print each aspect and its most common values.
+```
+
+#### `run_preview(name: str, *, config_path: str | Path | None=None, max_results: int | None=None, passed_only: bool=False, csv_path: str | Path | None=None, limit_rows: int | None=None) -> pd.DataFrame`
+
+```
+CLI entry point: print the request, the results, and a filter breakdown.
+```
+
+---
+
+### `shoebox.pipelines.refresh_listings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/refresh_listings.py)
+
+Refresh live listings as brand-new ones: delete the inventory item, recreate it.
+
+```
+``relist-listings`` keeps each SKU's inventory item and swaps only its offer.
+This pipeline goes one step further, the API equivalent of "end listing, then
+sell a similar item": ``deleteInventoryItem`` ends the live listing and deletes
+its offers, and the item and a fresh offer are rebuilt from what eBay held, so
+the new listing has a new item ID and no ties to the old one beyond the SKU.
+
+Nothing is re-derived: title, description, aspects, condition, packaging,
+price, policies (best-offer thresholds included) and store categories are
+carried across exactly. Pictures come from the live listing and are re-hosted
+in GCS first, because the old listing's eBay picture URLs are not something to
+depend on once it has ended.
+
+Because a delete can't be undone, every listing is snapshotted to
+``<exports_dir>/refresh_snapshots/<run>/<sku>.json`` *before* it is touched.
+If a recreate fails after the delete, ``refresh-listings --restore <file|dir>``
+rebuilds the listing from that snapshot.
+
+What a refresh loses, by design: watchers, view and sales history, open best
+offers, and the listing's search standing. Watched listings are skipped unless
+``include_watched`` is set.
+```
+
+#### `select_listings(ebay_api: EbayClient, *, skus: list[str] | None=None, item_ids: list[str] | None=None, aged: bool=False, min_age: int=90, min_price: float=2, min_impressions: int=100, include_watched: bool=False, limit: int | None=None) -> pd.DataFrame`
+
+```
+Live single-SKU listings to refresh, with their ad (if any) joined on.
+```
+
+#### `build_snapshot(row: pd.Series, ebay_api: EbayClient, gcs_client: GCSClient | None, settings, *, rehost: bool) -> dict[str, Any]`
+
+```
+Everything needed to recreate a listing, gathered while it still exists.
+
+``rehost`` copies the live pictures to GCS (needed to apply); a preview
+leaves GCS alone and records the live picture URLs instead.
+```
+
+#### `refresh_one(snapshot: dict[str, Any], service: ListingService) -> str | None`
+
+```
+Delete and recreate one listing from its snapshot; returns the new listing ID.
+```
+
+#### `restore(path: Path) -> list[dict[str, Any]]`
+
+```
+Recreate listings from snapshot files (one file, or every *.json in a directory).
+```
+
+---
+
+### `shoebox.pipelines.relist_listings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/relist_listings.py)
+
+---
+
+### `shoebox.pipelines.send_offers`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/send_offers.py)
+
+Send negotiation offers to interested buyers, with Slack-driven pricing.
+
+```
+Interactive by default: every eligible listing is posted to Slack up front
+(title, current price), then each threaded reply drives that listing's offer —
+a price sends the offer immediately, "skip" resolves it without sending, and
+anything unparseable gets a threaded hint and stays pending. Listings still
+pending at the deadline simply reappear next run (eBay keeps returning them
+while buyers remain interested).
+
+``--auto`` skips the prompts and sends the discount-matrix price for every
+eligible listing. Unlike the old headless pipeline there is no ``--max-price``
+cap anymore: listings priced above the matrix's top tier get a flat 5%-off
+offer instead of being skipped.
+```
+
+#### `suggest_offer_price(price: float) -> float`
+
+```
+Discount-matrix price, with a 5%-off fallback for prices above the
+matrix's top tier (calculate_new_price raises there).
+```
+
+#### `format_offer_prompt(details: dict) -> BatchPrompt`
+
+```
+Build the Slack prompt for one eligible listing.
+
+mrkdwn (no code fences — links don't render inside them), with the first
+listing photo as an explicit image block since bot messages don't unfurl.
+```
+
+#### `decide_reply(current_price: float, reply_text: str) -> tuple[str, float | None, str | None]`
+
+```
+Classify a threaded reply for a listing priced at ``current_price``.
+
+Returns (action, amount, thread_msg): action is "skip", "send" (with
+amount), or "retry" (with a hint/validation message to post in-thread,
+leaving the prompt pending).
+```
+
+#### `main(dry_run: bool=False, auto: bool=False, timeout_s: int=900, *, ebay: EbayClient | None=None, post: PostFn=notify, run_batch: BatchFn=notify_batch_and_wait) -> None`
+
+```
+Offer discounts to watchers of every offer-eligible listing.
+```
+
+---
+
+### `shoebox.pipelines.sync_active_listing_details`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/sync_active_listing_details.py)
+
+---
+
+### `shoebox.pipelines.sync_active_listings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/sync_active_listings.py)
+
+---
+
+### `shoebox.pipelines.sync_metadata`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/sync_metadata.py)
+
+---
+
+### `shoebox.pipelines.sync_orders`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/sync_orders.py)
+
+#### `sync_orders()`
+
+```
+Download orders from eBay, write to JSONL, upload to GCS, and load into BigQuery.
+
+Each order is exploded into one row per line item, matching the flattened
+schema in configs/bigquery/schemas/orders.json.
+```
+
+---
+
+### `shoebox.pipelines.sync_topps_calendar`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/sync_topps_calendar.py)
+
+Sync upcoming Topps product releases into Google Calendar.
+
+```
+Scrapes https://www.topps.com/release-calendar with a real browser, then
+upserts each upcoming release as a 9:00 AM PT calendar event with reminders
+30 minutes and 1 day before. Newly created events are announced to the
+configured Slack notify channel.
+
+Run: ``python -m shoebox.pipelines.sync_topps_calendar [--dry-run]``
+```
+
+---
+
+### `shoebox.pipelines.sync_watch_list`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/sync_watch_list.py)
+
+#### `build_watch_list_rows(watched: list[dict[str, Any]], details: list[dict[str, Any]], failures: dict[str, str], *, file_date: str) -> list[dict[str, Any]]`
+
+```
+One row per watched listing, shaped to ``configs/bigquery/schemas/watch_list.json``.
+
+Buyer-side fields (seller, bids, time left, BIN price) come from the watch
+list; item specifics, category, condition, and pictures from GetItem. A
+listing whose GetItem call failed keeps its watch-list fields and carries
+the error in ``detail_error`` -- watched listings end all the time, so a
+missing detail is normal here rather than a reason to drop the row.
+```
+
+---
+
+### `shoebox.pipelines.tcdb_add`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/tcdb_add.py)
+
+Add cards to your TCDB collection from a list of card titles.
+
+```
+Each input line is a card written the way TCDB titles it, e.g.::
+
+    2009 Bowman Chrome - X-Fractors #171 Matt Cain
+
+or a ViewCard.cfm link. For a title, the card is found with an advanced search
+on year + card number + name (the set name is left out of the search because
+TCDB reads a leading "-" as an exclusion) and the result whose title matches
+exactly is opened. The card is then added with the Quick Add button on its
+page. Zero or several exact matches are reported and skipped, never guessed.
+
+Cards already in the collection are skipped unless ``allow_duplicates``.
+``dry_run`` finds every card without adding anything.
+
+Line reading, spec parsing and title matching are pure and unit-tested; the
+browser is only touched from ``run_tcdb_add``.
+```
+
+#### `class CardOutcome`
+
+```
+One input line and what happened to it (one row of the summary table).
+```
+
+**Fields**
+
+```
+line: str
+status: str
+title: str = ''
+url: str = ''
+detail: str = ''
+candidates: list[TcdbSearchResult] = field(default_factory=list)
+```
+
+#### `read_card_lines(cards: Iterable[str]=(), file: str | Path | None=None) -> list[str]`
+
+```
+Card lines from the command line and/or a text file.
+
+Blank lines and ``#`` comments in the file are skipped (a card's ``#171``
+never starts a line, so this is unambiguous).
+```
+
+#### `search_query_for(spec: CardSpec, category: str) -> AdvancedSearchQuery`
+
+```
+The advanced search that finds a spec: year + card number + (first) name.
+```
+
+#### `run_tcdb_add(*, cards: Iterable[str]=(), file: str | Path | None=None, category: str | None=None, dry_run: bool=False, allow_duplicates: bool=False, headless: bool=False, profile_dir: str | Path | None=None, console: Console | None=None) -> int`
+
+```
+Add each card to the TCDB collection. Returns a process exit code
+(0 when every card was added, already owned, or found in a dry run).
+```
+
+---
+
+### `shoebox.pipelines.tcdb_search`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/tcdb_search.py)
+
+Interactive TCDB advanced-search session.
+
+```
+Opens a real Chrome window on tcdb.com, makes sure you are logged in (once per
+session; the profile remembers you afterwards), then loops: you type a card
+number, it runs the advanced search with your defaults (e.g. ``name=Bonds``),
+prints the matches, and leaves the results page open in the browser. ``add N``
+adds result N to your collection.
+
+Session commands (also shown by ``help``)::
+
+    <card number>          search with the current defaults
+    set field=value ...    change a default, e.g. set year=1993 set_name="Upper Deck"
+    set field=             clear a default
+    show                   print the current defaults
+    open N                 open result N of the last search in the browser
+    add N                  add result N of the last search to your collection
+    help                   list commands
+    quit / q / exit        end the session
+
+Command parsing (``parse_command``) is pure and unit-tested; the browser is only
+touched from ``run_tcdb_search``.
+```
+
+#### `class Command`
+
+```
+One parsed line of session input.
+```
+
+**Fields**
+
+```
+kind: str
+value: str = ''
+updates: dict[str, str] = field(default_factory=dict)
+index: int | None = None
+```
+
+#### `parse_command(line: str) -> Command`
+
+```
+Turn a line of user input into a ``Command``.
+
+Anything that is not a known keyword is treated as a card number to search.
+Raises ``ValueError`` for a malformed ``set``/``open``/``add``.
+```
+
+#### `results_table(page: TcdbSearchPage, query: AdvancedSearchQuery, *, max_rows: int=0) -> Table`
+
+```
+Render a results page as a rich table (``max_rows`` 0 = all).
+```
+
+#### `build_defaults(overrides: dict[str, str] | None=None, *, settings_defaults: dict[str, str] | None=None) -> AdvancedSearchQuery`
+
+```
+Merge config ``tcdb.search_defaults`` with command-line overrides.
+```
+
+#### `run_tcdb_search(*, overrides: dict[str, str] | None=None, card_numbers: Iterable[str] | None=None, login: bool=True, max_rows: int=0, headless: bool=False, profile_dir: str | Path | None=None, input_fn: Callable[[str], str]=input, console: Console | None=None) -> int`
+
+```
+Run the interactive session. Returns a process exit code.
+
+``card_numbers`` given up front are searched first (non-interactively); the
+interactive prompt follows unless stdin is exhausted.
+```
+
+---
+
+### `shoebox.pipelines.tcdb_wantlist`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/tcdb_wantlist.py)
+
+Export your TCDB want list to a file.
+
+```
+The want list is the member's collection filtered to want status
+(``ViewCollectionMode.cfm?...&Filter=W``), 100 rows to a page. This walks every
+page for one sport (or all of them) and writes the rows to CSV or JSONL.
+
+Nothing is changed on TCDB: every request is a page read.
+
+Parsing and row shaping are pure and unit-tested; the browser is only touched
+from ``run_tcdb_wantlist``.
+```
+
+#### `card_row(card: WantlistCard) -> dict`
+
+```
+One card as a flat row, in ``FIELDS`` order.
+```
+
+#### `run_tcdb_wantlist(*, member: str | None=None, category: str | None=None, all_categories: bool=False, with_team: bool=False, limit: int | None=None, out: str | Path | None=None, fmt: str='csv', max_pages: int | None=None, headless: bool=False, profile_dir: str | Path | None=None, console: Console | None=None) -> int`
+
+```
+Scrape the want list and write it out. Returns a process exit code.
+```
+
+---
+
+### `shoebox.pipelines.variation_template`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/variation_template.py)
+
+`shoebox variation-template`: checklist -> fill-in workbook -> segmented variation listings.
+
+```
+build   Pull one subset of a set (e.g. 2026 Topps Update Base) from cards.v_checklist
+        and write a workbook with a row per card, sorted by card number and split
+        into segments of at most 250 cards (eBay's variation cap). Qty and Price
+        are blank; the Listing sheet holds the default price, the ad rate and the
+        volume-discount tiers.
+
+upload  Validate the filled-in workbook and create one multi-variation listing
+        per segment through the create-variation-listings pipeline.
+```
+
+#### `fetch_set_checklist(set_name: str, bq: BigQueryClient | None=None) -> list[dict[str, Any]]`
+
+```
+Every cards.v_checklist row for set_name (case-insensitive), as dicts.
+```
+
+#### `build_variation_template(set_name: str, subset_name: str='Base', *, segments: int=2, out: Path | None=None, force: bool=False, bq: BigQueryClient | None=None) -> Path`
+
+```
+Write the fill-in template for one subset of a set and return its path.
+```
+
+#### `read_template(path: Path) -> tuple[list[dict[str, Any]], list[tuple[Any, ...]]]`
+
+```
+(Checklist rows as dicts, Listing sheet rows as tuples) from a template.
+```
+
+#### `upload_variation_template(path: Path, *, publish: bool=False, dry_run: bool=False, schedule: bool=False, default_image_path: Path | None=None) -> list[EbayListingResult]`
+
+```
+Create one variation listing per segment of a filled-in template.
+
+Every card in the template is listed, in stock or not. Variations carry no
+per-card images; the only image is the listing's hero (default_image_path,
+else <set_images_dir>/<set_name>.png when that file exists).
+```
+
+---
+
+### `shoebox.pipelines.watch_searches`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/pipelines/watch_searches.py)
+
+Run due saved searches and alert Slack about net-new eBay listings.
+
+```
+Driven by a single cron entry; each search's own ``interval`` decides whether it
+actually fires, so adding a search means editing YAML and nothing else.
+
+Two ordering decisions are load-bearing:
+
+**Slack before state.** If state were committed first, a Slack failure would
+mark an item seen and it would never be alerted — silently, undetectably. The
+other way round, a crash re-alerts an item: visible and self-limiting. For an
+alerting system a duplicate is a shrug and a miss is the whole feature failing.
+
+**Commit per item, not per batch.** Combined with the above, this bounds a crash
+mid-run to exactly one duplicate rather than the entire run's worth.
+```
+
+#### `class SearchRunResult`
+
+#### `seen_scope(channel: str) -> str`
+
+```
+Seen-cache scope for a channel.
+
+Dedup is per *channel*, not per search: several searches deliberately
+overlap (a numbered autograph matches both a "numbered" and an "autos"
+search), and keying the cache by search name alerts that one card once per
+search. Sharing the cache across everything posting to the same channel
+means the reader sees it once, while searches on different channels stay
+independent.
+
+Slack IDs are already path-safe; the sanitize is for a hand-set channel
+value, since this becomes a filename.
+```
+
+#### `run_one_search(search: ResolvedSearch, *, store: SearchStateStore, run_id: str, now: datetime, fetch: FetchFn, post: PostFn, channel: str, seed: bool, verify: VerifyFn=_default_verify, notify_seed: bool=False, dry_run: bool=False, pacing_seconds: float=SLACK_PACING_SECONDS) -> SearchRunResult`
+
+```
+Fetch, filter, diff against the seen cache, alert, and commit.
+```
+
+#### `seen_refresh(items: list[ItemSummary], seen: dict[str, SeenEntry]) -> list[ItemSummary]`
+
+```
+Items we already knew about, for a last_seen_at/last_price refresh.
+```
+
+#### `pull_searches_repo(path: str | Path, *, timeout: float=60) -> bool`
+
+```
+``git pull --ff-only`` in the directory containing the searches file.
+
+Fail-open by design: a pull failure means running with a slightly stale
+(but previously valid) config, which beats not running at all -- and this
+fires on every cron tick, so posting each failure to Slack would spam a
+persistent outage (box offline, expired token) every interval. A stale
+file that is also *broken* still fails loudly through the load_searches_file
+path below.
+
+Returns True if the pull succeeded, False otherwise (logged, never raised).
+```
+
+---

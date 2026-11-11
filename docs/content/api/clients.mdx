@@ -1,0 +1,1753 @@
+# Clients
+
+External systems: eBay REST and Trading, GCS, BigQuery, TCDB, OneDrive, Google Calendar, scrapers and saved-search state.
+
+- [`shoebox.clients.bigquery`](#shoeboxclientsbigquery)
+- [`shoebox.clients.chromedriver`](#shoeboxclientschromedriver)
+- [`shoebox.clients.cloud_run`](#shoeboxclientscloud_run)
+- [`shoebox.clients.ebay.analytics`](#shoeboxclientsebayanalytics)
+- [`shoebox.clients.ebay.browse`](#shoeboxclientsebaybrowse)
+- [`shoebox.clients.ebay.client`](#shoeboxclientsebayclient)
+- [`shoebox.clients.ebay.errors`](#shoeboxclientsebayerrors)
+- [`shoebox.clients.ebay.fulfillment`](#shoeboxclientsebayfulfillment)
+- [`shoebox.clients.ebay.inventory`](#shoeboxclientsebayinventory)
+- [`shoebox.clients.ebay.marketing`](#shoeboxclientsebaymarketing)
+- [`shoebox.clients.ebay.negotiation`](#shoeboxclientsebaynegotiation)
+- [`shoebox.clients.ebay.session`](#shoeboxclientsebaysession)
+- [`shoebox.clients.ebay.stores`](#shoeboxclientsebaystores)
+- [`shoebox.clients.ebay.trading`](#shoeboxclientsebaytrading)
+- [`shoebox.clients.gcs`](#shoeboxclientsgcs)
+- [`shoebox.clients.google_calendar`](#shoeboxclientsgoogle_calendar)
+- [`shoebox.clients.image_log`](#shoeboxclientsimage_log)
+- [`shoebox.clients.onedrive`](#shoeboxclientsonedrive)
+- [`shoebox.clients.price_scraper`](#shoeboxclientsprice_scraper)
+- [`shoebox.clients.search_state`](#shoeboxclientssearch_state)
+- [`shoebox.clients.search_state_gcs`](#shoeboxclientssearch_state_gcs)
+- [`shoebox.clients.tcdb`](#shoeboxclientstcdb)
+- [`shoebox.clients.tcdb.browser`](#shoeboxclientstcdbbrowser)
+- [`shoebox.clients.tcdb.card`](#shoeboxclientstcdbcard)
+- [`shoebox.clients.tcdb.collection`](#shoeboxclientstcdbcollection)
+- [`shoebox.clients.tcdb.search`](#shoeboxclientstcdbsearch)
+- [`shoebox.clients.topps_release_scraper`](#shoeboxclientstopps_release_scraper)
+
+### `shoebox.clients.bigquery`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/bigquery.py)
+
+#### `class BigQueryClient`
+
+```
+Small BigQuery helper.
+
+Design:
+- No global settings evaluated at import time.
+- Accept Settings for testability and consistency.
+```
+
+##### `run_query(sql: str, params: dict[str, Any] | None=None, *, return_df: bool=True) -> pd.DataFrame | None`
+
+```
+Run a SQL file located under settings.paths.query_dir.
+```
+
+##### `load_jsonl_from_gcs(*, bucket: str, object_name: str, dataset: str, table: str, schema_path: Path | None=None, write_disposition: str='WRITE_APPEND') -> None`
+
+```
+Load newline-delimited JSON from GCS into BigQuery.
+```
+
+---
+
+### `shoebox.clients.chromedriver`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/chromedriver.py)
+
+Make undetected-chromedriver work on Apple Silicon without Rosetta.
+
+```
+undetected-chromedriver 3.5.5 has two problems on an arm64 Mac:
+
+1. ``Patcher._set_platform_name`` picks ``mac-x64`` for every ``darwin``
+   machine, so it downloads an Intel chromedriver. Without Rosetta that fails
+   with ``OSError: [Errno 86] Bad CPU type in executable``.
+2. ``Patcher.patch_exe`` rewrites the binary in place to hide the ``cdc_``
+   marker, which breaks the binary's code signature. macOS kills an arm64
+   binary with a broken signature at launch, and selenium reports
+   ``Service ... unexpectedly exited. Status code was: -9``.
+
+``fix_apple_silicon`` patches ``Patcher`` before ``uc.Chrome(...)`` runs: it
+downloads ``mac-arm64`` instead, and ad-hoc re-signs the binary
+(``codesign --force --sign -``) after uc patches it. On any other machine it
+does nothing. Call it before every ``uc.Chrome(...)``. Calling it more than
+once is safe.
+```
+
+#### `arm64_platform_name(platform_name: str) -> str`
+
+```
+The chromedriver download name for an arm64 Mac, given uc's pick.
+```
+
+#### `codesign(path: str) -> None`
+
+```
+Ad-hoc re-sign a binary so macOS will run it after an in-place edit.
+```
+
+#### `fix_apple_silicon(patcher_cls=None, *, enabled: bool | None=None) -> bool`
+
+```
+Patch uc's ``Patcher`` for an arm64 Mac. Returns True if it is patched.
+
+``patcher_cls`` and ``enabled`` are for tests; by default this patches
+``undetected_chromedriver.patcher.Patcher`` when running on Apple Silicon.
+```
+
+---
+
+### `shoebox.clients.cloud_run`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/cloud_run.py)
+
+Start a Cloud Run job execution (the API kicking off ``create-listings``).
+
+```
+Uses the Cloud Run Admin API v2 through the discovery client that the
+Google Calendar integration already depends on, so no extra library. The
+caller's identity needs ``run.jobs.run`` on the job (``roles/run.invoker``,
+granted by ``bindings:`` in deploy/jobs.yaml).
+```
+
+#### `class CloudRunError(RuntimeError)`
+
+#### `class CloudRunJobs`
+
+##### `run_job(name: str) -> str | None`
+
+```
+Start one execution; returns its name when the API reports it.
+```
+
+---
+
+### `shoebox.clients.ebay.analytics`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/analytics.py)
+
+#### `extract_field_names(payload: dict) -> list[str]`
+
+```
+Returns ordered field names matching the order of values in records.
+```
+
+#### `map_records(payload: dict) -> list[dict]`
+
+```
+Maps header fields to record values.
+```
+
+#### `class AnalyticsClient`
+
+---
+
+### `shoebox.clients.ebay.browse`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/browse.py)
+
+#### `class BrowseClient`
+
+##### `search(*, q: str | None=None, category_ids: str | None=None, filter: str | None=None, sort: str | None=None, aspect_filter: str | None=None, limit: int=_DEFAULT_LIMIT, max_results: int | None=None) -> list[ItemSummary]`
+
+```
+Search eBay listings via the Browse API.
+
+Args:
+    q: Keyword query string.
+    category_ids: Comma-separated category ID(s) to restrict results.
+    filter: eBay filter string, e.g. "price:[10..50],priceCurrency:USD".
+    sort: Sort order — e.g. "price", "-price", "newlyListed", "bestMatch".
+    aspect_filter: Aspect filter string, e.g. "categoryId:212,Graded:{Yes}".
+    limit: Default cap on total items returned, used when ``max_results``
+        is not given. This is *not* a page size — ebay_rest fills pages
+        with up to 200 records regardless (see note below).
+    max_results: Cap total items returned, overriding ``limit``.
+        Capped at 10,000 (the API maximum for one result set).
+
+Returns:
+    List of ItemSummary models.
+
+Note:
+    ebay_rest co-opts the underlying ``limit`` parameter as
+    "records desired in total" rather than the page size eBay's own API
+    documents (``a_p_i_private.py``: ``records_desired = kwargs["limit"]``,
+    and the generator stops once it hits zero). Page size is chosen
+    internally as ``min(records_desired, 200)``. So the total cap is what
+    must be passed down; sending a page size instead silently truncates
+    every search at 200 items.
+```
+
+##### `aspect_refinements(*, q: str | None=None, category_ids: str | None=None, filter: str | None=None) -> list[dict[str, Any]]`
+
+```
+List the aspects available to filter this search on, with counts.
+
+Returns eBay's ``aspectDistributions``: one entry per aspect
+(``localized_aspect_name``) holding its possible values and how many
+listings carry each.
+
+This deliberately bypasses ``api.buy_browse_search``. That wrapper is a
+paginating generator whose ``page_controls`` list contains
+``"refinement"``, so it discards the refinement payload entirely and no
+amount of ``fieldgroups`` will bring it back. ``_method_single`` is the
+SDK's own single-response path, wired with the same arguments its
+``buy_browse_search`` uses.
+
+One API call. ``limit=1`` because the item summaries are not wanted —
+only the refinements attached to the response.
+```
+
+##### `get_item(item_id: str) -> dict[str, Any]`
+
+```
+Fetch a single item by its Browse API item ID.
+```
+
+##### `item_aspects(item_id: str) -> dict[str, list[str]]`
+
+```
+Item specifics for one listing, as ``{aspect name: [values]}``.
+
+``item_summary/search`` carries no item specifics at all, so an aspect
+the search constrained server-side cannot be re-checked against a search
+result -- this call is the only way to see what a listing actually
+claims. One API call per item, hence the caller-side budget in
+watch_searches.
+
+eBay repeats an aspect name once per value rather than nesting them, so
+values accumulate under the name.
+```
+
+##### `get_item_by_legacy_id(legacy_item_id: str) -> dict[str, Any]`
+
+```
+Fetch a single item by its legacy listing ID.
+```
+
+---
+
+### `shoebox.clients.ebay.client`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/client.py)
+
+#### `class EbayClient`
+
+```
+One object per eBay seller account, holding a sub-client per eBay API.
+
+This is a composition root, not a place for behavior: each attribute wraps
+one API (``inventory``, ``marketing``, ``stores``, ``browse``,
+``fulfillment``, ``analytics``, ``negotiation``, and the XML ``trading``
+API), and workflows that span several of them live in ``shoebox.services``.
+
+``api`` is the underlying ``ebay_rest`` object with its errors translated
+to ``EbayApiError``. It is an escape hatch for one-off scripts that need a
+call no sub-client wraps yet; pipelines should not use it.
+```
+
+##### `trading() -> TradingClient`
+
+```
+Trading API (XML) client, built on first use.
+
+Lazy because it needs its own Auth'n'Auth token file and most
+pipelines are REST-only; they should not fail for want of it.
+```
+
+---
+
+### `shoebox.clients.ebay.errors`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/errors.py)
+
+Error types for the eBay clients, and the eBay error ids they react to.
+
+```
+REST calls made through the session's :class:`~.session.RestApi` raise
+:class:`EbayApiError` rather than the SDK's own ``ebay_rest.Error``, with eBay's
+``errorId`` parsed out so callers branch on a number instead of a string.
+```
+
+#### `class EbayClientError(RuntimeError)`
+
+```
+The client was misused, or eBay answered with a shape it cannot act on.
+
+Distinct from :class:`EbayApiError`: no call failed, the code path just
+cannot continue (two offers for one SKU, a publish response with no offer
+id, an unknown ``existing_offer_action``).
+```
+
+#### `class EbayApiError(RuntimeError)`
+
+```
+An eBay REST call failed.
+
+``error_id`` is eBay's own ``errorId`` from the first entry of the
+response's ``errors`` array, or ``None`` when the failure happened before
+eBay answered (a token problem inside the SDK, a bad parameter). ``number``
+and ``reason`` are the SDK's classification; ``errors`` is the full array.
+```
+
+##### `classmethod from_rest_error(e: Any) -> EbayApiError`
+
+```
+Build from an ``ebay_rest.Error`` (duck-typed: ``number``/``reason``/``detail``).
+```
+
+#### `class TradingQuotaExceeded(RuntimeError)`
+
+```
+eBay's daily call allowance for this Trading call is used up.
+
+Distinct from an ordinary failure because waiting is the only remedy: no
+amount of retrying, backing off, or reducing concurrency helps until the
+allowance resets at midnight Pacific.
+```
+
+---
+
+### `shoebox.clients.ebay.fulfillment`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/fulfillment.py)
+
+#### `date_queue(start_date: datetime, end_date: datetime, chunksize_days: int=85) -> list[tuple[datetime, datetime]]`
+
+```
+Returns half-open ranges [start, end) that fully cover [start_date, end_date)
+without gaps or overlaps.
+```
+
+#### `class FulfillmentClient`
+
+---
+
+### `shoebox.clients.ebay.inventory`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/inventory.py)
+
+Sell Inventory API: inventory items, offers, and publishing.
+
+```
+Every ``sell_inventory_*`` call in the codebase goes through here, so two eBay
+quirks are handled in this module and nowhere else:
+
+* errorId 25001 ("Core Inventory Service internal error", HTTP 500) is
+  transient. The idempotent calls (item and group upserts, offer updates,
+  publishes) retry it with linear backoff. Creates, deletes (offers and
+  inventory items) and withdrawals do not: a replay of one of those could double up or hide a real failure.
+* ``getOffers`` answers 404 / errorId 25713 ("This Offer is not available")
+  for a SKU that has no offer yet. That is the normal state of a brand-new
+  listing, so :meth:`InventoryClient.get_offers` returns an empty list.
+
+ebay_rest spells ids as ``offer_id`` on some responses and ``offerId`` on
+others (likewise ``listing_id`` / ``listingId``). :func:`offer_id_of` and
+:func:`listing_id_of` absorb that once so callers stop hedging.
+```
+
+#### `offer_id_of(response: Any) -> str | None`
+
+```
+The offer id in a createOffer / getOffers response, whichever spelling eBay used.
+```
+
+#### `listing_id_of(response: Any) -> str | None`
+
+```
+The listing id in a publishOffer response, whichever spelling eBay used.
+```
+
+#### `class InventoryClient`
+
+##### `get_bulk_inventory_items(skus: list[str]) -> list[InventoryItem]`
+
+```
+Fetch many items by SKU, 25 per request (eBay's bulkGetInventoryItem cap).
+```
+
+##### `upsert_inventory_item(sku: str, body: dict[str, Any]) -> Any`
+
+```
+createOrReplaceInventoryItem: a full PUT of the item. Retries 25001.
+```
+
+##### `delete_inventory_item(sku: str) -> None`
+
+```
+deleteInventoryItem: removes the item *and* everything hanging off the SKU.
+
+eBay deletes every offer on the SKU and ends any live single-variation
+listing built from it, so this is the Inventory API's "end listing".
+```
+
+##### `upsert_inventory_item_group(group_key: str, body: dict[str, Any]) -> Any`
+
+```
+createOrReplaceInventoryItemGroup for a multi-variation listing. Retries 25001.
+```
+
+##### `get_offers(sku: str) -> list[Offer]`
+
+```
+All offers on a SKU. Empty when eBay reports the SKU has none (25713).
+```
+
+##### `find_offer(sku: str) -> Offer | None`
+
+```
+The single offer on a SKU, or ``None`` when there is none.
+
+Single-card listings carry exactly one offer per SKU; more than one is
+a state this codebase never creates, so it is raised rather than
+silently picking the first.
+```
+
+##### `create_offer(body: dict[str, Any]) -> dict[str, Any]`
+
+```
+createOffer. Returns eBay's response; read the id with :func:`offer_id_of`.
+```
+
+##### `update_offer(offer_id: str, body: dict[str, Any]) -> None`
+
+```
+updateOffer: a full PUT, every required field must be in ``body``. Retries 25001.
+```
+
+##### `withdraw_offer(offer_id: str) -> None`
+
+```
+End the live listing behind an offer without deleting the offer.
+```
+
+##### `publish_offer(offer_id: str) -> dict[str, Any]`
+
+```
+publishOffer. Returns eBay's response; read the id with :func:`listing_id_of`. Retries 25001.
+```
+
+##### `publish_offer_by_group(group_key: str, *, marketplace_id: str=DEFAULT_MARKETPLACE_ID) -> dict[str, Any]`
+
+```
+publishOfferByInventoryItemGroup: one variation listing for the whole group. Retries 25001.
+```
+
+---
+
+### `shoebox.clients.ebay.marketing`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/marketing.py)
+
+Sell Marketing API: promoted-listings ads, campaigns, and item promotions.
+
+```
+Every ``sell_marketing_*`` call in the codebase goes through this client so the
+retry/error-code handling for promotions lives in one place.
+```
+
+#### `class MarketingClient`
+
+##### `get_campaigns(*, status: str | None=None) -> list[dict[str, Any]]`
+
+```
+Return promoted-listings campaign records.
+
+Pass ``status`` (e.g. "RUNNING") to filter on ``campaign_status``.
+```
+
+##### `get_ads(campaign_id: str) -> list[dict[str, Any]]`
+
+```
+Return the ad records belonging to a campaign.
+```
+
+##### `get_campaign_ads(*, status: str | None=RUNNING_CAMPAIGN_STATUS) -> list[dict[str, Any]]`
+
+```
+Return every ad across campaigns, flattened with its campaign context.
+
+Each row carries campaign_id / campaign_name / campaign_status alongside
+the ad fields, which is what the relist pipeline joins on listing_id.
+Defaults to running campaigns only.
+```
+
+##### `delete_ad(*, campaign_id: str, ad_id: str) -> Any`
+
+```
+Delete a single ad from a campaign.
+
+Raises on failure; callers that treat removal as best-effort (such as the
+relist flow) are responsible for swallowing the error.
+```
+
+##### `promote_by_inventory_reference(*, sku: str, rate: int, campaign_id: str | None=None, max_tries: int=2, sleep_s: int=10) -> None`
+
+```
+Promote a newly published listing by its inventory reference (SKU).
+```
+
+##### `promote_by_listing_id(*, listing_id: str, rate: int, campaign_id: str | None=None, max_tries: int=2, sleep_s: int=10) -> None`
+
+```
+Promote a listing by its listing ID (used after a variation publish).
+```
+
+##### `create_ads_by_inventory_reference(*, sku: str, rate: int, campaign_id: str | None=None) -> Any`
+
+```
+Create ads for every listing under an inventory reference (SKU).
+
+Raises on failure; the relist flow treats promotion as best-effort and
+handles the error itself.
+```
+
+##### `create_item_promotion(body: dict[str, Any]) -> Any`
+
+```
+Create an item promotion from a fully-formed request body.
+```
+
+##### `create_volume_discount_promotion(*, listing_id: str, name: str, discount_tiers: list[dict[int, int]], end_date: str | None=None, max_tries: int=10, marketplace_id: str=DEFAULT_MARKETPLACE_ID) -> dict[str, Any]`
+
+```
+Create a VOLUME_DISCOUNT item promotion for listing_id.
+
+discount_tiers: list of single-entry dicts mapping min_quantity → pct_off_order.
+    e.g. [{2: 15}, {3: 20}, {4: 25}]
+A base rule of {1: 0} is automatically inserted when not provided.
+
+A freshly published listing is not immediately visible to the marketing
+API (error 38227), so this retries with backoff and pushes the start date
+forward on each attempt.
+```
+
+---
+
+### `shoebox.clients.ebay.negotiation`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/negotiation.py)
+
+#### `class NegotiationClient`
+
+##### `send_offer(offer: NegotiationOffer) -> dict`
+
+```
+Send a discount offer to all buyers interested in the listing.
+
+Returns the raw SendOfferToInterestedBuyersResponse dict
+({"offers": [...], "warnings": [...]}).
+```
+
+---
+
+### `shoebox.clients.ebay.session`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/session.py)
+
+Shared plumbing for the eBay REST sub-clients.
+
+```
+``build_session`` reads the app settings, constructs the ``ebay_rest`` SDK
+object, and hands back the :class:`EbaySession` every sub-client shares. The
+SDK object is wrapped in :class:`RestApi` so that every failure surfaces as
+:class:`~.errors.EbayApiError` instead of ``ebay_rest.Error``.
+
+The Trading API client is deliberately *not* part of the session: it needs a
+separate Auth'n'Auth token and most pipelines never touch it, so
+``EbayClient`` builds it lazily on first use.
+```
+
+#### `rest_config_file(settings: Settings | None=None) -> Path`
+
+```
+Path to ``ebay_rest.json``: ``EBAY_REST_CONFIG_PATH`` if set, else ``ebay.path``.
+```
+
+#### `class RestApi`
+
+```
+``ebay_rest.API`` with its errors translated to :class:`EbayApiError`.
+
+Attribute access is forwarded to the SDK object. Callables are wrapped so an
+``ebay_rest.Error`` raised on the call, or while iterating one of the SDK's
+paginating generators, comes back as ``EbayApiError``. Non-callables pass
+straight through, so the private-attribute escape hatches used by
+``StoresClient._invoke`` and ``BrowseClient.aspect_refinements`` keep
+working (their calls get translated too).
+```
+
+#### `unwrap_records(response: Iterable[Any]) -> list[dict[str, Any]]`
+
+```
+Collect the ``record`` entries from an ``ebay_rest`` paginating response.
+
+The SDK yields data items as ``{"record": ...}`` interleaved with control
+entries (``{"total": n}``, ``{"warnings": ...}``); only the records are data.
+```
+
+#### `class EbaySession`
+
+**Fields**
+
+```
+api: RestApi
+settings: Settings
+```
+
+---
+
+### `shoebox.clients.ebay.stores`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/stores.py)
+
+Sell Stores API: the eBay Store category tree.
+
+```
+Replaces the Trading-API (XML) implementation that previously lived in the
+Trading client. This uses the same OAuth token as the rest of the
+REST pipelines, so no Auth'n'Auth token is involved.
+
+Requires the ``sell.stores`` OAuth scope on a token from the authorization
+code grant flow. A token without it fails with HTTP 403 / errorId 1100 /
+domain ACCESS; scopes are fixed at consent time, so the user token has to be
+re-minted after adding the scope (see docs/setup.md and
+scripts/refresh_ebay_token.py).
+
+Note the calls here bypass the generated ``sell_stores_*`` wrappers: in
+ebay_rest 1.1.4 those send an application token, which eBay always rejects for
+this API with the same 403/1100 — see :meth:`StoresClient._invoke`.
+
+Two shape differences from the Trading API are worth knowing:
+
+* eBay's REST endpoints act on **one category per call**, so the batch helpers
+  here loop. That makes partial failure possible — see ``stop_on_error``.
+* The mutating calls are asynchronous. eBay returns the task URI in the
+  ``Location`` response header rather than the body, and the swagger-generated
+  client in ``ebay_rest`` surfaces neither, so there is no taskId to hold onto.
+  Use :meth:`StoresClient.get_store_tasks` to see recent task outcomes, and
+  re-read :meth:`StoresClient.get_store_categories` to pick up newly assigned
+  IDs.
+```
+
+#### `parse_store_categories(nodes: Any) -> list[dict[str, Any]]`
+
+```
+Convert StoreCategoryType nodes into a nested list of plain dicts.
+
+Shape: {"category_id", "name", "order", "level", "children"}. eBay nests
+subcategories under ``children_categories``.
+```
+
+#### `flatten_store_categories(categories: Iterable[dict[str, Any]], *, parent_id: str | None=None, path: tuple[str, ...]=()) -> list[dict[str, Any]]`
+
+```
+Flatten the nested tree from ``get_store_categories`` depth-first.
+
+Each entry gains ``parent_id`` and ``path`` (names from the root). Useful
+when reorganizing: deleting a parent takes its children with it, so reverse
+this list to process deepest-first.
+```
+
+#### `class StoresClient`
+
+##### `get_store() -> dict[str, Any]`
+
+```
+Return store profile information (name, URL, description).
+```
+
+##### `get_store_categories() -> list[dict[str, Any]]`
+
+```
+Return the store's category tree, nested.
+
+Each node is {"category_id", "name", "order", "level", "children"}.
+Pass the result to `flatten_store_categories` for a flat view.
+```
+
+##### `get_store_task(task_id: str) -> dict[str, Any]`
+
+```
+Return the status of a single async store task.
+```
+
+##### `get_store_tasks() -> list[dict[str, Any]]`
+
+```
+Return the status of recent async store tasks.
+
+eBay marks every task COMPLETED or FAILED once it reaches 24 hours.
+Since the client discards the taskId from mutating calls, this is how
+you confirm a restructure actually landed.
+```
+
+##### `get_failed_store_tasks() -> list[dict[str, Any]]`
+
+```
+Return only the recent store tasks that failed.
+```
+
+##### `add_store_category(name: str, *, parent_category_id: str | int | None=None, listing_destination_category_id: str | int | None=None) -> None`
+
+```
+Add one store category.
+
+Omit ``parent_category_id`` to add at the top level. eBay assigns the
+new category ID asynchronously — re-read `get_store_categories` to pick
+it up. ``listing_destination_category_id`` receives any listings the
+change displaces.
+```
+
+##### `delete_store_category(category_id: str | int, *, listing_destination_category_id: str | int | None=None) -> None`
+
+```
+Delete one store category, and its subcategories with it.
+
+Pass ``listing_destination_category_id`` to say where displaced listings
+should go.
+```
+
+##### `move_store_category(category_id: str | int, *, parent_category_id: str | int | None=None, listing_destination_category_id: str | int | None=None) -> None`
+
+```
+Move a category under a new parent. Omit the parent to promote it to the
+top level.
+```
+
+##### `rename_store_category(category_id: str | int, name: str) -> None`
+
+```
+Rename one store category.
+```
+
+##### `add_store_categories(categories: Sequence[str | Mapping[str, Any]], *, parent_category_id: str | int | None=None, listing_destination_category_id: str | int | None=None, stop_on_error: bool=True) -> list[dict[str, Any]]`
+
+```
+Add several categories under the same parent, one call each.
+
+Accepts plain names, or dicts with "name" and an optional
+"parent_category_id" that overrides the shared parent.
+```
+
+##### `delete_store_categories(category_ids: Sequence[str | int], *, listing_destination_category_id: str | int | None=None, stop_on_error: bool=True) -> list[dict[str, Any]]`
+
+```
+Delete several categories, one call each.
+
+Deleting a parent removes its children, so a later ID in the list may
+already be gone by the time it is reached. Pass ``stop_on_error=False``
+to push through those and collect the failures.
+```
+
+##### `move_store_categories(category_ids: Sequence[str | int], *, parent_category_id: str | int | None=None, listing_destination_category_id: str | int | None=None, stop_on_error: bool=True) -> list[dict[str, Any]]`
+
+```
+Move several categories under the same parent, one call each.
+```
+
+##### `rename_store_categories(renames: Mapping[str | int, str], *, stop_on_error: bool=True) -> list[dict[str, Any]]`
+
+```
+Rename categories from a {category_id: new_name} mapping.
+```
+
+---
+
+### `shoebox.clients.ebay.trading`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/ebay/trading.py)
+
+#### `ensure_list(x: Any) -> list[Any]`
+
+```
+Normalize a value that may be list/dict/str/None into a list.
+```
+
+#### `dig(d: Any, path: Iterable[PathElem], default: Any=None) -> Any`
+
+```
+Safe dict traversal helper.
+
+- If element is a string: move into d[element]
+- If element is (key, default): move into d.get(key, default)
+
+Returns `default` if traversal fails.
+```
+
+#### `class TradingClient`
+
+```
+Lightweight eBay Trading API (XML) client.
+
+Covers the seller workflows that have no Sell REST equivalent: listing
+sweeps with item specifics (GetItem), active/scheduled lists
+(GetMyeBaySelling), the account's buyer-side watch list (GetMyeBayBuying),
+ending listings (EndItem), and revising listings that were not created
+through the Inventory API (ReviseFixedPriceItem).
+
+Authenticates with an Auth'n'Auth user token read from ``token_path``
+(``{"token": "..."}``). Uses xmltodict for response parsing so downstream
+code works with dictionaries, not ElementTree nodes.
+```
+
+##### `get_item_details(item_id: str, *, site_id: str='0', compatibility_level: str='1259') -> dict[str, Any]`
+
+```
+Fetch full listing details + item specifics using Trading API GetItem.
+Requires a Trading API user token (Auth'n'Auth) with access to the seller account.
+```
+
+##### `get_item_details_bulk(item_ids: list[str], *, max_workers: int=8, site_id: str='0', compatibility_level: str='1259', on_progress: Callable[[int, int], None] | None=None) -> tuple[list[dict[str, Any]], dict[str, str]]`
+
+```
+Fetch details for many listings at once, concurrently.
+
+There is no batch equivalent of GetItem for this data: GetSellerList
+pages 200 listings per call but returns no ItemSpecifics at all, and the
+Browse API's bulk `getItems` needs partner-level access. So the only
+lever is overlapping the calls -- they are almost entirely network wait.
+
+Results come back in the order the item IDs were given. A listing that
+fails is collected rather than raised, so one bad item cannot throw away
+a sweep of hundreds; callers get ``(details, {item_id: error})`` and
+decide what an acceptable failure count is.
+
+The exception is running out of daily call allowance: every remaining
+call would fail the same way, so the sweep stops there and raises
+:class:`TradingQuotaExceeded` instead of hammering the wall.
+
+``max_workers`` is capped at the connection-pool size. eBay's Trading
+limits are a daily allowance rather than a rate, so concurrency buys
+wall-clock but never additional calls -- a wide fan-out is still worth
+keeping modest.
+```
+
+##### `get_my_ebay_selling_items(list_name: str, *, sort: str, entries_per_page: int=200, page_number: int=1, max_pages: int | None=None, site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+Page through one list of GetMyeBaySelling and return its raw ``Item`` nodes.
+
+``list_name`` is the container to include (see ``MY_EBAY_SELLING_LISTS``)
+and ``sort`` its sort key. The nodes are xmltodict dicts exactly as eBay
+sent them. The ``get_*_listings`` methods flatten them to a fixed shape;
+callers that need fields outside that shape (ListingType, Variations,
+the natural-search URL) read the nodes directly.
+
+Stops at an empty page, at eBay's reported page count, or after
+``max_pages`` pages from ``page_number``.
+```
+
+##### `get_active_listings(*, entries_per_page: int=200, page_number: int=1, max_pages: int | None=None, site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+All active listings for the authenticated seller, flattened.
+
+GetMyeBaySelling ``ActiveList`` sorted by time left; one dict per
+listing with item_id, title, sku, quantity, price, and so on.
+```
+
+##### `get_scheduled_listings(*, entries_per_page: int=200, page_number: int=1, max_pages: int | None=None, site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+All listings scheduled to start later, flattened like ``get_active_listings``.
+
+GetMyeBaySelling ``ScheduledList`` sorted by start time.
+```
+
+##### `get_out_of_stock_listings(*, entries_per_page: int=200, page_number: int=1, max_pages: int | None=None, site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+Active listings where all quantity has sold (remaining = 0).
+
+These are Out-of-Stock Control listings that stay active but are hidden
+from eBay search. Same shape as ``get_active_listings`` with
+``quantity`` / ``quantity_sold`` as ints plus ``quantity_remaining``.
+```
+
+##### `get_watch_list_items(*, sort: str='EndTime', entries_per_page: int=200, page_number: int=1, max_pages: int | None=None, site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+Page through the authenticated user's watch list and return its raw ``Item`` nodes.
+
+GetMyeBayBuying ``WatchList``: the listings this account is watching as
+a *buyer*, whoever the seller is. The nodes are xmltodict dicts exactly
+as eBay sent them; ``get_watch_list`` flattens them to a fixed shape.
+
+``sort`` is an eBay ItemSortTypeCodeType value (``EndTime``,
+``EndTimeDescending``, ``CurrentPrice``, ``BidCount``, ``Title``, ...).
+Paging stops at an empty page, at eBay's reported page count, or after
+``max_pages`` pages from ``page_number``.
+```
+
+##### `get_watch_list(*, sort: str='EndTime', entries_per_page: int=200, page_number: int=1, max_pages: int | None=None, site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+Every listing on the authenticated account's watch list, flattened.
+
+One dict per listing with item_id, title, seller, price, bid_count,
+time_left, end_time, view_item_url, and so on. Sorted by end time
+(soonest first) unless ``sort`` says otherwise.
+```
+
+##### `end_listing(item_id: str, *, ending_reason: str='NotAvailable', site_id: str='0', compatibility_level: str='1259') -> dict[str, Any]`
+
+```
+End a single active listing using the Trading API EndItem call.
+
+Valid ending_reason values: NotAvailable, LostOrBroken, Incorrect,
+OtherListingError, Sold, SellToHighBidder.
+Returns a dict with item_id, end_time, and ack.
+```
+
+##### `end_listings(item_ids: list[str], *, ending_reason: str='NotAvailable', site_id: str='0', compatibility_level: str='1259') -> list[dict[str, Any]]`
+
+```
+End multiple active listings, one EndItem call per item.
+
+Returns a list of result dicts (item_id, end_time, ack) in the same
+order as item_ids. A failure on any individual item raises RuntimeError
+and stops processing; catch per-item if partial success is needed.
+```
+
+##### `revise_listing_title(item_id: str, title: str, *, site_id: str='0', compatibility_level: str='1259') -> dict[str, Any]`
+
+```
+Change the title of a fixed-price listing via Trading `ReviseFixedPriceItem`.
+
+This is the path for listings that have no SKU -- created outside the
+Sell Inventory API, which is the only way to retitle the ones that do.
+eBay rejects Trading revisions on Inventory-API listings, so callers
+should reach for this only when the inventory path doesn't apply or has
+already failed.
+```
+
+##### `revise_store_category(item_id: str, category_id: str | int, secondary_category_id: str | int | None=None, *, site_id: str='0', compatibility_level: str='1259') -> dict[str, Any]`
+
+```
+Move a listing into store categories via Trading `ReviseFixedPriceItem`.
+
+The counterpart to the Sell Inventory route, which addresses categories
+by name: Trading wants the numeric store category IDs, so callers
+resolve names to IDs from ``StoresClient.get_store_categories`` first.
+
+This is the path for listings with no SKU. eBay rejects Trading
+revisions on Inventory-API listings, so reach for it only when the
+inventory path doesn't apply.
+```
+
+##### `add_sku_to_listing(item_id: str, sku: str, *, site_id: str='0', compatibility_level: str='1259') -> dict[str, Any]`
+
+```
+Add or update the SKU on a listing via the Trading API.
+
+Uses Trading API `ReviseFixedPriceItem`, which supports revising SKU on fixed-price listings.
+Returns a small response dict (Ack, ItemID, SKU, Fees if present).
+```
+
+---
+
+### `shoebox.clients.gcs`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/gcs.py)
+
+#### `parse_gs_uri(uri: str) -> tuple[str, str]`
+
+```
+``gs://bucket/some/path`` -> ``("bucket", "some/path")``.
+
+The path may be empty (a bare bucket); surrounding slashes are dropped so
+callers can join onto it without doubling them.
+```
+
+#### `read_gs_text(uri: str, *, client: GCSClient | None=None) -> str`
+
+```
+Download one object as text. A missing object raises FileNotFoundError,
+matching what a local path would do, so callers need no GCS-specific
+error handling.
+```
+
+#### `download_gs_file(uri: str, dest: Path, *, client: GCSClient | None=None) -> Path`
+
+```
+Download one object to ``dest`` (parents created). A missing object raises
+FileNotFoundError, matching what a local path would do.
+```
+
+#### `class GCSClient`
+
+```
+Thin wrapper around google.cloud.storage.Client.
+
+- No global settings evaluated at import time.
+- Supports service-account JSON file or ADC.
+```
+
+##### `upload_bytes(*, bucket: str, object_name: str, data: bytes, content_type: str, metadata: dict[str, str] | None=None) -> str`
+
+```
+Upload in-memory bytes; returns the object's ``gs://`` URI.
+```
+
+##### `read_text(*, bucket: str, object_name: str) -> str`
+
+```
+Download one object as text; a missing object raises FileNotFoundError.
+```
+
+##### `list_names(*, bucket: str, prefix: str) -> list[str]`
+
+```
+Object names under ``prefix``, sorted.
+```
+
+---
+
+### `shoebox.clients.google_calendar`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/google_calendar.py)
+
+#### `class UpsertResult`
+
+**Fields**
+
+```
+created: bool
+event_id: str
+html_link: str | None
+```
+
+#### `class GoogleCalendarClient`
+
+---
+
+### `shoebox.clients.image_log`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/image_log.py)
+
+#### `class ImageLogPaths`
+
+```
+Local files used to avoid re-uploading and to append new upload records.
+```
+
+**Fields**
+
+```
+cache_jsonl: Path
+append_jsonl: Path
+```
+
+#### `class ImageLogClient`
+
+```
+Upload images to GCS and log net-new uploads.
+
+Features:
+- Uploads card images to settings.gcs.image_bucket
+- Maintains a local JSONL cache index to prevent re-upload
+- Writes net-new uploads to an append JSONL, which can be loaded to BigQuery
+- Retains a local mirrored copy of uploaded images under:
+    settings.paths.scans_dir / 'GCS' / <object_name>
+
+NOTE: This client does not call `make_public`. If your bucket/object is public,
+the returned blob.public_url will be usable. Otherwise, treat it as a reference.
+```
+
+##### `is_cached(*, file_path: Path, set_name: str, subset_name: str, card_number: str, parallel_variety: str | None=None, side: str | None=None) -> bool`
+
+```
+True when :meth:`upload_image` with these arguments would return an
+earlier upload instead of sending ``file_path`` (same card, side and
+file name), i.e. the file on disk is not what the listing will show.
+```
+
+##### `upload_combined_image(*, front: Path, back: Path, set_name: str, subset_name: str, card_number: str, parallel_variety: str | None=None) -> ImageLogEntry`
+
+```
+Upload a front+back composite of two scans (side ``combined``).
+
+Leaves both scans in place, so call it before uploading a scan with
+``delete_original``. The composite is named after the two scans, so a
+re-run is answered from the cache even once the scans are gone; with
+neither a cache entry nor both scans on disk it raises FileNotFoundError.
+```
+
+---
+
+### `shoebox.clients.onedrive`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/onedrive.py)
+
+Card scans from OneDrive through Microsoft Graph.
+
+```
+The workstation reads scans from the OneDrive *sync folder* on disk. The
+Cloud Run ``create-listings`` job started from the iOS app has no such folder,
+so it fetches ``SCAN_0234.jpg`` from OneDrive itself:
+
+    GET https://graph.microsoft.com/v1.0/me/drive/root:/<scans_folder>/<name>:/content
+
+Once such a scan has been uploaded, the job moves it into
+``<scans_folder>/<listed_subfolder>`` (PATCH the item's ``parentReference``),
+which is what deleting the local original does on the workstation: the scans
+folder only ever holds cards that still need listing.
+
+Auth is MSAL's device-code flow, done once on the workstation by
+``scripts/onedrive_login.py``. The resulting token cache (a refresh token) is
+kept as a local file and, for the job, as a GCS object named by
+``onedrive.token_cache_uri``. MSAL rotates refresh tokens on use, so the cache
+is written back after every token acquisition; a read-only secret mount would
+go stale, which is why it lives in GCS and not Secret Manager.
+```
+
+#### `class OneDriveError(RuntimeError)`
+
+```
+Graph returned something other than the file.
+```
+
+#### `class OneDriveAuthError(OneDriveError)`
+
+```
+No usable account/refresh token in the cache.
+```
+
+#### `class MsalTokenStore`
+
+```
+Loads and saves the MSAL ``SerializableTokenCache``.
+
+``token_cache_uri`` (gs://) wins when set; otherwise the local
+``token_cache_path``. Saving is a no-op unless MSAL reports the cache
+changed, so a plain download never rewrites the object.
+```
+
+##### `upload_local_to_uri(uri: str | None=None) -> str`
+
+```
+Copy the workstation cache to the gs:// object the job reads.
+```
+
+#### `class OneDriveClient`
+
+```
+Downloads scans by file name from ``onedrive.scans_folder`` and moves
+listed ones into its ``listed_subfolder``.
+```
+
+##### `item_url(name: str, *, subfolder: str='') -> str`
+
+```
+The driveItem itself (metadata, PATCH).
+```
+
+##### `download(name: str, dest: Path) -> Path`
+
+```
+Fetch ``<scans_folder>/<name>`` into ``dest`` (parents created).
+
+Graph answers with a redirect to a pre-authenticated download URL;
+``requests`` follows it and drops the bearer header on the way, as it
+should. A missing file is FileNotFoundError, like a local path.
+```
+
+##### `move(name: str, subfolder: str) -> str`
+
+```
+Move ``<scans_folder>/<name>`` into ``<scans_folder>/<subfolder>``,
+creating the subfolder on first use; returns the new OneDrive path.
+
+A same-named file already there is replaced (a re-run of the same
+queue). Missing source is FileNotFoundError; a token without
+``Files.ReadWrite`` surfaces as OneDriveError (HTTP 403).
+```
+
+---
+
+### `shoebox.clients.price_scraper`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/price_scraper.py)
+
+#### `class PriceScraper`
+
+---
+
+### `shoebox.clients.search_state`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/search_state.py)
+
+Local state for the saved-search watcher, plus the durable BigQuery log.
+
+```
+Modelled on ``clients/image_log.py`` (local cache for dedup + append log that
+flushes GCS → BigQuery → clear), with two deliberate differences:
+
+1. ``ImageLogClient`` rewrites its entire cache file on every single upsert.
+   That is O(n) per item and O(n²) per run, which is fine for a few hundred
+   image uploads and not fine here. This appends one line per item and compacts
+   once, at the end of a run.
+2. ``ImageLogClient`` builds ``storage.Client``/``bigquery.Client`` eagerly in
+   ``__init__``, which is why it has no test coverage. Here the cloud clients
+   are built lazily inside ``flush_append_log`` so everything else is testable
+   with nothing but a ``tmp_path``.
+
+Layout under ``<exports_dir>/jsonl/searches/``::
+
+    search_state.json          per-search last_run_at / seeded_at / status
+    <scope>_seen.jsonl         append-only SeenEntry log, last line wins
+    search_hits_append.jsonl   shared buffer -> one GCS object + one BQ load
+    .lock                      advisory guard against overlapping scheduled runs
+
+**Scope vs search name.** Run state is per *search* — intervals and seeding are
+a property of one search. The seen-cache is keyed by an opaque *scope* string
+the caller chooses; ``watch_searches`` passes the Slack channel, so several
+searches posting to one channel share a cache and a listing matching more than
+one of them alerts once. Nothing here interprets the scope beyond using it as a
+filename, and each ``SeenEntry`` still records the ``search_name`` that saw it,
+which is what makes a per-search reseed possible inside a shared file.
+```
+
+#### `class SearchRunState`
+
+```
+Bookkeeping for one search between runs.
+```
+
+**Fields**
+
+```
+last_run_at: datetime | None = None
+seeded_at: datetime | None = None
+last_status: str = 'unknown'
+last_error: str | None = None
+last_new_count: int = 0
+seed_count: int = 0
+```
+
+#### `open_search_state_store(settings: Settings | None=None) -> SearchStateStore`
+
+```
+The store ``paths.searches_state_uri`` asks for: GCS when it is set,
+``<exports_dir>/jsonl/searches/`` on local disk otherwise.
+```
+
+#### `class SearchStateStore`
+
+```
+Seen-cache, run state, and the hits append log.
+```
+
+##### `lock() -> Iterator[bool]`
+
+```
+Non-blocking exclusive lock. Yields False if another run holds it.
+
+A run posting to Slack at ~1 message/sec can outlast the scheduler's
+period. Without this, two processes would both see a search as due, both
+alert, and their state writes would clobber each other.
+```
+
+##### `limit_to_scopes(scopes: set[str]) -> None`
+
+```
+Hint which seen-cache scopes this run can touch. A no-op here; the
+GCS-backed store uses it to skip downloading caches nothing reads.
+```
+
+##### `checkpoint() -> None`
+
+```
+Make everything written so far durable.
+
+A no-op here: every write already lands on local disk. The GCS-backed
+store (``search_state_gcs``) works on a scratch copy and overrides this
+to upload it, and the watcher calls it after each search so a killed
+run loses at most the search it was in the middle of.
+```
+
+##### `mark(name: str, *, last_run_at: datetime, status: str, error: str | None=None, new_count: int=0, seeded_at: datetime | None | object=UNCHANGED, seed_count: int | None | object=UNCHANGED) -> None`
+
+```
+Record a run. ``seeded_at``/``seed_count`` keep their previous value
+unless passed; passing ``None`` explicitly *clears* them (a reseed must
+be able to forget the old seed, or a crash between clearing the cache
+and re-seeding leaves the state claiming "seeded").
+```
+
+##### `cache_was_lost(name: str, scope: str) -> bool`
+
+```
+True when a search believes it is seeded but its cache is gone.
+
+``search_state.json`` and the ``*_seen.jsonl`` caches are separate files,
+so a stray ``rm exports/jsonl/*.jsonl`` wipes the caches while leaving
+the state behind — and every listing would then look brand new. The
+seed count distinguishes that from a search that legitimately seeded
+zero matches and is now seeing its first genuine hit.
+
+Deliberately a question about the *file*, not about this search's own
+entries. Scopes are shared and the last writer to touch an item owns it,
+so a search whose entries were all re-owned by a sibling still dedups
+perfectly well against them — treating that as a loss would make it
+reseed silently and swallow the alert it should have posted.
+```
+
+##### `is_stale(search: ResolvedSearch, now: datetime) -> bool`
+
+```
+True when last_run_at is so old that alerting would be noise.
+```
+
+##### `load_seen(scope: str) -> dict[str, SeenEntry]`
+
+```
+Item id -> entry. Later lines win, so appends act as updates.
+```
+
+##### `compact_seen(scope: str, *, prune_before: datetime | None=None) -> int`
+
+```
+Rewrite the seen file to one line per item. Returns lines written.
+
+Called once at the end of a run rather than per item.
+```
+
+##### `clear_seen_for(scope: str, name: str) -> int`
+
+```
+Drop one search's entries from a shared scope. Returns lines kept.
+
+A reseed must not blank the whole file: siblings sharing the channel
+would then re-alert everything they already reported. Entries carry the
+search that recorded them, so only that search's are removed.
+```
+
+##### `flush_append_log(*, gcs=None, bq=None, clear_after_success: bool=True) -> str | None`
+
+```
+Ship buffered hits to GCS then BigQuery. Returns the object name.
+
+Returns None when there is nothing buffered. The buffer survives a
+failure on purpose: it retries on the next run, and because dedup runs
+off the local seen cache, a BigQuery outage can never cause a duplicate
+or a missed Slack alert.
+```
+
+---
+
+### `shoebox.clients.search_state_gcs`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/search_state_gcs.py)
+
+GCS-backed state for the saved-search watcher, so it can run in Cloud Run.
+
+```
+A Cloud Run execution starts on an empty filesystem and loses it when it ends,
+so the files ``SearchStateStore`` keeps under ``exports/jsonl/searches/`` have
+to live somewhere else between runs. Rather than teach every method to talk to
+GCS, this store keeps the local implementation unchanged and works on a
+scratch copy:
+
+1. ``lock()`` takes a lock *object* in GCS, then downloads every state file
+   under the prefix into a private temp directory.
+2. The run reads and appends to those local files exactly as it would on a
+   workstation -- the append-then-compact design, the dedup, the seed logic
+   are all the same code.
+3. ``checkpoint()`` (after each search) and the end of ``lock()`` upload the
+   files whose contents changed and delete the objects whose file is gone
+   (the hits buffer after a successful flush).
+
+**Why not append in GCS directly.** GCS objects are immutable; an "append" is a
+rewrite of the whole object. Per-item rewrites would be one upload per Slack
+message for no gain over rewriting once per search.
+
+**What a crash costs.** On a workstation, state is committed per item, so a
+crash costs at most one duplicate alert. Here it is committed per search: a
+run killed mid-search re-alerts that search's already-posted listings (at most
+``max_notify``) on the next run. Still a duplicate, never a miss -- the
+Slack-before-state rule holds, because nothing is uploaded that Slack has not
+already seen. A SIGTERM (Cloud Run's timeout signal) is turned into a normal
+exit so the final upload and the lock release still happen.
+
+**The lock.** Created with ``ifGenerationMatch=0``, which GCS guarantees only
+one writer can win, and released with a match on the generation this run
+created, so a run can never delete a lock someone else took. A lock older than
+``stale_after`` belongs to a run that died without releasing it (SIGKILL,
+lost instance) and is broken. ``stale_after`` must exceed the job's timeout in
+``deploy/jobs.yaml``, or a slow-but-alive run could have its lock stolen.
+
+Any host whose ``paths.searches_state_uri`` names the same prefix shares this
+state and this lock, so a workstation (or the Slack bot's ``watch-searches
+--reseed``) and the cloud job can never both run at once or diverge.
+```
+
+#### `class GCSSearchStateStore(SearchStateStore)`
+
+```
+``SearchStateStore`` whose files are mirrored to ``gs://bucket/prefix``.
+```
+
+##### `limit_to_scopes(scopes: set[str]) -> None`
+
+```
+Download only these seen-caches (plus run state and the hits buffer).
+
+Cloud Run's filesystem lives in the container's memory, so every byte
+pulled counts against the job's memory limit. A seen-cache no current
+search posts to -- a renamed channel, or the per-search caches from
+before dedup became per-channel -- is dead weight that can grow into
+hundreds of MB and OOM the run. Skipped objects stay in GCS untouched.
+```
+
+##### `pull() -> int`
+
+```
+Replace the scratch directory's contents with what GCS holds.
+
+Returns the number of files downloaded.
+```
+
+##### `push() -> tuple[int, int]`
+
+```
+Upload changed files and delete objects whose file is gone.
+
+Returns ``(uploaded, deleted)``. Raises on a GCS failure; whatever did
+upload is remembered, so a retry only sends what is still pending.
+```
+
+##### `checkpoint() -> None`
+
+```
+Upload now. A failure is logged, not raised: the end of the run
+uploads again, and that one is allowed to fail loudly.
+```
+
+##### `lock() -> Iterator[bool]`
+
+```
+Take the GCS lock, pull, yield, push, release.
+
+Yields False without pulling when another run holds the lock.
+```
+
+---
+
+### `shoebox.clients.tcdb`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/tcdb/__init__.py)
+
+Trading Card Database (tcdb.com) automation.
+
+---
+
+### `shoebox.clients.tcdb.browser`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/tcdb/browser.py)
+
+Real-browser session against tcdb.com.
+
+```
+TCDB sits behind Cloudflare, so plain HTTP gets an interstitial. We drive a
+visible Chrome via undetected-chromedriver, which clears the managed challenge
+on its own, and keep a persistent Chrome profile so the Cloudflare clearance
+and the TCDB login cookie survive between runs.
+
+Credentials are never handled here: ``ensure_logged_in`` opens the login page
+and waits for you to sign in by hand in the browser window.
+
+Each site action is a small method on ``TcdbBrowser`` (``advanced_search``,
+``open`` ...). To automate a new TCDB page, add a parser to ``search.py`` (or a
+sibling module) and a one-method wrapper here that navigates and hands the HTML
+to the parser.
+```
+
+#### `class TcdbLoginTimeout(TimeoutError)`
+
+```
+Raised when the user does not finish logging in within the allowed time.
+```
+
+#### `class TcdbBrowser`
+
+```
+undetected-chromedriver session with a persistent profile.
+
+Usable as a context manager::
+
+    with TcdbBrowser(profile_dir="data/tcdb_chrome_profile") as tcdb:
+        tcdb.ensure_logged_in()
+        page = tcdb.advanced_search(AdvancedSearchQuery(name="Bonds", card_number="25"))
+```
+
+##### `get(url: str) -> str`
+
+```
+Navigate, wait out any Cloudflare interstitial, return the page HTML.
+```
+
+##### `open(url: str) -> None`
+
+```
+Show a page in the browser window without parsing it (e.g. a card page).
+```
+
+##### `ensure_logged_in(*, timeout_s: float=300, prompt: Callable[[str], None]=print, poll_s: float=1.0) -> bool`
+
+```
+Make sure this browser session is signed in to TCDB.
+
+Returns True if already signed in (persistent profile). Otherwise shows the
+login page, asks the user via ``prompt`` to sign in by hand, and polls until
+the header shows a signed-in state. Raises ``TcdbLoginTimeout`` if that does
+not happen within ``timeout_s``.
+```
+
+##### `advanced_search(query: AdvancedSearchQuery) -> TcdbSearchPage`
+
+```
+Run one advanced search and leave the results showing in the browser.
+```
+
+##### `current_member() -> str | None`
+
+```
+Username of the signed-in account, read from the nav's profile link.
+
+Every collection URL needs it, and hardcoding it would tie the tool to
+one account.
+```
+
+##### `wantlist_page(member: str, *, category: str='Baseball', collection_id: int=1, page_index: int=1, records: int | None=None) -> WantlistPage`
+
+```
+One page (100 rows) of a member's want list.
+```
+
+##### `iter_wantlist(member: str, *, category: str='Baseball', collection_id: int=1, max_pages: int | None=None) -> Iterator[WantlistPage]`
+
+```
+Yield every page of a want list, following the pager.
+
+Stops at ``max_pages``, at the last page TCDB reports, or as soon as a
+page comes back empty (so a wrong page count cannot spin forever).
+```
+
+##### `card_team(card_url: str) -> str`
+
+```
+Team named on a card's page. One page load per card, so opt in.
+```
+
+##### `add_to_collection(card_url: str, *, allow_duplicate: bool=False, timeout_s: float=20, poll_s: float=0.25) -> CollectionAddResult`
+
+```
+Open a ViewCard.cfm page and add the card to the collection it shows.
+
+Uses the page's own controls rather than calling TCDB's endpoints
+directly: waits for the ``#colDiv`` collection box to load, clicks
+``#quickAddBtn`` (or ``.addAnotherBtn`` for an extra copy), and watches
+the ``CollectionAdd*_ajax.cfm`` request the click makes. A card that is
+already in the collection is skipped unless ``allow_duplicate``.
+```
+
+---
+
+### `shoebox.clients.tcdb.card`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/tcdb/card.py)
+
+Pure helpers for adding cards to a TCDB collection: parse a card written as a TCDB title, pick its row out of a search, read a ViewCard.cfm page and the collection box it loads. No browser here, so they are unit-testable.
+
+#### `parse_card_spec(text: str) -> CardSpec`
+
+```
+Split ``2009 Bowman Chrome - X-Fractors #171 Matt Cain`` into its parts.
+```
+
+#### `is_card_url(text: str) -> bool`
+
+```
+True for a tcdb.com ViewCard.cfm link (added directly, no search).
+```
+
+#### `normalize_title(title: str) -> str`
+
+```
+Case-, accent-, apostrophe- and whitespace-insensitive form for comparing titles.
+```
+
+#### `match_card(page: TcdbSearchPage, spec: CardSpec) -> list[TcdbSearchResult]`
+
+```
+Results whose title is exactly the spec's title (normalized).
+
+With no name in the spec, any player on that year/set/number matches.
+```
+
+#### `parse_card_page(html: str, url: str='', base_url: str=TCDB_BASE_URL) -> TcdbCardPage`
+
+```
+Title and ids of a ViewCard.cfm page (from its canonical link and og:title).
+```
+
+#### `parse_collection_widget(html: str) -> CollectionWidget`
+
+```
+Read the controls in the ``#colDiv`` box (pass its inner HTML).
+```
+
+---
+
+### `shoebox.clients.tcdb.collection`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/tcdb/collection.py)
+
+Pure parsing for the collection views on tcdb.com, including the want list.
+
+```
+The want list is not a page of its own: it is the member's collection view
+filtered to want status, ``ViewCollectionMode.cfm?...&Filter=W``. (``Wantlists.cfm``
+is a different thing entirely -- other members' want lists.) Rows come 100 to a
+page with a ``PageIndex`` link set below them.
+
+No browser here, so these are unit-testable against saved HTML.
+```
+
+#### `split_set_name(year: str, set_part: str) -> tuple[str, str]`
+
+```
+Master set name (with year) and subset name.
+
+``2026 Topps Chrome - 1991 Topps Anniversary`` -> ``2026 Topps Chrome`` and
+``1991 Topps Anniversary``. A set with no subset gets ``Base``.
+```
+
+#### `split_number_and_player(rest: str, subset: str='') -> tuple[str, str]`
+
+```
+Split "U-14 Barry Bonds" into its card number and player.
+
+The number is one token, extended only two ways:
+
+- an alpha-only code takes the digits after it ("PP 3"), and digits take a
+  code that abbreviates the subset ("#2 DS" under "Diamond Standouts");
+- a "/" joins two numbers on a shared card ("24-A / 24-B", "131 / 292",
+  which carry a player each: "Barry Bonds / Neil Allen").
+
+Taking no more than that keeps league-leader cards intact, where what
+follows the number is a description rather than a name: "#106 NL ERA
+Leaders (...)" is number "106".
+```
+
+#### `parse_title_fields(title: str) -> dict[str, str]`
+
+```
+Pull year, set, subset, card number and player out of a TCDB row title.
+
+Returns blanks rather than raising: a title TCDB writes unusually should
+cost one row's detail, not the export.
+```
+
+#### `parse_card_team(html: str) -> str`
+
+```
+Team from a ViewCard.cfm page's heading (``h4.site`` -> ``Team.cfm`` link).
+```
+
+#### `wantlist_url(member: str, *, category: str='Baseball', collection_id: int=1, page_index: int=1, records: int | None=None, base_url: str=TCDB_BASE_URL) -> str`
+
+```
+URL of one page of a member's want list.
+```
+
+#### `parse_member(html: str) -> str | None`
+
+```
+The signed-in member's username, from the ``/Profile.cfm/<member>`` nav link.
+
+Saves hardcoding the account: every collection URL needs the member name.
+```
+
+#### `parse_wantlist_page(html: str, *, query_url: str='', category: str='', page_index: int=1, base_url: str=TCDB_BASE_URL) -> WantlistPage`
+
+```
+Parse one ``Filter=W`` collection page.
+
+Each card is a ``tr.collection_row``::
+
+    <td><a href="/CollectionEdit.cfm?SetID=..&CardID=..&ItemID=..">
+        <span class="badge" title="Quantity">1</span></a></td>
+    ...
+    <td><i class="fa-heart-circle-plus" title="Wantlist"></i></td>
+    ...
+    <td><a href="/ViewCard.cfm/sid/../cid/../slug">1986 Broder #28 Barry Bonds</a></td>
+    <td>$3.50</td>
+
+Cells are found by what they contain rather than by position, so an extra
+column on TCDB's side does not break the parse.
+```
+
+---
+
+### `shoebox.clients.tcdb.search`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/tcdb/search.py)
+
+Pure parsing helpers for TCDB pages. No browser here, so they are unit-testable against saved HTML.
+
+#### `is_challenge_page(title: str | None, html: str | None=None) -> bool`
+
+```
+Cloudflare's interstitial ("Just a moment...") before the real page loads.
+```
+
+#### `is_logged_in(html: str) -> bool`
+
+```
+Decide from the page header whether TCDB considers this browser logged in.
+
+Logged-out pages carry a ``Login`` nav link to ``/Login.cfm``; logged-in pages
+replace it with account links (and a logout link). A logout link wins if both
+somehow appear.
+```
+
+#### `parse_results(html: str, query_url: str='', base_url: str=TCDB_BASE_URL) -> TcdbSearchPage`
+
+```
+Parse a ViewResults.cfm page into structured rows.
+
+Row layout (one <tr> per card)::
+
+    <td>1.</td>
+    <td><a href="/ViewCard.cfm/sid/…/cid/…/slug"><img src="/Images/Thumbs/…"></a></td>
+    <td><a href="/ViewCard.cfm/…">1994 Upper Deck Fun Pack #25 Barry Bonds</a>
+        <br><span class="text-muted">optional note</span></td>
+```
+
+---
+
+### `shoebox.clients.topps_release_scraper`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/clients/topps_release_scraper.py)
+
+#### `class ToppsReleaseScraper`
+
+```
+Scrape upcoming product releases from topps.com/release-calendar.
+
+The page is JS-rendered behind Cloudflare, so we use undetected-chromedriver
+to load the rendered DOM, then BeautifulSoup to parse release entries.
+```
+
+---

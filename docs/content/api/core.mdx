@@ -1,0 +1,342 @@
+# Core
+
+Settings, the CLI entrypoint, the TableAsset loader and the Streamlit UI.
+
+- [`shoebox.settings`](#shoeboxsettings)
+- [`shoebox.cli`](#shoeboxcli)
+- [`shoebox.storage.table_asset`](#shoeboxstoragetable_asset)
+- [`shoebox.ui.app`](#shoeboxuiapp)
+- [`shoebox.ui.helpers`](#shoeboxuihelpers)
+
+### `shoebox.settings`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/settings.py)
+
+Application settings.
+
+```
+Key goals:
+- No import-time side effects (no filesystem reads/dir creation at import).
+- Allow config path override via env var.
+- Provide a cached settings accessor for the rest of the codebase.
+
+Environment variables:
+- SHOEBOX_CONFIG_PATH: path to app.yaml (defaults to configs/app.yaml)
+```
+
+#### `class GCPSettings(BaseModel)`
+
+**Fields**
+
+```
+project_id: str
+service_account_json: str
+```
+
+#### `class BigQuerySettings(BaseModel)`
+
+**Fields**
+
+```
+checklist_dataset: str
+ebay_dataset: str
+images_dataset: str
+```
+
+#### `class eBaySettings(BaseModel)`
+
+**Fields**
+
+```
+application: str
+user: str
+header: str
+path: str
+campaign_id: str
+trading_token_path: str = 'configs/ebay_legacy.json'
+```
+
+#### `class GCSSettings(BaseModel)`
+
+**Fields**
+
+```
+image_bucket: str
+metadata_bucket: str
+ebay_bucket: str
+image_log_bucket: str
+```
+
+#### `class PathSettings(BaseModel)`
+
+**Fields**
+
+```
+data_dir: str
+query_dir: str
+exports_dir: str
+scans_dir: str
+set_images_dir: str
+tools_dir: str
+scan_prefix: str = 'SCAN_'
+scan_number_padding: int = 4
+scan_extension: str = '.jpg'
+searches_file: str = 'configs/searches.yaml'
+searches_git_pull: bool = False
+searches_state_uri: str | None = None
+queue_uri: str | None = None
+```
+
+#### `class SlackSettings(BaseModel)`
+
+**Fields**
+
+```
+bot_token: str
+app_token: str
+notify_channel: str
+pricing_channel: str
+command_channel: str
+search_channel: str = ''
+offers_channel: str = ''
+allowed_user_ids: list[str] = []
+```
+
+#### `class GoogleCalendarSettings(BaseModel)`
+
+**Fields**
+
+```
+calendar_id: str
+```
+
+#### `class StorePolicySettings(BaseModel)`
+
+```
+eBay business policy IDs (Account → Business policies).
+```
+
+**Fields**
+
+```
+payment_policy_id: str = 'REPLACE_PAYMENT_POLICY_ID'
+return_policy_id: str = 'REPLACE_RETURN_POLICY_ID'
+fulfillment_policy_id_low: str = 'REPLACE_FULFILLMENT_POLICY_ID_LOW'
+fulfillment_policy_id_high: str = 'REPLACE_FULFILLMENT_POLICY_ID_HIGH'
+fulfillment_policy_id_variation: str = 'REPLACE_FULFILLMENT_POLICY_ID_VARIATION'
+```
+
+#### `class StoreAdCampaignSettings(BaseModel)`
+
+```
+Promoted-listings campaign IDs and simple routing rules.
+
+Resolution order in ``utils.ad_campaign.get_ad_campaign``:
+by_sport → by_set → current-year default → default.
+```
+
+**Fields**
+
+```
+default: str = 'REPLACE_CAMPAIGN_ID'
+current_year: str | None = None
+current_year_default: str | None = None
+by_sport: dict[str, str] = Field(default_factory=dict)
+by_set: dict[str, str] = Field(default_factory=dict)
+```
+
+#### `class StoreSettings(BaseModel)`
+
+```
+Store-specific identity and eBay account values used when building
+listings. All fields have placeholder defaults so an existing config
+without a ``store`` section still validates; set real values before
+creating live listings.
+```
+
+**Fields**
+
+```
+name: str = 'Your Store'
+merchant_location_key: str = 'REPLACE_MERCHANT_LOCATION_KEY'
+category_id: str = '261328'
+condition: str = 'USED_VERY_GOOD'
+condition_descriptor: str = 'NEAR_MINT_OR_BETTER'
+offer_message: str = 'Enjoy the discount on this card! Valid for the next 24 hours. Thank you!'
+fulfillment_low_max_price: float = 19.99
+policies: StorePolicySettings = Field(default_factory=StorePolicySettings)
+ad_campaigns: StoreAdCampaignSettings = Field(default_factory=StoreAdCampaignSettings)
+```
+
+#### `class TcdbSettings(BaseModel)`
+
+```
+Trading Card Database (tcdb.com) browser automation.
+
+All fields default, so an existing config without a ``tcdb`` section still
+validates.
+```
+
+**Fields**
+
+```
+profile_dir: str = 'data/tcdb_chrome_profile'
+login_timeout_s: int = 300
+search_defaults: dict[str, str] = Field(default_factory=dict)
+```
+
+#### `class OneDriveSettings(BaseModel)`
+
+```
+Card scans fetched from OneDrive (Microsoft Graph) when they are not on
+local disk -- how the Cloud Run ``create-listings`` job started from the
+iOS app reaches ``SCAN_0234.jpg``. All fields default, so an existing
+config without an ``onedrive`` section still validates; ``enabled`` is
+false until ``client_id`` and ``scans_folder`` are set. See docs/api.md.
+```
+
+**Fields**
+
+```
+client_id: str = ''
+authority: str = 'https://login.microsoftonline.com/consumers'
+scans_folder: str = ''
+scopes: list[str] = Field(default_factory=lambda: ['Files.ReadWrite'])
+listed_subfolder: str = 'Listed'
+token_cache_path: str = 'configs/onedrive_token_cache.json'
+token_cache_uri: str | None = None
+```
+
+#### `normalize_onedrive_folder(value: str) -> str`
+
+```
+A folder path under the OneDrive root, as typed in the iOS app:
+``" /Pictures/Card Scans/ "`` -> ``"Pictures/Card Scans"``.
+
+The job moves listed scans out of this folder, so it must stay a plain
+relative path: ValueError for an empty path, ``.`` / ``..`` segments,
+backslashes, control characters, or a character OneDrive rejects in a name
+(``:`` would also end the ``root:/path:`` segment of a Graph URL).
+```
+
+#### `with_scans_folder(settings: Settings, folder: str) -> Settings`
+
+```
+A copy of ``settings`` reading scans from ``folder`` instead of
+``onedrive.scans_folder`` (one app-requested run).
+```
+
+#### `class CloudRunSettings(BaseModel)`
+
+```
+Where the API finds the Cloud Run job it starts for app-triggered
+listing runs (``POST /queue/listings``). Project is ``gcp.project_id``.
+```
+
+**Fields**
+
+```
+region: str = 'us-central1'
+listings_job: str = 'create-listings'
+```
+
+#### `class Settings(BaseModel)`
+
+**Fields**
+
+```
+gcp: GCPSettings
+bigquery: BigQuerySettings
+gcs: GCSSettings
+paths: PathSettings
+ebay: eBaySettings
+slack: SlackSettings
+google_calendar: GoogleCalendarSettings
+store: StoreSettings = Field(default_factory=StoreSettings)
+tcdb: TcdbSettings = Field(default_factory=TcdbSettings)
+onedrive: OneDriveSettings = Field(default_factory=OneDriveSettings)
+cloud_run: CloudRunSettings = Field(default_factory=CloudRunSettings)
+```
+
+#### `get_settings(config_path: str | os.PathLike[str] | None=None) -> Settings`
+
+```
+Load and validate settings from YAML.
+
+This function is cached (singleton-like) but *does not* create directories.
+Call `ensure_runtime_dirs()` explicitly from entrypoints.
+```
+
+#### `ensure_runtime_dirs(config_path: str | os.PathLike[str] | None=None) -> None`
+
+```
+Create local directories referenced by settings.
+```
+
+---
+
+### `shoebox.cli`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/cli.py)
+
+---
+
+### `shoebox.storage.table_asset`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/storage/table_asset.py)
+
+#### `class TableAssetConfig`
+
+**Fields**
+
+```
+name: str
+local_csv_path: Path
+gcs_bucket: str
+gcs_prefix: str
+bq_dataset: str
+bq_table: str
+schema_path: Path
+write_disposition: str = 'WRITE_APPEND'
+jsonl_filename: str | None = None
+```
+
+#### `class TableAsset`
+
+```
+Generic: Local CSV -> (transform) -> JSONL -> upload to GCS -> load to BigQuery.
+Differences per table come from config + transform function.
+```
+
+---
+
+### `shoebox.ui.app`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/ui/app.py)
+
+#### `sync_widget_keys_from_draft(force: bool=False) -> None`
+
+```
+Copy draft -> widget keys BEFORE widgets are instantiated.
+Only call this at the top of the script (pre-render).
+```
+
+---
+
+### `shoebox.ui.helpers`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/ui/helpers.py)
+
+#### `handle_image_path(img: str) -> str`
+
+```
+Normalize an image reference.
+
+- If the provided string is an existing path, return it.
+- If it is a scan number (``"123"``, or ``"123.0"`` from Excel), build the
+  expected path under scans_dir using the configured scan naming convention
+  (``scan_prefix`` / ``scan_number_padding`` / ``scan_extension``).
+- Otherwise (a path that does not exist here) return it unchanged.
+```
+
+---
