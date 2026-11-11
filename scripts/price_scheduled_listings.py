@@ -88,7 +88,16 @@ _SYNONYMS = {"back": "backs"}
 # Releases that share a year and a card-number scheme (Series 1's holiday
 # variations, Chrome vs Chrome Update). A comp must name the same ones the
 # listing's title does.
-_PRODUCT_WORDS = {"series", "series1", "series2", "update", "sapphire", "platinum", "cosmic", "high"}
+_PRODUCT_WORDS = {
+    "series",
+    "series1",
+    "series2",
+    "update",
+    "sapphire",
+    "platinum",
+    "cosmic",
+    "high",
+}
 
 # Team names with a finish word in them, removed before finish words are read.
 _TEAM_NAMES = ["red sox", "white sox", "blue jays", "green bay"]
