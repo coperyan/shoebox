@@ -99,13 +99,13 @@ class PathSettings(BaseModel):
     # disk. A gs://bucket/prefix URI keeps them in GCS instead, which is what
     # lets the watcher run as a Cloud Run job: each execution starts on an
     # empty filesystem. Every host whose app.yaml names the same URI shares one
-    # state and one lock -- see docs/deployment.md.
+    # state and one lock -- see docs/content/guides/deployment.mdx.
     searches_state_uri: str | None = None
 
     # The listing queue as a GCS object: gs://bucket/prefix/listing_queue_enriched.jsonl.
     # Set it on the Cloud Run API (which writes it) and on the workstation (so
     # create-listings reads the phone's queue). Unset keeps the local file
-    # <exports_dir>/jsonl/listing_queue_enriched.jsonl. See docs/api.md.
+    # <exports_dir>/jsonl/listing_queue_enriched.jsonl. See docs/content/guides/api.mdx.
     queue_uri: str | None = None
 
     @field_validator("searches_state_uri")
@@ -228,7 +228,7 @@ class OneDriveSettings(BaseModel):
     local disk -- how the Cloud Run ``create-listings`` job started from the
     iOS app reaches ``SCAN_0234.jpg``. All fields default, so an existing
     config without an ``onedrive`` section still validates; ``enabled`` is
-    false until ``client_id`` and ``scans_folder`` are set. See docs/api.md.
+    false until ``client_id`` and ``scans_folder`` are set. See docs/content/guides/api.mdx.
     """
 
     # Application (client) ID of the Azure app registration (public client,

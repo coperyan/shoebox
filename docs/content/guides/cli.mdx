@@ -28,7 +28,7 @@ Reads the master workbook `tools/checklist_parallel_metadata.xlsm`
 Reads `data/Inputs (Param).xlsm` (sheet `Inputs`), builds `ListingQueueRow`s
 (rows missing front/back images are dropped; a bare scan number is resolved to
 `scans_dir/<scan_prefix><zero-padded><scan_extension>` per the configured scan
-naming convention — see [configuration.md](configuration.md#paths)), enriches
+naming convention — see [configuration.md](/guides/configuration#paths)), enriches
 each row against the BigQuery metadata views, and writes
 `exports/jsonl/listing_queue_enriched.jsonl`.
 
@@ -43,7 +43,7 @@ Serves the listing-queue HTTP API for the iOS app (FastAPI under uvicorn):
 metadata dropdowns, row enrichment/preview, queue + draft writes to
 `paths.queue_uri`, photo uploads. Needs `SHOEBOX_API_KEY` in the environment
 and `paths.queue_uri` in `app.yaml`. Runs as a Cloud Run service in
-production; see [api.md](api.md) and [deployment.md](deployment.md#services).
+production; see [api.md](/guides/api) and [deployment.md](/guides/deployment#services).
 
 | Flag | Effect |
 |---|---|
@@ -54,7 +54,7 @@ production; see [api.md](api.md) and [deployment.md](deployment.md#services).
 Not a `shoebox` subcommand: the one-time OneDrive sign-in for the cloud
 `create-listings` job. `--login` (device code), `--check`, `--verify 234`
 (downloads `SCAN_0234.jpg`), `--upload` (copies the token cache to
-`onedrive.token_cache_uri`). See [deployment.md](deployment.md#listing-from-the-app).
+`onedrive.token_cache_uri`). See [deployment.md](/guides/deployment#listing-from-the-app).
 
 ## Listing creation
 
@@ -74,9 +74,9 @@ locally.
 | `--dry-run` | Build payloads and log results without calling eBay |
 | `--publish` | Publish offers after creation (otherwise offers are created unpublished) |
 | `--schedule` | Set `listingStartDate` ≈ now + 19 days on each listing |
-| `--scrape-prices` | Scrape 130point sold comps per card, then ask the Slack pricing channel to confirm/override before listing (see [slack.md](slack.md)) |
+| `--scrape-prices` | Scrape 130point sold comps per card, then ask the Slack pricing channel to confirm/override before listing (see [slack.md](/guides/slack)) |
 | `--queue PATH_OR_GS_URI` | Read this queue file instead of the default (a local JSONL or a `gs://` object) |
-| `--run-request` | Cloud Run job mode: claim the run record the iOS app's API wrote, list the queue with its publish/schedule choices, report progress to it. Never scrapes prices; takes no other flags. See [api.md](api.md#listing-from-the-app) |
+| `--run-request` | Cloud Run job mode: claim the run record the iOS app's API wrote, list the queue with its publish/schedule choices, report progress to it. Never scrapes prices; takes no other flags. See [api.md](/guides/api#listing-from-the-app) |
 
 Offers are created **unpublished** unless `--publish` is passed.
 
@@ -222,7 +222,7 @@ API and notifies the Slack notify channel with the count.
 
 ### `enhance-listing-titles`
 Improves the titles of listings already live, per
-[`configs/title_crosswalk.yaml`](../configs/title_crosswalk.yaml):
+[`configs/title_crosswalk.yaml`](https://github.com/coperyan/shoebox/blob/main/configs/title_crosswalk.yaml):
 
 - **Repairs the characters.** Accented and mis-encoded text ("Vidal BrujÃ¡n")
   is un-garbled and folded to plain ASCII. The report's `had_illegal_chars`
@@ -243,7 +243,7 @@ shorten the title.
 Works from a dataframe rather than calling eBay to discover listings. With no
 `--input`, that dataframe is the BigQuery view
 `<ebay_dataset>.v_active_listing_details`
-([`active_listing_details.sql`](../configs/bigquery/queries/active_listing_details.sql)),
+([`active_listing_details.sql`](https://github.com/coperyan/shoebox/blob/main/configs/bigquery/queries/active_listing_details.sql)),
 so a run always sees current titles — including any a previous sweep already
 fixed. Pass `--input` to work from a local `.jsonl`/`.csv` export instead.
 Writes `exports/csv/title_enhancements_<timestamp>.csv` and prints a preview.
@@ -309,7 +309,7 @@ the pricing channel. Reply in a prompt's thread with an amount to send that
 deadline and reappear next run. Blocks on Slack, so it is not in the slack-bot
 whitelist. It runs from a checkout by hand, or as the `send-offers` Cloud Run
 job every 15 minutes during the day
-([deployment.md](deployment.md#send-offers)).
+([deployment.md](/guides/deployment#send-offers)).
 
 | Flag | Effect |
 |---|---|
@@ -337,7 +337,7 @@ details can't be fetched is still written, with the reason in `detail_error`.
 Fetches full `GetItem` detail (item specifics, pictures, condition) for every
 active non-variation listing into `ebay.active_listing_details`. One Trading
 API call per listing — there is no batch alternative that carries item
-specifics (see [pipelines.md](pipelines.md#pipelinessync_active_listing_detailspy))
+specifics (see [pipelines.md](/guides/pipelines#pipelinessync_active_listing_detailspy))
 — but the calls run concurrently, so ~1,650 listings take roughly two minutes
 rather than the twenty-plus they took serially.
 
@@ -370,14 +370,14 @@ days, `NOT_STARTED`).
 ## Saved searches
 
 Full end-to-end guide (setup, YAML, filters, tuning, scheduling, state):
-[search.md](search.md).
+[search.md](/guides/search).
 
 ### `watch-searches`
 Runs the saved eBay searches defined in `configs/searches.yaml` that are **due**,
 and posts net-new listings to Slack — one header message per search with each
 listing posted right in the channel. See
-[configuration.md](configuration.md#saved-searches-configssearchesyaml) for the
-YAML schema and [pipelines.md](pipelines.md#saved-search-watcher) for the
+[configuration.md](/guides/configuration#saved-searches-configssearchesyaml) for the
+YAML schema and [pipelines.md](/guides/pipelines#saved-search-watcher) for the
 internals.
 
 | Flag | Effect |
@@ -400,7 +400,7 @@ To see a new search's existing inventory rather than only its future listings,
 set `notify_on_seed: true` on it: the seed then also posts its first
 `max_notify` matches. That applies to a first-ever seed and to `--reseed`, never
 to the two recovery re-seeds above. See
-[search.md](search.md#seeing-the-initial-results).
+[search.md](/guides/search#seeing-the-initial-results).
 
 ### `preview-search`
 Shows **every** listing a saved search returns — including the ones your
@@ -485,7 +485,7 @@ supported alternative is a `launchd` agent with `StartInterval 300`, a
 `WorkingDirectory` of the repo root, and `StandardOutPath` under `logs/`. On
 Windows, use Task Scheduler with *Start in* set to the repo root — the tasks on
 the Windows host are generated from `scripts/tasks.yaml`, see
-[scheduling.md](scheduling.md).
+[scheduling.md](/guides/scheduling).
 
 **API budget.** Each due search costs one Browse call per run (a single call
 returns up to 200 items). Ten searches on a 15-minute interval is roughly 960
@@ -501,7 +501,7 @@ channel for messages like `sync-orders` or `/create-listings --dry-run`,
 validates them against a whitelist, runs the corresponding CLI command in a
 subprocess (10-minute cap), and replies in a thread with the output in a code
 block. Optionally restricted by `slack.allowed_user_ids`. See
-[slack.md](slack.md) for the whitelist and security notes. Run it under a
+[slack.md](/guides/slack) for the whitelist and security notes. Run it under a
 process supervisor (systemd, launchd, pm2) for always-on operation.
 
 ### `sync-topps-calendar`
@@ -524,7 +524,7 @@ hand in the browser, shoebox never sees the password — then loops on a
 `card #>` prompt: each card number is searched with your defaults, matches are
 printed with their URLs, and the results page stays open in Chrome so you can
 add the card to your collection. Positional card numbers are searched before
-the prompt starts. Full reference, session commands and config: [tcdb.md](tcdb.md).
+the prompt starts. Full reference, session commands and config: [tcdb.md](/guides/tcdb).
 
 | Flag | Effect |
 |---|---|
@@ -541,7 +541,7 @@ titles them (`"2009 Bowman Chrome - X-Fractors #171 Matt Cain"`), or from
 ViewCard.cfm links. Each title is found with an advanced search on year + card
 number + name, and only an exact title match is added. Anything unmatched or
 ambiguous is reported and skipped. Cards already in the collection are skipped.
-Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-add).
+Full behaviour: [tcdb.md](/guides/tcdb#shoebox-tcdb-add).
 
 | Flag | Effect |
 |---|---|
@@ -559,7 +559,7 @@ a page) and writes one row per card: set year, master set, subset, card
 number, player, notes, title, ViewCard link, set/card/item ids, quantity,
 price and category — plus team with `--with-team`, which costs a page load per
 card. Read-only — nothing on TCDB is changed.
-Full behaviour: [tcdb.md](tcdb.md#shoebox-tcdb-wantlist).
+Full behaviour: [tcdb.md](/guides/tcdb#shoebox-tcdb-wantlist).
 
 | Flag | Effect |
 |---|---|
