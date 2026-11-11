@@ -9,7 +9,7 @@
 #
 # This file stays in the shoebox repo and is embedded into the trigger with
 # --inline-config, so nothing has to be committed to the private repo. Editing
-# it means re-creating the trigger. See docs/deployment.md, "Saved searches":
+# it means re-creating the trigger. See docs/content/guides/deployment.mdx, "Saved searches":
 #
 #   gcloud builds triggers create github --name=shoebox-searches \
 #     --repo-owner=coperyan --repo-name=SEARCHES_REPO --branch-pattern='^main$' \

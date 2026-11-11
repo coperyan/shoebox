@@ -23,7 +23,7 @@ cp configs/ebay_legacy.example.json configs/ebay_legacy.json
 cp tools/checklist_parallel_metadata.sample.xlsx tools/checklist_parallel_metadata.xlsm
 ```
 
-See [`docs/setup.md`](docs/setup.md) and [`docs/configuration.md`](docs/configuration.md)
+See [`docs/setup`](docs/content/guides/setup.mdx) and [`docs/configuration`](docs/content/guides/configuration.mdx)
 for the full walkthrough.
 
 ## Running tests
@@ -63,3 +63,23 @@ pre-commit install
 - Store-specific values (business name, eBay policy/campaign IDs, category)
   belong in `configs/app.yaml` under `store:`, not hardcoded in source.
 - Add or update tests for pure logic you touch (`utils/`, `transforms/`).
+
+## Documentation
+
+The docs are a [Nextra](https://nextra.site) site under `docs/`. The guides are
+hand-written MDX in `docs/content/guides/`; the API reference in
+`docs/content/api/` is generated from the Python docstrings and should not be
+edited by hand.
+
+```bash
+cd docs
+npm install
+npm run api      # regenerate docs/content/api/ from docstrings (python scripts/generate_api_docs.py)
+npm run dev      # http://localhost:3000
+npm run build    # static export to docs/out/
+```
+
+Re-run `npm run api` after changing a docstring and commit the regenerated
+pages. The guides are MDX, so a bare `<name>` or `{...}` outside a code span
+is parsed as JSX — keep placeholders in backticks, and inside a table cell
+escape `|` as `\|` even within backticks.

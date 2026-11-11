@@ -688,7 +688,7 @@ def run_listing_request(*, store=None, settings=None) -> int:
     if in_cloud and settings.onedrive.enabled and not settings.onedrive.token_cache_uri:
         raise RuntimeError(
             "create-listings is running in Cloud Run with a local OneDrive token cache; "
-            "set onedrive.token_cache_uri (see docs/deployment.md, Listing from the app)"
+            "set onedrive.token_cache_uri (see docs/content/guides/deployment.mdx, Listing from the app)"
         )
     if store is None:
         store = ListingRunStore.from_settings(settings, gcs=GCSClient(settings=settings))

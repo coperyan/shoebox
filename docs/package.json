@@ -1,0 +1,21 @@
+{
+  "name": "shoebox-docs",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "api": "python scripts/generate_api_docs.py",
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "15.5.13",
+    "nextra": "4.6.1",
+    "nextra-theme-docs": "4.6.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "overrides": {
+    "zod": "4.3.6"
+  }
+}

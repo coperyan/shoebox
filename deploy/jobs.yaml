@@ -5,7 +5,7 @@
 # `defaults:` block every job may override, one entry per pipeline), rendered
 # into `gcloud` commands by scripts/deploy_cloud_run.py instead of Task
 # Scheduler XML. Windows stays the host for everything that needs Chrome,
-# Excel workbooks or a human in the loop -- see docs/deployment.md. Card scans
+# Excel workbooks or a human in the loop -- see docs/content/guides/deployment.mdx. Card scans
 # are no longer a reason: the `create-listings` job below fetches them from
 # OneDrive when the iOS app asks for a listing run.
 #
@@ -20,7 +20,7 @@
 #
 # `services:` (at the bottom) are Cloud Run *services* -- long-running HTTP
 # servers, not scheduled jobs. Today that is the listing-queue API the iOS app
-# talks to (docs/api.md).
+# talks to (docs/content/guides/api.mdx).
 
 defaults:
   # GCP project. Left out on purpose (this repo is public): the script takes
@@ -131,7 +131,7 @@ jobs:
   # Needs two gs:// settings in the uploaded app.yaml -- paths.searches_file
   # (deployed by deploy/searches-cloudbuild.yaml) and paths.searches_state_uri
   # (seen-caches, run state and the lock) -- and refuses to run without the
-  # second. See docs/deployment.md, "Saved searches".
+  # second. See docs/content/guides/deployment.mdx, "Saved searches".
   - name: watch-searches
     run: watch-searches
     description: Poll saved eBay searches and post new hits to Slack.
@@ -195,10 +195,10 @@ services:
   # image bucket. `public: true` adds an allUsers invoker binding (applied in
   # the IAM phase, from a workstation); the X-API-Key header is the auth, read
   # from the SHOEBOX_API_KEY env var that env_secrets maps to Secret Manager.
-  # The uploaded app.yaml must set paths.queue_uri. See docs/api.md.
+  # The uploaded app.yaml must set paths.queue_uri. See docs/content/guides/api.mdx.
   - name: shoebox-api
     run: api
-    description: Listing-queue API for the iOS app (docs/api.md).
+    description: Listing-queue API for the iOS app (docs/content/guides/api.mdx).
     timeout: 300s
     memory: 1Gi
     port: 8080

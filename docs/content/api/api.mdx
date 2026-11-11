@@ -1,0 +1,361 @@
+# Listing-Queue API
+
+The FastAPI service behind the iOS app: routes, dependencies, schemas and the GCS queue store.
+
+- [`shoebox.api`](#shoeboxapi)
+- [`shoebox.api.app`](#shoeboxapiapp)
+- [`shoebox.api.deps`](#shoeboxapideps)
+- [`shoebox.api.queue_store`](#shoeboxapiqueue_store)
+- [`shoebox.api.schemas`](#shoeboxapischemas)
+- [`shoebox.api.server`](#shoeboxapiserver)
+
+### `shoebox.api`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/api/__init__.py)
+
+The listing-queue HTTP API: the iOS app's backend (``shoebox api``).
+
+```
+See docs/api.md. ``create_app`` builds the FastAPI application; ``serve`` runs
+it under uvicorn.
+```
+
+---
+
+### `shoebox.api.app`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/api/app.py)
+
+FastAPI application for the listing queue (see docs/api.md).
+
+```
+The phone talks only to this: it reads the dropdown metadata, previews and
+submits queue rows (enriched with the same ``build_enriched_json`` the
+Streamlit UI and Excel loader use), saves drafts, uploads photos, and asks for
+the queue to be listed. The enriched queue lands at ``paths.queue_uri`` in
+GCS, where ``create-listings`` picks it up: on the workstation by hand, or as
+the Cloud Run job this API starts (``POST /queue/listings``), which fetches
+scans from OneDrive and reports progress to a run record the phone polls.
+```
+
+#### `enrich_rows(rows: list[QueueRowIn], bundle: MetadataBundle) -> list[RowResult]`
+
+```
+Run ``build_enriched_json`` per row and attach the UI's soft warnings.
+```
+
+#### `create_app(*, settings: Settings | None=None, api_key: str | None=None, metadata_loader: Loader | None=None, gcs: Any=None, metadata_ttl_s: int=3600, clock: Clock | None=None, job_runner: Any=None, run_store: Any=None) -> FastAPI`
+
+```
+Build the application. Every collaborator can be injected for tests; the
+defaults are the real settings, ``SHOEBOX_API_KEY`` from the environment,
+the BigQuery metadata loader, a lazily constructed ``GCSClient``, the
+Cloud Run job client and the run-record store built on that GCS client.
+```
+
+---
+
+### `shoebox.api.deps`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/api/deps.py)
+
+Shared state and dependencies for the listing-queue API.
+
+#### `class MetadataBundle`
+
+**Fields**
+
+```
+cdf: pd.DataFrame
+pdf: pd.DataFrame
+payload: dict[str, Any]
+version: str
+loaded_at: datetime
+```
+
+#### `class MetadataCache`
+
+```
+The checklist/parallels views, loaded lazily and kept for ``ttl_s``.
+
+Mirrors the Streamlit UI's hour-long ``st.cache_data``. A lock makes
+concurrent first requests run one BigQuery load; a failed reload keeps the
+previous bundle so a BigQuery hiccup never blanks the phone's pickers.
+```
+
+#### `class ApiContext`
+
+**Fields**
+
+```
+settings: Settings
+api_key: str
+metadata: MetadataCache
+queue_store: Any
+gcs_factory: Callable[[], Any]
+clock: Clock = utc_now
+job_runner_factory: Callable[[], Any] | None = None
+run_store_factory: Callable[[], Any] | None = None
+```
+
+---
+
+### `shoebox.api.queue_store`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/api/queue_store.py)
+
+The queue objects in GCS: the enriched JSONL ``create-listings`` reads, and the raw-rows draft document the phone reloads.
+
+#### `draft_uri_for(queue_uri: str) -> str`
+
+```
+The draft document lives next to the queue object.
+```
+
+#### `class QueueStore`
+
+```
+Reads and writes the two queue objects. ``gcs`` needs ``upload_text`` and
+``read_text`` (``GCSClient``, or a fake in tests).
+```
+
+---
+
+### `shoebox.api.schemas`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/api/schemas.py)
+
+Request/response models for the listing-queue API (docs/api.md).
+
+#### `class QueueRowIn(BaseModel)`
+
+```
+The 8 user-entered queue fields, as the phone sends them.
+```
+
+**Fields**
+
+```
+set_name: str = Field(min_length=1)
+subset_name: str = Field(min_length=1)
+parallel_variety: str | None = None
+card_number: str = Field(min_length=1)
+quantity: int = Field(default=1, ge=1, le=999)
+price: float = Field(default=0.0, ge=0)
+image_front: str = ''
+image_back: str = ''
+```
+
+#### `class DraftRowIn(QueueRowIn)`
+
+```
+Same shape, but a draft may hold half-filled rows.
+```
+
+**Fields**
+
+```
+set_name: str = ''
+subset_name: str = ''
+card_number: str = ''
+```
+
+#### `class QueueRowsRequest(BaseModel)`
+
+**Fields**
+
+```
+rows: list[QueueRowIn] = Field(min_length=1, max_length=MAX_ROWS)
+```
+
+#### `class DraftRequest(BaseModel)`
+
+**Fields**
+
+```
+rows: list[DraftRowIn] = Field(default_factory=list, max_length=MAX_ROWS)
+```
+
+#### `class Counts(BaseModel)`
+
+**Fields**
+
+```
+rows: int
+ok: int
+errors: int
+```
+
+#### `class RowResult(BaseModel)`
+
+**Fields**
+
+```
+index: int
+ok: bool
+enriched: dict[str, Any] | None = None
+error: str | None = None
+warnings: list[str] = Field(default_factory=list)
+```
+
+#### `class PreviewResponse(BaseModel)`
+
+**Fields**
+
+```
+rows: list[RowResult]
+counts: Counts
+metadata_version: str
+```
+
+#### `class QueueWriteResponse(BaseModel)`
+
+**Fields**
+
+```
+kind: Literal['queue', 'draft']
+submitted_at: datetime
+counts: Counts
+queue_uri: str | None
+draft_uri: str
+metadata_version: str | None
+```
+
+#### `class QueueGetResponse(BaseModel)`
+
+**Fields**
+
+```
+kind: Literal['queue', 'draft'] | None
+submitted_at: datetime | None
+rows: list[DraftRowIn]
+counts: Counts
+queue_uri: str
+draft_uri: str
+```
+
+#### `class CardMeta(BaseModel)`
+
+**Fields**
+
+```
+card_number: str
+derived_card_number: str | None = None
+card_id: str | None = None
+subset_id: str | None = None
+set_year: str | None = None
+subset_type: str | None = None
+player: str | None = None
+team: str | None = None
+note: str | None = None
+note_check: str | None = None
+```
+
+#### `class ParallelMeta(BaseModel)`
+
+**Fields**
+
+```
+parallel_variety: str
+parallel_id: str | None = None
+print_run: int | None = None
+other_note: str | None = None
+```
+
+#### `class SubsetMeta(BaseModel)`
+
+**Fields**
+
+```
+subset_name: str
+cards: list[CardMeta]
+parallels: list[ParallelMeta]
+```
+
+#### `class SetMeta(BaseModel)`
+
+**Fields**
+
+```
+set_name: str
+set_year: str | None = None
+subsets: list[SubsetMeta]
+```
+
+#### `class MetadataResponse(BaseModel)`
+
+**Fields**
+
+```
+version: str
+generated_at: datetime
+ttl_s: int
+counts: dict[str, int]
+sets: list[SetMeta]
+```
+
+#### `class MetadataRefreshResponse(BaseModel)`
+
+**Fields**
+
+```
+version: str
+generated_at: datetime
+counts: dict[str, int]
+```
+
+#### `class ImageUploadResponse(BaseModel)`
+
+**Fields**
+
+```
+uri: str
+side: Literal['front', 'back']
+client_id: str | None
+bytes: int
+content_type: str
+```
+
+#### `class HealthResponse(BaseModel)`
+
+**Fields**
+
+```
+status: Literal['ok']
+version: str
+```
+
+#### `class StartListingRunRequest(BaseModel)`
+
+```
+``POST /queue/listings``: the choices the app offers. Prices are never
+scraped on an app-triggered run. ``scans_folder`` reads the scans from
+that OneDrive folder instead of ``onedrive.scans_folder``; blank or absent
+keeps the configured one.
+```
+
+**Fields**
+
+```
+publish: bool = True
+schedule: bool = True
+scans_folder: str | None = None
+```
+
+#### `class ListingRunsResponse(BaseModel)`
+
+**Fields**
+
+```
+runs: list[dict[str, Any]]
+```
+
+---
+
+### `shoebox.api.server`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/api/server.py)
+
+Run the listing-queue API under uvicorn (``shoebox api``).
+
+---

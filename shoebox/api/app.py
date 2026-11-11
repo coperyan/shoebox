@@ -1,4 +1,4 @@
-"""FastAPI application for the listing queue (see docs/api.md).
+"""FastAPI application for the listing queue (see docs/content/guides/api.mdx).
 
 The phone talks only to this: it reads the dropdown metadata, previews and
 submits queue rows (enriched with the same ``build_enriched_json`` the

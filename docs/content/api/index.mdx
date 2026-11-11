@@ -1,0 +1,14 @@
+# API Reference
+
+Generated from the Python source docstrings by
+`docs/scripts/generate_api_docs.py`. Re-run it after changing a docstring;
+do not edit these pages by hand.
+
+- [Core](/api/core) — Settings, the CLI entrypoint, the TableAsset loader and the Streamlit UI.
+- [Pipelines](/api/pipelines) — End-to-end runnable workflows, roughly one per CLI command.
+- [Services](/api/services) — Long-running components and multi-step listing workflows: ListingService, listing runs, the Slack command bot.
+- [Clients](/api/clients) — External systems: eBay REST and Trading, GCS, BigQuery, TCDB, OneDrive, Google Calendar, scrapers and saved-search state.
+- [Models](/api/models) — Pydantic types for queue rows, image-log entries, listing results, saved searches and typed views of eBay payloads.
+- [Transforms](/api/transforms) — Pure builders: queue rows to eBay payloads, checklist normalizers, enrichment, search filters, store categories and titles.
+- [Listing-Queue API](/api/api) — The FastAPI service behind the iOS app: routes, dependencies, schemas and the GCS queue store.
+- [Utilities](/api/utils) — Slack messaging and formatting, pricing math, SKU hashing, JSONL helpers, image handling, logging setup.

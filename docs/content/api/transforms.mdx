@@ -1,0 +1,770 @@
+# Transforms
+
+Pure builders: queue rows to eBay payloads, checklist normalizers, enrichment, search filters, store categories and titles.
+
+- [`shoebox.transforms.checklist_normalize`](#shoeboxtransformschecklist_normalize)
+- [`shoebox.transforms.listing_builder`](#shoeboxtransformslisting_builder)
+- [`shoebox.transforms.parallels_normalize`](#shoeboxtransformsparallels_normalize)
+- [`shoebox.transforms.queue_enrichment`](#shoeboxtransformsqueue_enrichment)
+- [`shoebox.transforms.queue_indexes`](#shoeboxtransformsqueue_indexes)
+- [`shoebox.transforms.search_filters`](#shoeboxtransformssearch_filters)
+- [`shoebox.transforms.store_category_builder`](#shoeboxtransformsstore_category_builder)
+- [`shoebox.transforms.title_enhancer`](#shoeboxtransformstitle_enhancer)
+- [`shoebox.transforms.variation_listing_builder`](#shoeboxtransformsvariation_listing_builder)
+- [`shoebox.transforms.variation_template`](#shoeboxtransformsvariation_template)
+
+### `shoebox.transforms.checklist_normalize`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/checklist_normalize.py)
+
+---
+
+### `shoebox.transforms.listing_builder`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/listing_builder.py)
+
+#### `minify_html(html: str) -> str`
+
+```
+Collapse newline + indentation runs between tags.
+
+The footer is authored readably but every character counts against eBay's
+4000-char description limits, and inter-tag whitespace does not affect how
+the block renders.
+```
+
+#### `store_footer_html(store_name: str | None=None) -> str`
+
+```
+Render the shared listing footer with the configured store name.
+```
+
+#### `fit_inventory_description(html: str) -> str`
+
+```
+Guard an Inventory API description against eBay's 4000-char cap.
+
+Raises rather than silently truncating: a half-written HTML block on a live
+listing is worse than a failed build we can see and fix.
+```
+
+#### `build_item_specifics(set_name: str, card_number: str, features: list, insert: str=None, parallel: str=None, player: str=None, team: str=None) -> str`
+
+```
+The card-specific detail block, without the store footer.
+```
+
+#### `build_description(set_name: str, card_number: str, features: list, insert: str=None, parallel: str=None, player: str=None, team: str=None) -> str`
+
+```
+Full buyer-facing description: item specifics plus the store footer.
+
+This is the offer's ``listingDescription``. It is too long for the inventory
+item's ``product.description`` -- use :func:`build_item_specifics` there.
+```
+
+#### `store_categories(r: ListingQueueRow) -> list[str]`
+
+```
+The store category paths a new single-card listing is filed under.
+
+Primary is the sport branch, broken out by team for baseball; the second
+slot is the Hits category when the card is an autograph, relic, serial
+numbered or short print. The rules live in
+:func:`shoebox.transforms.store_category_builder.plan_store_category`, the
+same ones ``plan-store-categories`` runs over the live store, so a new
+listing lands where a recategorized one would.
+
+These are full ``/path`` names: the Inventory API matches
+``storeCategoryNames`` against the live tree and silently files anything it
+cannot find under "Other", which is exactly what the old flat names
+("Parallels", "Base Cards", ...) did once the tree was restructured.
+```
+
+#### `store_category(r: ListingQueueRow) -> str`
+
+```
+The primary store category path; see :func:`store_categories`.
+```
+
+#### `base_inventory_item_payload(*, quantity: int, product: dict[str, Any]) -> dict[str, Any]`
+
+```
+Shared inventory-item skeleton for every card listing.
+
+Condition descriptor 40001/400010 is eBay's trading-card grade
+"Near Mint or Better"; the package is a one-ounce plain-white-envelope
+style LETTER (7x5x1 in).
+```
+
+#### `rebuild_inventory_item_body(existing_item: dict, image_urls: list) -> dict`
+
+```
+Rebuild an inventory item payload from an existing eBay API item response.
+```
+
+#### `inventory_item_body_with_images(item: InventoryItem, image_urls: list[str]) -> dict[str, Any]`
+
+```
+Round-trip an existing inventory item with only ``product.imageUrls`` changed.
+```
+
+#### `round_trip_inventory_item_body(item: InventoryItem, *, title: str | None=None, image_urls: list[str] | None=None) -> dict[str, Any]`
+
+```
+Round-trip an existing inventory item, replacing only what is passed.
+
+Unlike :func:`rebuild_inventory_item_body`, this preserves the item's own
+description, condition, and packaging rather than rebuilding them from
+settings -- a title or picture edit must not quietly rewrite the rest of a
+live listing. Values eBay omits fall back to the standard single-card
+payload.
+
+Pass ``image_urls`` from the live listing (services/listing_pictures.py).
+Left out, the item's own ``imageUrls`` are sent back, and eBay often
+returns only the front there: the listing would lose its back picture.
+```
+
+#### `live_store_category_names(names: list) -> list[str]`
+
+```
+Store category names as read off an offer, in the form eBay accepts back.
+
+``getOffers`` reports an empty second slot as the string ``"None"`` and
+drops the leading slash the Inventory API wants on the way in, so a
+round-tripped list needs both put right or the relisted offer lands in
+"Other".
+```
+
+#### `refresh_inventory_item_body(item: InventoryItem, image_urls: list[str]) -> dict[str, Any]`
+
+```
+The body to recreate a deleted inventory item exactly as it was.
+
+:func:`round_trip_inventory_item_body` plus the product identifiers and
+condition description it leaves alone (an in-place upsert keeps those; a
+recreate after deleteInventoryItem would lose them). Pass ``image_urls``
+re-hosted from the live listing, for the reason given there.
+```
+
+#### `round_trip_offer_body(existing_offer: dict, *, price: float | None=None) -> dict[str, Any]`
+
+```
+A createOffer body that reproduces ``existing_offer`` field for field.
+
+Unlike :func:`rebuild_offer_body`, nothing is re-derived from settings:
+policies (best-offer thresholds included), categories, description, tax,
+quantity limits and location are sent back exactly as getOffers returned
+them, so the new listing is the same listing. ``price`` replaces the
+price when given; otherwise it is kept too.
+```
+
+#### `rebuild_offer_body(existing_offer: dict, new_price: float, schedule_datetime: str=None) -> dict`
+
+```
+Rebuild an offer payload from an existing eBay API offer response with a new price.
+```
+
+#### `offer_body_with_store_categories(existing_offer: dict, categories: list[str], *, live_price: float | None=None) -> dict`
+
+```
+Rebuild an offer payload changing only which store categories it sits in.
+
+Unlike :func:`rebuild_offer_body`, nothing else is recomputed: the price,
+quantity, description and policy IDs are carried across exactly as eBay
+returned them. Re-deriving the fulfillment policy from price here would
+silently reshuffle shipping on every listing whose price has drifted past
+the threshold since it was created.
+
+``updateOffer`` is a full PUT, so every required field has to be present
+even though only ``storeCategoryNames`` is changing. **Pass
+``live_price``.** The offer's own price is only what the Inventory API
+last wrote; a price changed in Seller Hub or via Trading never reaches the
+offer, so a PUT that trusts it silently reverts the listing to the stale
+value -- 25 listings went back to the app's $0.99 default that way. The
+live price comes from GetMyeBaySelling / GetItem.
+```
+
+---
+
+### `shoebox.transforms.parallels_normalize`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/parallels_normalize.py)
+
+---
+
+### `shoebox.transforms.queue_enrichment`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/queue_enrichment.py)
+
+#### `normalize_nulls(d: dict) -> dict`
+
+```
+Convert empty strings and common null-like string tokens to None.
+```
+
+---
+
+### `shoebox.transforms.queue_indexes`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/queue_indexes.py)
+
+Dropdown indexes and the metadata payload built from the checklist/parallels views.
+
+```
+``build_indexes`` used to live in the Streamlit module (``shoebox/ui/app.py``);
+it moved here so the listing-queue API (``shoebox/api``) can share it without
+importing Streamlit. The cascading order it produces -- Set -> Subset ->
+(Parallel) -> Card #, card numbers sorted numerically by ``derived_card_number``
+first -- is what both the Streamlit UI and the iOS app show.
+```
+
+#### `cardno_sort_key(derived: object) -> tuple`
+
+```
+Sort key for card numbers: pure integers first (as ints), then text
+(case-insensitive), then blanks. Mirrored in the iOS app (``CardSort``);
+change both together.
+```
+
+#### `subset_sort_key(name: object) -> tuple[int, str]`
+
+```
+Sort key for subset names: ``Base`` first, then the rest alphabetically.
+Mirrored in the iOS app (``MetadataIndex``); change both together.
+```
+
+#### `set_year_for(set_name: str, g: pd.DataFrame) -> str | None`
+
+```
+The year a set is filed under: the checklist's ``set_year`` (first non-null
+value in the set), else the leading four digits of the set name.
+```
+
+#### `build_indexes(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, object]`
+
+```
+Precompute lookups so dropdowns are fast and in-memory.
+Subsets list ``Base`` first, then alphabetically.
+Sort Card # by derived_card_number (numbers first as ints, then text),
+but display/return the actual card_number.
+```
+
+#### `json_scalar(value: Any) -> str | int | float | bool | None`
+
+```
+A pandas/numpy cell as a JSON-safe scalar; nulls and null-like strings -> None.
+```
+
+#### `build_metadata_payload(cdf: pd.DataFrame, pdf: pd.DataFrame) -> dict[str, Any]`
+
+```
+The ``GET /metadata`` body: sets -> subsets -> cards + parallels, JSON-safe.
+
+Ordering is exactly ``build_indexes``' (sets and parallels sorted, subsets
+``Base`` first then sorted; cards numeric-first by ``derived_card_number``),
+and the per-card detail is the first checklist row for that card number,
+matching the UI's ``cg.iloc[0]`` autofill. Clients keep this order; they
+never re-sort. Each set carries a ``set_year`` (``set_year_for``) so the app
+can group the Set picker by year.
+```
+
+#### `metadata_version(payload: dict[str, Any]) -> str`
+
+```
+Stable fingerprint of the metadata content, used as the ETag / ``version``.
+```
+
+---
+
+### `shoebox.transforms.search_filters`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/search_filters.py)
+
+Translate a ``ResolvedSearch`` into eBay Browse query parameters.
+
+```
+The split between server-side and client-side filtering is the crux of this
+module. eBay caps a result set at ``max_results`` items *before* we see them, so
+anything filtered in Python consumes result slots: a search fetching 200 items
+with a post-filter that rejects 90% yields 20 usable listings. Push everything
+eBay supports server-side.
+
+The unavoidable exception is title exclusion. Browse has no negative-keyword
+support at all — ``q`` is a positive match only — so "not a reprint, not a lot"
+can only happen here.
+
+Pure functions: no I/O, no clients, no settings.
+```
+
+#### `query_terms(query: str) -> list[list[str]]`
+
+```
+Parse an eBay ``q`` string into AND-groups of acceptable alternatives.
+
+eBay's grammar: space-separated terms are ANDed, ``(a, b)`` is an OR group,
+``"a b"`` is an exact phrase. ``'lincecum (auto, autograph)'`` parses to
+``[['auto', 'autograph'], ['lincecum']]`` — every group must match, a group
+matches when any alternative does. Lowercased for the substring checks.
+```
+
+#### `build_browse_filter(search: ResolvedSearch) -> str | None`
+
+```
+Build the Browse ``filter`` string, or None when nothing is filtered.
+
+Returns None rather than "" because BrowseClient tests the value for
+truthiness before forwarding it.
+```
+
+#### `build_aspect_filter(search: ResolvedSearch) -> str | None`
+
+```
+Build the ``aspect_filter`` string.
+
+eBay requires the category ID both as the ``category_ids`` URI parameter and
+again as the first element here, and the two must match. The model already
+guarantees exactly one category when aspects are present.
+```
+
+#### `cheapest_shipping(item: ItemSummary) -> Decimal | None`
+
+```
+Lowest shipping cost across options, or None if none are quoted.
+```
+
+#### `rejection_reason(item: ItemSummary, search: ResolvedSearch) -> str | None`
+
+```
+Why this listing fails the post-filters, or None if it passes.
+
+Returns a human-readable reason naming the offending config key and value,
+so ``preview-search`` can answer "why isn't this in my results?" instead of
+just dropping the row. First failing filter wins.
+```
+
+#### `aspect_rejection_reason(item_aspects: dict[str, list[str]], search: ResolvedSearch) -> str | None`
+
+```
+Why this listing fails the search's ``aspects``, or None if it satisfies them.
+
+``aspects`` is pushed to eBay as ``aspect_filter`` and so is nominally
+server-side, but eBay backfills a thin result set with looser matches that
+ignore it -- the same "results matching fewer words" padding
+``require_query_in_title`` exists to catch, except aspects survive it,
+because a padded listing still carries the query words in its title. A
+"numbered or autographed" watch then alerts on plain base cards.
+
+Semantics mirror ``aspect_filter``: every configured aspect must be present
+(AND across names), and matches any one of its configured values (OR within
+a name). Aspect names and values are compared case-insensitively because
+eBay's casing for either is not stable, and a value is matched against its
+comma-separated parts as well as whole (see ``_aspect_match_forms``).
+
+``item_aspects`` comes from ``BrowseClient.item_aspects`` -- a search result
+alone can never answer this, as it carries no item specifics.
+```
+
+#### `passes_post_filters(item: ItemSummary, search: ResolvedSearch) -> bool`
+
+```
+Apply the filters eBay has no server-side equivalent for.
+```
+
+#### `filter_items(items: list[ItemSummary], search: ResolvedSearch) -> list[ItemSummary]`
+
+```
+Apply post-filters, logging how many result slots they cost.
+```
+
+---
+
+### `shoebox.transforms.store_category_builder`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/store_category_builder.py)
+
+Work out which eBay store categories a listing belongs in.
+
+```
+The store tree this builds toward:
+
+    /Complete Your Set - You Pick
+    /Baseball Singles/<team>
+    /Basketball Singles
+    /Football Singles
+    /Graded Singles                          -- graded cards, any sport
+    /Hits/{Autographs,Relics,Numbered,Short Prints}   -- secondary, every sport
+
+Only baseball is broken out by team: it is 93% of the shelf, so its 30 clubs
+average ~50 listings each, while basketball (82 listings across 32 teams) and
+football (41 across 22) would average two or three per team. Widening either is
+a one-line change to :data:`TEAM_SUBCATEGORY_SPORTS`.
+
+eBay allows a listing in **one or two** store categories, so a baseball hit
+carries both its team category and its Hits category; everything else carries
+one. See ``EbayOfferDetailsWithAll.store_category_names`` in ebay_rest.
+
+This module only decides. Nothing here talks to eBay.
+```
+
+#### `is_variation_listing(title: object) -> bool`
+
+```
+True for a "Complete Your Set" / "You Pick" group listing.
+```
+
+#### `hit_type(*, autographed: object=None, features: object=None, subset_name: object=None, print_run: object=None) -> str | None`
+
+```
+Which Hits category a card belongs in, or None for an ordinary card.
+
+Precedence: an autographed relic is filed under Autographs, a numbered
+parallel only counts as Numbered when it is neither, and a short print is
+the fallback hit -- a numbered short print is Numbered.
+```
+
+#### `resolve_sport(team: object=None, sport: object=None) -> tuple[str, bool]`
+
+```
+The sport branch for a listing, and whether it had to be guessed at.
+
+The team name wins over the Sport item specific: the two disagree on a
+small number of live listings -- basketball cards tagged Baseball, mostly --
+and the team is the more reliable of the pair. College teams imply no one
+sport, so they fall through to the item specific.
+```
+
+#### `title_sport_conflict(title: object, resolved_sport: str) -> bool`
+
+```
+True when the title names a different sport than the listing resolved to.
+```
+
+#### `category_path(*segments: str) -> str`
+
+```
+Join category names into the ``/a/b`` path eBay expects.
+```
+
+#### `class StoreCategoryPlan`
+
+```
+Where one listing should sit, and how that was decided.
+```
+
+**Fields**
+
+```
+categories: list[str]
+sport: str
+team: str | None = None
+hit: str | None = None
+is_variation: bool = False
+is_graded: bool = False
+notes: list[str] = field(default_factory=list)
+```
+
+#### `plan_store_category(*, title: object=None, team: object=None, sport: object=None, features: object=None, subset_name: object=None, print_run: object=None, autographed: object=None, graded: object=None) -> StoreCategoryPlan`
+
+```
+Decide the store categories for a single listing.
+
+Every argument is optional and missing values are tolerated: this runs over
+a BigQuery export where any item specific may be null. ``graded`` is the
+``is_graded`` flag (or the ``Graded`` item specific); a truthy value files
+the card under Graded Singles instead of its sport and team.
+```
+
+---
+
+### `shoebox.transforms.title_enhancer`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/title_enhancer.py)
+
+Rewrite an existing listing title into its enhanced form.
+
+```
+Applied in order, each step driven by ``configs/title_crosswalk.yaml``:
+
+1. **Repair the characters.** Titles carrying accented or mis-encoded text
+   ("Vidal BrujÃ¡n") are un-garbled and folded to plain ASCII.
+2. **Strip dead phrases.** Anything in ``title_removals`` ("Topps Baseball")
+   comes out wherever it appears.
+3. **Handle the shorthand.** ``(RC)`` -> ``Rookie``, ``AU`` -> ``Auto``, ``MEM``
+   dropped. An expansion is skipped when the title already says the same thing
+   ("Rookie Revolution ... (RC)" keeps the insert name and drops the token).
+   Card numbers such as ``#RC-6`` are never touched.
+4. **Add the team.** The short name goes ahead of the trailing suffix tokens --
+   the slot :func:`shoebox.transforms.listing_builder.title` uses -- unless the
+   title already names the team in some spelling.
+
+eBay caps titles at 80 characters. When the result overflows, pieces are given
+up in this order: the ``" - "`` separator, then the card number, then the team,
+then the expansions. Character repair, phrase stripping, and token removal are
+never given up -- they only ever shorten the title. A title that cannot fit even
+those is left exactly as it was and flagged. Every outcome is reported on
+:class:`EnhancedTitle` rather than logged, so the pipeline can show the user
+what happened before anything is pushed to eBay.
+```
+
+#### `class EnhancedTitle`
+
+```
+Result of enhancing one title. ``changed`` is the only thing the caller
+has to check before deciding whether to push an update.
+```
+
+**Fields**
+
+```
+original: str
+title: str
+team: str | None = None
+team_short: str | None = None
+changes: list[str] = field(default_factory=list)
+notes: list[str] = field(default_factory=list)
+```
+
+#### `normalize_characters(title: str) -> str`
+
+```
+Fold a title to plain ASCII, repairing mis-encoded text on the way.
+
+"Vidal BrujÃ¡n" -> "Vidal Brujan", "Nikola JokiÄ" -> "Nikola Jokic",
+curly quotes -> straight ones.
+```
+
+#### `has_illegal_characters(title: str) -> bool`
+
+```
+True when a title carries anything outside plain printable ASCII.
+```
+
+#### `strip_phrases(title: str) -> str`
+
+```
+Remove every configured dead phrase (``title_removals``).
+```
+
+#### `remove_separator(title: str) -> str`
+
+```
+Drop the first ``" - "`` separator -- the cheapest two characters.
+```
+
+#### `remove_card_number(title: str) -> str`
+
+```
+Drop the ``#...`` card-number token.
+```
+
+#### `apply_shorthand(title: str, *, expand: bool=True) -> tuple[str, list[str]]`
+
+```
+Expand, drop, and de-duplicate the shorthand tokens in a title.
+
+Returns the rewritten title and the change labels that describe what
+happened, so the caller can report which rule fired. ``expand=False`` still
+drops removed tokens (MEM is unwanted at any length) but leaves the rest
+written as they were -- the last resort before giving up on a long title.
+```
+
+#### `title_names_team(title: str, team: str | Iterable[str] | None) -> bool`
+
+```
+True when the title already identifies the team, in any known spelling.
+```
+
+#### `add_team(title: str, team_short: str) -> str`
+
+```
+Insert the short team name ahead of any trailing suffix tokens.
+```
+
+#### `enhance_title(title: str, team: str | Iterable[str] | None=None, *, max_length: int=MAX_TITLE_LENGTH) -> EnhancedTitle`
+
+```
+Enhanced form of ``title`` for a card whose eBay ``Team`` value is ``team``.
+
+``team`` takes whatever the source hands over -- a list, a "Team A | Team B"
+string, or a single name.
+```
+
+---
+
+### `shoebox.transforms.variation_listing_builder`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/variation_listing_builder.py)
+
+#### `class ChecklistVariationRow`
+
+**Fields**
+
+```
+record_id: str
+set_year: str
+subset_id: str
+set_name: str
+subset_name: str
+subset_type: str
+derived_card_number: str | None
+card_number: str
+qty: int
+price: float
+player: str
+team: str | None
+display_name: str
+note: str | None
+```
+
+#### `build_variation_sku(subset_id: str, card_number: str) -> str`
+
+```
+Stable 50-char SKU for one variation item.
+```
+
+#### `build_group_key(subset_id: str) -> str`
+
+```
+Stable inventory item group key (<=50 chars) from subset_id.
+```
+
+#### `build_variation_aspects(rows: list[ChecklistVariationRow]) -> dict[str, list[str]]`
+
+```
+Item specifics for the item group.
+Multi-value fields (Player, Team) collect all unique values across variations.
+Card Number is omitted — it is the varying attribute handled by variesBy.
+```
+
+#### `build_individual_inventory_item(row: ChecklistVariationRow, image_urls: list[str] | None=None) -> dict[str, Any]`
+
+```
+Individual inventory item payload for one variation.
+product.aspects contains only the varying attribute (Card) so eBay can
+link this SKU to its variation option in the item group.
+If image_urls are provided they are set on product.imageUrls so eBay
+can display the card-specific image when that variation is selected.
+```
+
+#### `build_item_group_payload(rows: list[ChecklistVariationRow], skus: list[str], image_urls: list[str], has_per_variation_images: bool=False) -> dict[str, Any]`
+
+```
+Inventory item group payload (parent record grouping all variations).
+When has_per_variation_images=True, aspectsImageVariesBy is set so eBay
+displays each card's own image when that variation is selected.
+```
+
+#### `variation_store_category(row: ChecklistVariationRow) -> str`
+
+```
+The store category path for a "Complete Your Set" group listing.
+
+Every You Pick listing sits in the one You Pick branch -- it spans a whole
+set, so it has no team and no single card to call a hit. This has to be a
+live ``/path`` name: the Inventory API files any name it cannot match in
+the store tree under "Other".
+```
+
+#### `build_sku_offer_payload(sku: str, row: ChecklistVariationRow, store_category: str, category_id: str | None=None, listing_start_date: str | None=None) -> dict[str, Any]`
+
+```
+Individual offer payload for one variation SKU.
+Each variation gets its own offer with its own price, so per-card pricing
+is fully supported. All offers in the group are published together via
+publishByInventoryItemGroup.
+```
+
+---
+
+### `shoebox.transforms.variation_template`
+
+[Source](https://github.com/coperyan/shoebox/blob/main/shoebox/transforms/variation_template.py)
+
+Pure logic behind `shoebox variation-template`.
+
+```
+A variation template is a workbook with one row per card in a subset (e.g.
+2026 Topps Update Base, US1-US350) that the seller fills in with quantities and
+prices. Each row carries a Segment number, and every segment becomes its own
+multi-variation listing, because eBay caps a listing at 250 variations.
+
+Nothing here touches Excel, BigQuery or eBay; the pipeline module does the I/O.
+```
+
+#### `class TemplateError(ValueError)`
+
+```
+A template that cannot be listed; the message names every problem found.
+```
+
+#### `class ListingSettings`
+
+**Fields**
+
+```
+default_price: float | None = None
+promote_rate: int = DEFAULT_PROMOTE_RATE
+volume_discount_tiers: list[dict[int, int]] = field(default_factory=list)
+```
+
+#### `card_sort_key(card_number: Any, derived_card_number: Any=None) -> tuple`
+
+```
+Order cards the way the checklist prints them: US2 before US10.
+
+Uses the view's derived (prefix-stripped) number when it is numeric, else
+the trailing digits of the card number; text-only numbers sort last.
+```
+
+#### `segment_sizes(n_cards: int, segments: int) -> list[int]`
+
+```
+Split n_cards into contiguous, near-equal segments of at most MAX_VARIATIONS.
+
+The requested count is raised when it would leave a segment over eBay's cap
+and lowered when there are fewer cards than segments.
+```
+
+#### `default_display_name(card_number: Any, player: Any, note: Any=None, note_check: Any=None, subset_name: Any='') -> str`
+
+```
+Dropdown text for a card, e.g. 'US1 Shohei Ohtani RC', capped at eBay's limit.
+```
+
+#### `build_template_records(checklist: list[dict[str, Any]], segments: int) -> list[dict[str, Any]]`
+
+```
+Checklist rows (v_checklist columns) -> Checklist sheet rows, sorted and segmented.
+
+Qty and Price are left blank for the seller to fill in.
+```
+
+#### `parse_listing_settings(rows: list[tuple[Any, ...]]) -> ListingSettings`
+
+```
+Read the Listing sheet (rows of cell values) into ListingSettings.
+
+Settings are found by their label in the first column, so moving or adding
+rows does not break the read. The volume-discount table is every row under
+the 'Min Qty' header until the first blank row; tiers with no % are skipped.
+```
+
+#### `group_id(subset_id: str, segment: int) -> str`
+
+```
+Key one segment's listing by; build_group_key hashes it into the eBay group key.
+```
+
+#### `parse_template_rows(records: list[dict[str, Any]], *, default_price: float | None=None) -> dict[str, list[ChecklistVariationRow]]`
+
+```
+Validate filled-in Checklist rows and group them by segment.
+
+Every card is listed so the listing covers the whole checklist; a blank or
+0 Qty shows as a sold-out variation until restocked. Every card therefore
+needs a Price or the sheet's Default Price.
+Raises TemplateError naming every problem, so one pass fixes the sheet.
+```
+
+---
