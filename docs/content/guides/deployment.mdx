@@ -128,6 +128,7 @@ why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`
 | `send-offers` | every 15 minutes, 08:00–21:45 (**paused**; run it from the [Slack Home tab](#slack-home-tab-buttons)) | `shoebox send-offers --timeout-s 600` (14m timeout, 512Mi) | — (was run by hand) |
 | `create-listings` | manual (the iOS app) | `shoebox create-listings --run-request` (1h, 2Gi) | — |
 | `orders-awaiting-shipment` | manual ([Slack Home tab](#slack-home-tab-buttons)) | `shoebox orders-awaiting-shipment --pull-order --message` (10m, 512Mi) | — |
+| `orders-awaiting-shipment-buyer` | manual ([Slack Home tab](#slack-home-tab-buttons)) | `shoebox orders-awaiting-shipment --buyer-order --message` (10m, 512Mi) | — |
 
 ### Services
 
@@ -269,7 +270,8 @@ because the container filesystem is RAM; `ACTIVE_STALE_AFTER` in
 `shoebox-api` also serves a second Slack app, **Shoebox Commands**. Open it
 in Slack's sidebar, and its Home tab has a Run button for each job in
 `HOME_COMMANDS` (`shoebox/api/slack_home.py`), with how that job last ran.
-Today that's `orders-awaiting-shipment`, `sync-orders`,
+Today that's `orders-awaiting-shipment` (pull order),
+`orders-awaiting-shipment-buyer`, `sync-orders`,
 `sync-active-listings`, `sync-watch-list` and `send-offers`. How it works and
 how to add a button: [slack.md](/guides/slack#app-home-buttons). The `/slack`
 routes exist only when `SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET` is set, and the
@@ -312,7 +314,8 @@ instead.
 
 **S4. Deploy** by merging to `main`. The routes ship in the image, so the
 `shoebox-main` Cloud Build trigger builds and tests it, then rolls out
-`shoebox-api` and creates the `orders-awaiting-shipment` job. Running
+`shoebox-api` and creates any new jobs, like the `orders-awaiting-shipment`
+ones. Running
 `deploy_cloud_run.py --only …` from a workstation redeploys whatever `:latest`
 is, which has the routes only after that build. When it's done,
 `curl -s -o /dev/null -w '%{http_code}\n' -X POST $URL/slack/events` prints
