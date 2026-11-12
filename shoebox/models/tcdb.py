@@ -9,12 +9,13 @@ in ``_FORM_FIELDS``. Everything the interactive session lets you tweak
 from __future__ import annotations
 
 import re
+from datetime import date, datetime
 from typing import ClassVar
 from urllib.parse import urlencode, urljoin
 
 from pydantic import Field, field_validator
 
-from shoebox.models.common import Model
+from shoebox.models.common import Model, utc_now
 
 TCDB_BASE_URL = "https://www.tcdb.com"
 
@@ -226,10 +227,20 @@ class CollectionWidget(Model):
     quick_add: bool = False
     add_another: bool = False
     remove: bool = False
+    # Copies owned, when the box says (its quantity badge or "You have N").
+    quantity: int | None = None
 
     @property
     def owned(self) -> bool:
         return self.add_another or self.remove
+
+
+class CollectionInspection(Model):
+    """A ViewCard.cfm page and the state of its collection box, read without changing anything."""
+
+    card: TcdbCardPage
+    widget: CollectionWidget
+    widget_html: str = ""
 
 
 class CollectionAddResult(Model):
@@ -297,3 +308,110 @@ class WantlistPage(Model):
     @property
     def has_more(self) -> bool:
         return bool(self.total_pages and self.page_index < self.total_pages)
+
+
+class CollectionRemoveResult(Model):
+    """Outcome of removing copies of a card from the collection on its ViewCard.cfm page."""
+
+    # "removed" | "not_owned" | "failed"
+    status: str
+    card: TcdbCardPage
+    copies_requested: int = 1
+    copies_removed: int = 0
+    # Whether the collection box still showed the card as owned afterwards
+    # (None when the box never loaded).
+    still_owned: bool | None = None
+    detail: str = ""
+    # The last CollectionRemove_ajax.cfm call the page made, when one was made.
+    request_url: str | None = None
+    # Inner HTML of #colDiv, kept for debugging when the remove did not happen.
+    widget_html: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "removed" and self.copies_removed >= self.copies_requested
+
+
+class SoldCard(Model):
+    """One sold eBay line item (never a variation) and the checklist card its
+    SKU resolves to. Built from ``configs/bigquery/queries/tcdb_sold_cards.sql``.
+
+    ``matched`` is false when the SKU matched no checklist card; the card
+    columns are then empty and only ``ebay_title`` says what sold.
+    """
+
+    order_line_key: str
+    order_id: str = ""
+    line_item_id: str = ""
+    order_created_date: date
+    ebay_title: str = ""
+    sku: str = ""
+    quantity: int = 1
+    legacy_item_id: str = ""
+    matched: bool = False
+    set_year: str = ""
+    # The checklist's set name, which already carries the year ("2020 Topps Chrome").
+    set_name: str = ""
+    subset_name: str = ""
+    subset_type: str = ""
+    parallel_variety: str = ""
+    card_number: str = ""
+    player: str = ""
+    team: str = ""
+    print_run: int | None = None
+
+    @property
+    def description(self) -> str:
+        """The card as the checklist knows it, in TCDB's title shape:
+        ``2020 Topps Chrome - Pink Refractor #1 Mike Trout``. The eBay title
+        when the SKU matched nothing."""
+        if not self.matched:
+            return self.ebay_title
+        parts = [self.set_name]
+        if self.subset_name and self.subset_name.casefold() != "base":
+            parts.append(self.subset_name)
+        if self.parallel_variety:
+            parts.append(self.parallel_variety)
+        head = " - ".join(p for p in parts if p)
+        return f"{head} #{self.card_number} {self.player}".strip()
+
+    @property
+    def search_name(self) -> str:
+        """Name for the search form: the first player of a multi-player card."""
+        return self.player.split(" / ")[0].strip()
+
+
+class ReconcileEntry(Model):
+    """One line of the reconcile ledger: what was decided about one sold line item.
+
+    ``removed`` and ``ignored`` are final (the sale is never shown again);
+    ``skipped`` and ``failed`` are not, so the sale comes back next run.
+    """
+
+    order_line_key: str
+    order_id: str = ""
+    line_item_id: str = ""
+    order_created_date: date
+    status: str  # removed | ignored | skipped | failed
+    card: str = ""
+    quantity: int = 1
+    tcdb_title: str = ""
+    tcdb_url: str = ""
+    copies_removed: int = 0
+    detail: str = ""
+    at: datetime = Field(default_factory=utc_now)
+
+    @property
+    def final(self) -> bool:
+        return self.status in RECONCILE_FINAL_STATUSES
+
+
+RECONCILE_FINAL_STATUSES = frozenset({"removed", "ignored"})
+
+
+class ReconcileState(Model):
+    """Where the reconcile left off: every sale created on or before
+    ``reconciled_through`` has been dealt with."""
+
+    reconciled_through: date | None = None
+    updated_at: datetime | None = None

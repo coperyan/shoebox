@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`tcdb-reconcile`: take cards sold on eBay out of the TCDB collection.**
+  Pulls the non-variation sales created since a stored reconciled-through
+  date from BigQuery (`configs/bigquery/queries/tcdb_sold_cards.sql` over
+  `ebay.v_orders_current`, which resolves each SKU to its checklist card),
+  searches TCDB for each one by year + card number + name, stars the
+  best-matching result by word overlap, and asks at a `reconcile>` prompt
+  (Enter / `N` / `open N` / `set field=value` / `skip` / `ignore` / `quit`).
+  A sale of one copy is removed on pick; a sale of two or more reads the
+  owned count from the collection box (`CollectionWidget.quantity`, via
+  `TcdbBrowser.inspect_collection`) and asks how many copies should remain
+  before removing the rest. Decisions are logged to
+  `data/tcdb_reconcile/ledger.jsonl`; `state.json` keeps the date, which
+  moves to the day before the oldest sale still open so nothing is lost.
+  `TcdbBrowser.remove_from_collection` clicks the ViewCard collection box's
+  own Remove button and watches `CollectionRemove_ajax.cfm`, never clicking a
+  box that did not re-render. `--dry-run` lists without a browser;
+  `--since` is required on the first run. "You Pick" variation sales are
+  never offered (not tracked on TCDB).
 - **Slack Home-tab buttons that start Cloud Run jobs.** A second Slack app,
   Shoebox Commands (`deploy/slack-commands-app.yaml`), calls `shoebox-api`
   over HTTP: `POST /slack/events` publishes its Home tab on `app_home_opened`,

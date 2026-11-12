@@ -573,6 +573,27 @@ Full behaviour: [tcdb.md](/guides/tcdb#shoebox-tcdb-wantlist).
 | `--with-team` | Also fetch each card's team (one page load per card) |
 | `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
 
+### `tcdb-reconcile`
+Removes cards sold on eBay from your tcdb.com collection, one at a time.
+Pulls the non-variation sales created since the stored reconciled-through
+date from BigQuery (`sync-orders` fills it nightly), searches TCDB for each
+sold card by year + card number + name, stars the best-matching result, and
+asks at a `reconcile>` prompt: Enter removes the starred match, `N` removes
+result N, `open N`, `set field=value` re-searches, `skip`, `ignore`, `quit`.
+A sale of one copy is removed on pick; two or more sold shows how many
+copies TCDB says you have and asks how many should remain.
+Decisions go to `data/tcdb_reconcile/ledger.jsonl` and the date advances to
+the day before the oldest sale still open. The first run needs `--since`.
+Full behaviour: [tcdb.md](/guides/tcdb#shoebox-tcdb-reconcile).
+
+| Flag | Effect |
+|---|---|
+| `--since YYYY-MM-DD` | Reconcile sales created on/after this date (default: the day after the stored date; required the first time) |
+| `--dry-run` | List the sales that would be offered; no browser, nothing saved |
+| `--limit N` | Stop after N cards |
+| `--category` | Sport/category when the set name does not say (default `tcdb.search_defaults.category`, else Baseball) |
+| `--profile-dir PATH` | Chrome profile to use (default `tcdb.profile_dir`) |
+
 ## Not exposed via the CLI
 
 - **`services/orders_awaiting_shipment.display_orders`** defaults differ when
