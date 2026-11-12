@@ -90,6 +90,8 @@ slack:
   offers_channel: C0123456789
   # Slack user IDs allowed to run commands in command_channel; empty = anyone
   # in the channel. Find yours: Slack profile -> "..." -> Copy member ID.
+  # Also the only users who get buttons on the Slack Commands app's Home tab
+  # (shoebox-api); there, empty = nobody.
   allowed_user_ids: []
   # allowed_user_ids: ["U0123456789"]
 

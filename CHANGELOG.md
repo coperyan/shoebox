@@ -7,8 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tcdb-reconcile`: take cards sold on eBay out of the TCDB collection.**
+  Pulls the non-variation sales created since a stored reconciled-through
+  date from BigQuery (`configs/bigquery/queries/tcdb_sold_cards.sql` over
+  `ebay.v_orders_current`, which resolves each SKU to its checklist card),
+  searches TCDB for each one by year + card number + name, stars the
+  best-matching result by word overlap, and asks at a `reconcile>` prompt
+  (Enter / `N` / `open N` / `set field=value` / `skip` / `ignore` / `quit`).
+  A sale of one copy is removed on pick; a sale of two or more reads the
+  owned count from the collection box (`CollectionWidget.quantity`, via
+  `TcdbBrowser.inspect_collection`) and asks how many copies should remain
+  before removing the rest. Decisions are logged to
+  `data/tcdb_reconcile/ledger.jsonl`; `state.json` keeps the date, which
+  moves to the day before the oldest sale still open so nothing is lost.
+  `TcdbBrowser.remove_from_collection` clicks the ViewCard collection box's
+  own Remove button and watches `CollectionRemove_ajax.cfm`, never clicking a
+  box that did not re-render. `--dry-run` lists without a browser;
+  `--since` is required on the first run. "You Pick" variation sales are
+  never offered (not tracked on TCDB).
+- **Slack Home-tab buttons that start Cloud Run jobs.** A second Slack app,
+  Shoebox Commands (`deploy/slack-commands-app.yaml`), calls `shoebox-api`
+  over HTTP: `POST /slack/events` publishes its Home tab on `app_home_opened`,
+  and `POST /slack/interactions` takes the clicks. There's a Run button for
+  `orders-awaiting-shipment` (pull order), `orders-awaiting-shipment-buyer`,
+  `sync-orders`, `sync-active-listings`,
+  `sync-watch-list` and `send-offers` (`HOME_COMMANDS` in
+  `api/slack_home.py`), each showing the job's latest execution. A click runs
+  the job as deployed, unless an execution is still pending or running. Every
+  request is checked against the app's signing secret (`/slack` skips
+  `X-API-Key`), and only `slack.allowed_user_ids` get buttons; empty means
+  nobody. The routes exist only when the new
+  `SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET` / `SHOEBOX_SLACK_COMMANDS_BOT_TOKEN`
+  secrets are set, so create them before deploying. New manual
+  `orders-awaiting-shipment` (`--pull-order --message`) and
+  `orders-awaiting-shipment-buyer` (`--buyer-order --message`) jobs.
+  `CloudRunJobs.latest_execution` returns an `Execution` (pending, running,
+  succeeded, failed or cancelled). Setup in the deployment guide.
+
 ### Fixed
 
+- **Cloud Run deployment guide rendered inside out from the send-offers
+  section on.** Its "run it outside the schedule" code block was never
+  closed; it now has the two `gcloud run jobs execute` commands.
+- **`orders-awaiting-shipment` crashed when nothing was waiting to ship.**
+  `np.concatenate` of an empty list raised `ValueError`. It now posts
+  "nothing to ship" (`--message`) or prints it (`--display`).
 - **New listings landed in the "Other" store category.** `create-listings`
   still sent the pre-restructure flat names (`Parallels`, `Base Cards`,
   `Inserts`, `Serial Numbered`, …) as `storeCategoryNames`, and the Inventory

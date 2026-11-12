@@ -1,11 +1,12 @@
 # TCDB automation
 
 Browser automation for the [Trading Card Database](https://www.tcdb.com)
-(TCDB): the site where the collection is catalogued. It covers three
+(TCDB): the site where the collection is catalogued. It covers four
 workflows: **advanced search by card number** (`tcdb-search`), **adding cards
-to your collection** (`tcdb-add`, or `add N` inside a search session) and
-**exporting your want list** (`tcdb-wantlist`); the module is laid out so
-further TCDB actions slot in beside them.
+to your collection** (`tcdb-add`, or `add N` inside a search session),
+**exporting your want list** (`tcdb-wantlist`) and **removing cards sold on
+eBay** (`tcdb-reconcile`); the module is laid out so further TCDB actions
+slot in beside them.
 
 ## Why a real browser
 
@@ -263,19 +264,97 @@ each empty one still costs a page load, so name the sport when you know it.
 One row per card, keyed by `item_id` (TCDB's id for that row of your
 collection), so re-running gives a stable set to diff against.
 
+## `shoebox tcdb-reconcile`
+
+```
+shoebox tcdb-reconcile [--since YYYY-MM-DD] [--dry-run] [--limit N] [--category Baseball]
+                       [--profile-dir PATH]
+```
+
+As cards sell on eBay the TCDB collection (and its For Sale / Trade list)
+falls behind. This walks the sales and takes each sold card out of the
+collection, one at a time, with you confirming every one.
+
+1. **Sales come from BigQuery.** `sync-orders` lands every order nightly, so
+   `tcdb-reconcile` queries `ebay.v_orders_current` for line items created on
+   or after the start date (`configs/bigquery/queries/tcdb_sold_cards.sql`).
+   The view resolves each SKU to its checklist card, which gives the year,
+   set, subset, parallel, number and player. Run `sync-orders` first if you
+   want today's sales included.
+2. **Variation listings are left out.** "You Pick" cards are not tracked on
+   TCDB, so anything sold with a variation is never shown.
+3. **The start date is stored.** `data/tcdb_reconcile/state.json` holds the
+   *reconciled-through* date; each run starts the day after it. The first run
+   has nothing stored, so it needs `--since`. `--since` on a later run
+   overrides the stored date (a re-run is safe: sales already removed or
+   ignored are filtered out by the ledger).
+4. **One card at a time.** For each sale, Chrome runs the advanced search on
+   year + card number + first name (the same search `tcdb-add` uses; the set
+   name is left out because TCDB reads a leading `-` as an exclusion and the
+   checklist's set names rarely match TCDB's). The results are listed with a
+   *Match* score, the share of words (set, subset, parallel, player) each
+   title has in common with the sold card. The clear best is starred: a base
+   card and its parallels all contain the base words, so the parallel's extra
+   words are what separate them. The category is guessed from the sport in
+   the set name (`... Basketball` → Basketball) and defaults to Baseball or
+   `tcdb.search_defaults.category`.
+5. **You decide**, at the `reconcile>` prompt:
+
+   | Input | Effect |
+   |---|---|
+   | `Enter` | Remove the starred match from your collection |
+   | `3` | Remove result 3 instead (two or more sold: asks how many copies should remain) |
+   | `open 3` | Open result 3 in Chrome |
+   | `set year=1993 name=Bonds` | Change the search fields and search again (`category` too) |
+   | `skip` | Leave this sale for next time |
+   | `ignore` | Never ask about this sale again (not tracked on TCDB) |
+   | `quit` | Stop; undecided sales come back next run |
+
+   A sale of one copy is removed as soon as you pick it. A sale of two or
+   more first opens the card and reads how many copies the collection box
+   says you have, then asks how many should **remain** (`copies to keep
+   [N]>`, defaulting to owned minus sold); the rest are removed. Answering
+   with every copy keeps them all and settles the sale. If the box does not
+   show a count, the prompt asks how many to remove instead. Removal clicks
+   the collection box's own *Remove* button on the ViewCard page and watches
+   the `CollectionRemove_ajax.cfm` request, waiting for the box to re-render
+   between copies, so a box that does not refresh is never clicked twice.
+   A sale whose SKU matched no checklist card is searched from its eBay title
+   instead (year, `#number`, last name) as a starting point to refine.
+6. **Every decision is logged** to `data/tcdb_reconcile/ledger.jsonl`
+   (`removed`, `ignored`, `skipped`, `failed`, with the TCDB title and link).
+   Only `removed` and `ignored` are final. At the end the reconciled-through
+   date moves to today, or to the day before the oldest sale still open
+   (skipped, failed, or not reached before `quit`), so nothing is lost.
+
+`--dry-run` prints the sales that would be offered, without opening Chrome
+or touching the state. Start there, then `--limit 1` for the first real
+removal.
+
+```
+$ shoebox tcdb-reconcile --since 2026-10-01 --dry-run
+$ shoebox tcdb-reconcile --since 2026-10-01 --limit 1
+$ shoebox tcdb-reconcile            # next time: picks up after the stored date
+```
+
+The reconcile cannot run on Cloud Run: TCDB needs the persistent Chrome
+profile and a human at the keyboard, so it is a local, interactive command.
+
 ## Code layout
 
 | Path | Role |
 |---|---|
-| `shoebox/models/tcdb.py` | `AdvancedSearchQuery` (one attribute per form field, validation, `to_url()`), `TcdbSearchResult`, `TcdbSearchPage`, `CardSpec`, `TcdbCardPage`, `CollectionWidget`, `CollectionAddResult` |
+| `shoebox/models/tcdb.py` | `AdvancedSearchQuery` (one attribute per form field, validation, `to_url()`), `TcdbSearchResult`, `TcdbSearchPage`, `CardSpec`, `TcdbCardPage`, `CollectionWidget`, `CollectionAddResult`, `CollectionRemoveResult`, `SoldCard`, `ReconcileEntry`, `ReconcileState` |
 | `shoebox/clients/tcdb/search.py` | Pure HTML parsing: `parse_results`, `is_logged_in`, `is_challenge_page`. Unit-tested against `tests/fixtures/tcdb_view_results.html` |
 | `shoebox/clients/tcdb/card.py` | Pure helpers for adding: `parse_card_spec`, `match_card`, `parse_card_page`, `parse_collection_widget`. Unit-tested against `tests/fixtures/tcdb_view_card.html` |
 | `shoebox/clients/tcdb/collection.py` | Pure parsing for collection views: `wantlist_url`, `parse_wantlist_page`, `parse_member`. Unit-tested against `tests/fixtures/tcdb_wantlist.html` |
 | `shoebox/clients/chromedriver.py` | `fix_apple_silicon`: makes undetected-chromedriver download and re-sign an arm64 driver on Apple Silicon. Shared with the 130point and Topps scrapers |
-| `shoebox/clients/tcdb/browser.py` | `TcdbBrowser`: Chrome lifecycle, Cloudflare wait, `ensure_logged_in`, one method per site action (`advanced_search`, `open`, `add_to_collection`, `wantlist_page`/`iter_wantlist`) |
+| `shoebox/clients/tcdb/browser.py` | `TcdbBrowser`: Chrome lifecycle, Cloudflare wait, `ensure_logged_in`, one method per site action (`advanced_search`, `open`, `add_to_collection`, `remove_from_collection`, `wantlist_page`/`iter_wantlist`) |
 | `shoebox/pipelines/tcdb_search.py` | The interactive session; `parse_command` is pure and tested |
 | `shoebox/pipelines/tcdb_wantlist.py` | `tcdb-wantlist`: walks the want list's pages and writes CSV/JSONL |
 | `shoebox/pipelines/tcdb_add.py` | `tcdb-add`: reads card lines, resolves each to one card, adds it, prints a summary |
+| `shoebox/pipelines/tcdb_reconcile.py` | `tcdb-reconcile`: sold cards from BigQuery, stored reconciled-through date and ledger, candidate ranking, the `reconcile>` prompt; everything but the run loop is pure and tested |
+| `configs/bigquery/queries/tcdb_sold_cards.sql` | Non-variation sales since a date with their checklist attributes |
 | `shoebox/settings.py` → `TcdbSettings` | `profile_dir`, `login_timeout_s`, `search_defaults` |
 
 ### Adding another TCDB action
@@ -317,5 +396,12 @@ test the parser against the fragment's HTML.
   look the way shoebox expects (for example, TCDB changed its markup, or you
   are logged out). Open the saved `tcdb_debug/collection_box_*.html`: it shows
   what the box contained.
+- **`tcdb-reconcile` shows "(no checklist match)"** — the listing's SKU no
+  longer resolves to a checklist row (the card was listed before the
+  checklist had it, or the row changed). The search is seeded from the eBay
+  title; refine it with `set` or `ignore` the sale.
+- **`tcdb-reconcile` says `not in the collection`** — the picked card is not
+  owned on TCDB. The sale is logged as `failed` and offered again next run;
+  pick a different result or `ignore` it.
 - **Profile locked** — a previous Chrome on the same profile is still running.
   Quit it (or delete `data/tcdb_chrome_profile/SingletonLock`).

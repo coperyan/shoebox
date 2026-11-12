@@ -18,7 +18,10 @@ workstation: shoebox create-listings   (reads paths.queue_uri; downloads gs:// p
 
 ## Authentication
 
-Every route except `/health` requires the header `X-API-Key: <key>`. The key
+Every route except `/health` and `/slack/*` requires the header
+`X-API-Key: <key>`. The `/slack` routes back the Slack Commands app's Home
+tab. They exist only when that app is configured, and they check Slack's
+request signature instead ([slack.md](/guides/slack#app-home-buttons)). The key
 is the `SHOEBOX_API_KEY` environment variable (in Cloud Run, mounted from the
 `shoebox-api-key` secret; see [deployment.md](/guides/deployment#services)). A
 missing or wrong key is a `401`. The server refuses to start without the
@@ -43,6 +46,8 @@ like a password: `openssl rand -hex 32`, rotate by adding a secret version.
 | `POST /queue/listings` | `{"publish": true, "schedule": true, "scans_folder": "Pictures/Card Scans"}` (`scans_folder` optional) | `202 ListingRun` (state `requested`); starts the Cloud Run `create-listings` job. `409` when the latest save is a draft or a run is active; `502` when the job could not be started |
 | `GET /queue/listings` | – | `{"runs": [ListingRun without results…]}`, newest first (20) |
 | `GET /queue/listings/{run_id}` | – | the full `ListingRun`; `404` if unknown |
+| `POST /slack/events` | Slack Events API JSON (signed) | answers the URL challenge; publishes the Home tab on `app_home_opened` |
+| `POST /slack/interactions` | Slack `payload=` form (signed) | Home-tab button clicks: starts that Cloud Run job, then republishes the tab |
 
 ### Row shapes
 

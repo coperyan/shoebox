@@ -34,6 +34,8 @@ from shoebox.models.tcdb import (
     TCDB_BASE_URL,
     AdvancedSearchQuery,
     CollectionAddResult,
+    CollectionInspection,
+    CollectionRemoveResult,
     TcdbSearchPage,
     WantlistPage,
 )
@@ -325,7 +327,7 @@ class TcdbBrowser:
         if not clicked:
             return result("no_add_button", f"{selector} disappeared before it could be clicked")
 
-        request = self._wait_for_add_request(timeout_s, poll_s)
+        request = self._wait_for_collection_request("CollectionAdd", timeout_s, poll_s)
         if request is None:
             return result("failed", f"no add request seen within {int(timeout_s)}s")
         if not request.get("ok"):
@@ -336,13 +338,7 @@ class TcdbBrowser:
             )
 
         # The page reloads the collection box after a successful add.
-        deadline = time.monotonic() + timeout_s
-        after = widget_html
-        while time.monotonic() < deadline:
-            after = self._collection_widget_html()
-            if after.strip() and after != widget_html:
-                break
-            time.sleep(poll_s)
+        after, _changed = self._wait_for_widget_change(widget_html, timeout_s, poll_s)
         verified = parse_collection_widget(after).owned
         logger.info("TCDB: added %s (verified=%s)", card.title, verified)
         return CollectionAddResult(
@@ -352,6 +348,95 @@ class TcdbBrowser:
             verified=verified,
             detail="" if verified else "collection box did not refresh to show it",
         )
+
+    def inspect_collection(
+        self, card_url: str, *, timeout_s: float = 20, poll_s: float = 0.25
+    ) -> CollectionInspection:
+        """Open a ViewCard.cfm page and read its collection box (owned? how many?)
+        without clicking anything."""
+        card = parse_card_page(self.get(card_url), url=card_url, base_url=self.base_url)
+        widget_html = self._wait_for_collection_widget(timeout_s, poll_s)
+        return CollectionInspection(
+            card=card, widget=parse_collection_widget(widget_html), widget_html=widget_html
+        )
+
+    def remove_from_collection(
+        self,
+        card_url: str,
+        *,
+        copies: int = 1,
+        timeout_s: float = 20,
+        poll_s: float = 0.25,
+    ) -> CollectionRemoveResult:
+        """Open a ViewCard.cfm page and remove ``copies`` copies of the card from
+        the collection it shows.
+
+        Same approach as ``add_to_collection``: click the collection box's own
+        ``.removeBtn`` (once per copy) and watch the ``CollectionRemove_ajax.cfm``
+        request each click makes, waiting for the box to re-render in between.
+        Stops early when the box stops offering Remove (the last copy is gone)
+        or fails to re-render, so a stale box is never clicked twice.
+        """
+        card = parse_card_page(self.get(card_url), url=card_url, base_url=self.base_url)
+        widget_html = self._wait_for_collection_widget(timeout_s, poll_s)
+        widget = parse_collection_widget(widget_html)
+        request_url: str | None = None
+        removed = 0
+
+        def result(status: str, detail: str = "") -> CollectionRemoveResult:
+            return CollectionRemoveResult(
+                status=status,
+                card=card,
+                copies_requested=copies,
+                copies_removed=removed,
+                still_owned=widget.owned if widget.loaded else None,
+                detail=detail,
+                request_url=request_url,
+                widget_html=widget_html,
+            )
+
+        def partial(detail: str) -> CollectionRemoveResult:
+            return result("removed" if removed else "failed", detail)
+
+        if not widget.loaded:
+            return result("failed", f"collection box did not load within {int(timeout_s)}s")
+        if not widget.remove:
+            return result(
+                "not_owned",
+                "no Remove button in the collection box"
+                if widget.owned
+                else "not in the collection",
+            )
+
+        while removed < copies:
+            self.driver.execute_script(_WATCH_COLLECTION_REQUESTS_JS)
+            clicked = self.driver.execute_script(
+                "const el = document.querySelector('#colDiv ' + arguments[0]);"
+                "if (!el) return false; el.click(); return true;",
+                ".removeBtn",
+            )
+            if not clicked:
+                return partial(".removeBtn disappeared before it could be clicked")
+            request = self._wait_for_collection_request("CollectionRemove", timeout_s, poll_s)
+            if request is None:
+                return partial(f"no remove request seen within {int(timeout_s)}s")
+            request_url = request.get("url")
+            if not request.get("ok"):
+                return partial(
+                    f"TCDB answered HTTP {request.get('status')} {request.get('error') or ''}".strip()
+                )
+            removed += 1
+            logger.info("TCDB: removed copy %d/%d of %s", removed, copies, card.title)
+
+            # The page reloads the collection box after a successful remove.
+            widget_html, changed = self._wait_for_widget_change(widget_html, timeout_s, poll_s)
+            widget = parse_collection_widget(widget_html)
+            if not changed:
+                return partial("collection box did not refresh after the remove")
+            if removed < copies and not widget.remove:
+                return partial(f"only {removed} of {copies} copies were in the collection")
+
+        return result("removed")
 
     def _collection_widget_html(self) -> str:
         return (
@@ -369,14 +454,33 @@ class TcdbBrowser:
                 return html
             time.sleep(poll_s)
 
-    def _wait_for_add_request(self, timeout_s: float, poll_s: float) -> dict | None:
+    def _wait_for_widget_change(
+        self, before: str, timeout_s: float, poll_s: float
+    ) -> tuple[str, bool]:
+        """Poll ``#colDiv`` until its HTML differs from ``before`` (the page
+        re-renders it after every collection change). Returns the latest HTML
+        and whether it changed in time."""
+        deadline = time.monotonic() + timeout_s
+        after = before
+        while time.monotonic() < deadline:
+            after = self._collection_widget_html()
+            if after.strip() and after != before:
+                return after, True
+            time.sleep(poll_s)
+        return after, False
+
+    def _wait_for_collection_request(
+        self, needle: str, timeout_s: float, poll_s: float
+    ) -> dict | None:
+        """The first recorded ``Collection*_ajax.cfm`` request whose URL contains
+        ``needle`` (``"CollectionAdd"``, ``"CollectionRemove"``), or None on timeout."""
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             requests = self.driver.execute_script(
                 "return (window.__shoebox && window.__shoebox.requests) || [];"
             )
             for req in requests or []:
-                if "CollectionAdd" in (req.get("url") or ""):
+                if needle in (req.get("url") or ""):
                     return req
             time.sleep(poll_s)
         return None

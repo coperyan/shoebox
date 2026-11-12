@@ -125,7 +125,10 @@ why it failed: `gcloud run jobs execute sync-orders --region us-central1 --wait`
 | `sync-watch-list` | 04:30 daily | `shoebox sync-watch-list` | `sync-watch-list` |
 | `end-oos-listings` | 05:00 daily | `shoebox end-oos-listings` | `end_oos_listings` |
 | `watch-searches` | every 5 minutes (**paused** until [cutover](#cutover)) | `shoebox watch-searches` (15m timeout) | `watch-searches` |
-| `send-offers` | every 15 minutes, 08:00–21:45 | `shoebox send-offers --timeout-s 600` (14m timeout, 512Mi) | — (was run by hand) |
+| `send-offers` | every 15 minutes, 08:00–21:45 (**paused**; run it from the [Slack Home tab](#slack-home-tab-buttons)) | `shoebox send-offers --timeout-s 600` (14m timeout, 512Mi) | — (was run by hand) |
+| `create-listings` | manual (the iOS app) | `shoebox create-listings --run-request` (1h, 2Gi) | — |
+| `orders-awaiting-shipment` | manual ([Slack Home tab](#slack-home-tab-buttons)) | `shoebox orders-awaiting-shipment --pull-order --message` (10m, 512Mi) | — |
+| `orders-awaiting-shipment-buyer` | manual ([Slack Home tab](#slack-home-tab-buttons)) | `shoebox orders-awaiting-shipment --buyer-order --message` (10m, 512Mi) | — |
 
 ### Services
 
@@ -145,6 +148,9 @@ services:
     public: true             # allUsers -> roles/run.invoker; the X-API-Key header is the auth
     env_secrets:
       SHOEBOX_API_KEY: shoebox-api-key:latest
+      # The Slack Home tab (below); create these secrets before deploying.
+      SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET: shoebox-slack-commands-signing-secret:latest
+      SHOEBOX_SLACK_COMMANDS_BOT_TOKEN: shoebox-slack-commands-bot-token:latest
 ```
 
 Services share `defaults:` (image, runner identity, env, secret mounts,
@@ -259,10 +265,80 @@ the job's memory covers each scan twice (download plus the local mirror)
 because the container filesystem is RAM; `ACTIVE_STALE_AFTER` in
 `services/listing_runs.py` (70 min) must stay above the job timeout (60 min).
 
+### Slack Home-tab buttons
+
+`shoebox-api` also serves a second Slack app, **Shoebox Commands**. Open it
+in Slack's sidebar, and its Home tab has a Run button for each job in
+`HOME_COMMANDS` (`shoebox/api/slack_home.py`), with how that job last ran.
+Today that's `orders-awaiting-shipment` (pull order),
+`orders-awaiting-shipment-buyer`, `sync-orders`,
+`sync-active-listings`, `sync-watch-list` and `send-offers`. How it works and
+how to add a button: [slack.md](/guides/slack#app-home-buttons). The `/slack`
+routes exist only when `SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET` is set, and the
+service won't start with it but without `SHOEBOX_SLACK_COMMANDS_BOT_TOKEN`.
+
+The runner identity starts the jobs and reads their executions, which takes
+`run.jobs.run` and `run.executions.list` on each job (`roles/run.invoker`
+plus `roles/run.viewer`; a project-level Editor already has both).
+
+One-time setup. The order matters. Slack checks the events URL with a
+challenge signed by the app's signing secret, which exists only after the app
+is created. And Cloud Run won't deploy a revision that names a missing
+secret, so **create both secrets before this config reaches `main`**, or the
+Cloud Build deploy of `shoebox-api` fails. `$RUNNER` is as above.
+
+**S1. Create the app.** api.slack.com/apps → Create New App → From a
+manifest → your workspace. Paste `deploy/slack-commands-app.yaml` with
+`SHOEBOX_API_URL` replaced by the service URL, and with its
+`event_subscriptions` block deleted for now. Then Install App → Install to
+Workspace.
+
+**S2. Store its credentials.** Copy Basic Information → Signing Secret, then
+OAuth & Permissions → Bot User OAuth Token (`xoxb-…`), running one command
+after each copy:
+
+```bash
+pbpaste | tr -d '\n' | gcloud secrets create shoebox-slack-commands-signing-secret --replication-policy=automatic --data-file=-
+pbpaste | tr -d '\n' | gcloud secrets create shoebox-slack-commands-bot-token --replication-policy=automatic --data-file=-
+for s in shoebox-slack-commands-signing-secret shoebox-slack-commands-bot-token; do
+  gcloud secrets add-iam-policy-binding $s --member serviceAccount:$RUNNER --role roles/secretmanager.secretAccessor
+done
+```
+
+**S3. Allow yourself.** Add your member ID (Slack profile → ⋯ → Copy member
+ID) to `slack.allowed_user_ids` in `configs/app.cloud.yaml`, then
+`gcloud secrets versions add shoebox-app-yaml --data-file=configs/app.cloud.yaml`.
+Unlike the chat command bot, the Home tab fails closed: an empty list means
+nobody gets buttons. Anyone not on the list sees their own member ID there
+instead.
+
+**S4. Deploy** by merging to `main`. The routes ship in the image, so the
+`shoebox-main` Cloud Build trigger builds and tests it, then rolls out
+`shoebox-api` and creates any new jobs, like the `orders-awaiting-shipment`
+ones. Running
+`deploy_cloud_run.py --only …` from a workstation redeploys whatever `:latest`
+is, which has the routes only after that build. When it's done,
+`curl -s -o /dev/null -w '%{http_code}\n' -X POST $URL/slack/events` prints
+`401` (no signature). A `404` means the old image is still serving.
+
+**S5. Turn on events.** In the app: Features → App Manifest, add the
+`event_subscriptions` block back, Save. Slack sends its challenge to
+`/slack/events`, and the new revision answers it. Then open Shoebox Commands
+in Slack's sidebar → Home.
+
+`shoebox-api` scales to zero, and a cold start takes about 10 seconds against
+Slack's 3-second limit. So after a quiet spell, the first tab open or click
+can show a timeout warning in Slack, and that click may or may not have
+started its job. Refresh shows which. Clicking again is safe, because a job
+with an execution still in flight isn't started twice. `min_instances: 1`
+removes the cold start, at the cost of keeping one idle instance running.
+
 ### send-offers
 
 `send-offers` runs interactively every 15 minutes from 08:00 to 21:45 Pacific
-(`*/15 8-21 * * *`). Each tick posts every eligible listing to
+(`*/15 8-21 * * *`) when its schedule is on. It's paused at the moment
+(`enabled: false`); the **Send offers** button on the
+[Slack Home tab](#slack-home-tab-buttons) starts one run on demand. Each run posts every eligible listing to
 `slack.offers_channel` and waits 10 minutes (`--timeout-s 600`) for threaded
 replies. Prompts still unanswered are stamped `⌛ Expired` and posted again on
 the next tick, for as long as eBay keeps returning the listing.
@@ -277,6 +353,10 @@ To run it outside the schedule:
 
 ```bash
 # The scheduled command, now.
+gcloud run jobs execute send-offers --region us-central1
+# Headless: discount-matrix offers for every eligible listing, no prompts.
+gcloud run jobs execute send-offers --region us-central1 --args=send-offers,--auto
+```
 
 ---
 
