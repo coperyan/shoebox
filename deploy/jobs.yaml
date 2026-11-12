@@ -185,6 +185,18 @@ jobs:
       - member: "serviceAccount:{runner_service_account}"
         role: roles/run.invoker
 
+  # The pull list for orders awaiting shipment, posted to slack.notify_channel
+  # (one parent message, each section in its thread). No schedule: the Slack
+  # Commands app's Home-tab button starts it (shoebox-api /slack/*, see
+  # docs/content/guides/slack.mdx). Talks to nothing but the eBay Fulfillment
+  # API and Slack.
+  - name: orders-awaiting-shipment
+    run: orders-awaiting-shipment --pull-order --message
+    description: Post the pull list for orders awaiting shipment to Slack.
+    schedule: manual
+    timeout: 600s
+    memory: 512Mi
+
 # Cloud Run services. Same `defaults:` (image, runner identity, env, secret
 # mounts, labels); `timeout` is the per-request limit. Deployed with the jobs
 # by Cloud Build (`--jobs-only`), or alone with `--services-only`.
@@ -196,6 +208,13 @@ services:
   # the IAM phase, from a workstation); the X-API-Key header is the auth, read
   # from the SHOEBOX_API_KEY env var that env_secrets maps to Secret Manager.
   # The uploaded app.yaml must set paths.queue_uri. See docs/content/guides/api.mdx.
+  #
+  # It also serves the Slack Commands app (/slack/*): Home-tab buttons that
+  # start the jobs listed in HOME_COMMANDS (shoebox/api/slack_home.py). Those
+  # requests are checked against the app's signing secret instead of X-API-Key,
+  # and only slack.allowed_user_ids in the uploaded app.yaml may click. Create
+  # both SHOEBOX_SLACK_COMMANDS_* secrets before deploying: Cloud Run refuses
+  # to deploy a revision that names a missing secret.
   - name: shoebox-api
     run: api
     description: Listing-queue API for the iOS app (docs/content/guides/api.mdx).
@@ -208,3 +227,5 @@ services:
     public: true
     env_secrets:
       SHOEBOX_API_KEY: shoebox-api-key:latest
+      SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET: shoebox-slack-commands-signing-secret:latest
+      SHOEBOX_SLACK_COMMANDS_BOT_TOKEN: shoebox-slack-commands-bot-token:latest

@@ -438,7 +438,11 @@ class TestServices:
         api = next(e for e in entries if e["name"] == "shoebox-api")
         assert deploy.is_service(api)
         assert api["public"] is True
-        assert api["env_secrets"] == {"SHOEBOX_API_KEY": "shoebox-api-key:latest"}
+        assert api["env_secrets"] == {
+            "SHOEBOX_API_KEY": "shoebox-api-key:latest",
+            "SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET": "shoebox-slack-commands-signing-secret:latest",
+            "SHOEBOX_SLACK_COMMANDS_BOT_TOKEN": "shoebox-slack-commands-bot-token:latest",
+        }
         # Jobs keep working and are tagged.
         assert all(not deploy.is_service(e) for e in entries if e["name"] != "shoebox-api")
 

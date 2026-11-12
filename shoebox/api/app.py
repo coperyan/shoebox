@@ -7,6 +7,9 @@ the queue to be listed. The enriched queue lands at ``paths.queue_uri`` in
 GCS, where ``create-listings`` picks it up: on the workstation by hand, or as
 the Cloud Run job this API starts (``POST /queue/listings``), which fetches
 scans from OneDrive and reports progress to a run record the phone polls.
+
+When configured, it also serves the Slack Commands app's Home tab, whose
+buttons start Cloud Run jobs (``api/slack_home.py``).
 """
 
 from __future__ import annotations
@@ -58,6 +61,9 @@ from shoebox.transforms.queue_enrichment import build_enriched_json
 logger = logging.getLogger(__name__)
 
 API_KEY_ENV = "SHOEBOX_API_KEY"
+# The Slack "Shoebox Commands" app (api/slack_home.py). Both or neither.
+SLACK_SIGNING_SECRET_ENV = "SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET"
+SLACK_BOT_TOKEN_ENV = "SHOEBOX_SLACK_COMMANDS_BOT_TOKEN"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 UPLOADS_PREFIX = "uploads"
 CLIENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{8,64}$")
@@ -138,11 +144,16 @@ def create_app(
     clock: Clock | None = None,
     job_runner: Any = None,
     run_store: Any = None,
+    slack_signing_secret: str | None = None,
+    slack_client: Any = None,
 ) -> FastAPI:
     """Build the application. Every collaborator can be injected for tests; the
     defaults are the real settings, ``SHOEBOX_API_KEY`` from the environment,
     the BigQuery metadata loader, a lazily constructed ``GCSClient``, the
-    Cloud Run job client and the run-record store built on that GCS client."""
+    Cloud Run job client and the run-record store built on that GCS client.
+    The ``/slack`` routes exist only when a Slack signing secret is set
+    (``SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET``), and then need a client for
+    that app's bot (``SHOEBOX_SLACK_COMMANDS_BOT_TOKEN``)."""
     settings = settings or get_settings()
     api_key = api_key if api_key is not None else os.environ.get(API_KEY_ENV, "")
     # A secret created with `openssl rand -hex 32 | gcloud secrets create --data-file=-`
@@ -154,6 +165,23 @@ def create_app(
         raise RuntimeError(f"{API_KEY_ENV} is not set; the API refuses to start without a key")
     if not settings.paths.queue_uri:
         raise RuntimeError("paths.queue_uri is not set; the API needs a gs:// queue object")
+
+    # Stripped for the same trailing-newline reason as the API key.
+    signing_secret = (
+        slack_signing_secret
+        if slack_signing_secret is not None
+        else os.environ.get(SLACK_SIGNING_SECRET_ENV, "")
+    ).strip()
+    if signing_secret and slack_client is None:
+        bot_token = os.environ.get(SLACK_BOT_TOKEN_ENV, "").strip()
+        if not bot_token:
+            raise RuntimeError(
+                f"{SLACK_SIGNING_SECRET_ENV} is set but {SLACK_BOT_TOKEN_ENV} is not; "
+                "the Slack Home tab needs both"
+            )
+        from slack_sdk import WebClient
+
+        slack_client = WebClient(token=bot_token)
 
     clock = clock or utc_now
 
@@ -451,4 +479,10 @@ def create_app(
         )
 
     app.include_router(router)
+
+    if signing_secret:
+        # Slack can't send X-API-Key; these routes check its request signature instead.
+        from shoebox.api.slack_home import create_slack_router
+
+        app.include_router(create_slack_router(signing_secret=signing_secret, slack=slack_client))
     return app

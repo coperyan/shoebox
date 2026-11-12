@@ -1,0 +1,44 @@
+# Slack app manifest for "Shoebox Commands": the App Home buttons that start
+# Cloud Run jobs (shoebox/api/slack_home.py, docs/content/guides/slack.mdx).
+#
+# A separate app from the Socket Mode bot behind slack.bot_token on purpose:
+# a Socket Mode app receives every click over its socket, so it can't also
+# send them to the shoebox-api URL below.
+#
+# api.slack.com/apps -> Create New App -> From a manifest -> paste this, with
+# SHOEBOX_API_URL replaced by the shoebox-api URL:
+#   gcloud run services describe shoebox-api --region us-central1 --format 'value(status.url)'
+#
+# Slack checks the events URL as soon as it sees it, and shoebox-api can only
+# answer once it has this app's signing secret, so create the app with the
+# event_subscriptions block left out. Add it back (Features -> App Manifest)
+# after the deploy in the setup guide.
+display_information:
+  name: Shoebox Commands
+  description: Run shoebox Cloud Run jobs from the Home tab.
+  background_color: "#2c2d30"
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: false
+    messages_tab_read_only_enabled: false
+  bot_user:
+    display_name: Shoebox Commands
+    always_online: false
+oauth_config:
+  scopes:
+    bot:
+      # The Home tab itself (views.publish) needs no scope. This is the only
+      # one requested, so the app installs with a bot token.
+      - chat:write
+settings:
+  event_subscriptions:
+    request_url: SHOEBOX_API_URL/slack/events
+    bot_events:
+      - app_home_opened
+  interactivity:
+    is_enabled: true
+    request_url: SHOEBOX_API_URL/slack/interactions
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

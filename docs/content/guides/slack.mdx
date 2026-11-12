@@ -1,17 +1,20 @@
 # Slack Integration
 
-The Slack layer (migrated from Telegram) provides three capabilities:
+The Slack layer (migrated from Telegram) provides four capabilities:
 
 1. **Outbound notifications** — pipeline status, order summaries, release
    announcements.
 2. **Interactive price approvals** — an Approve button plus threaded-reply
    overrides, used by the listing/relist pricing flows.
 3. **A command bot** — run whitelisted CLI commands from chat.
+4. **App Home buttons** — start Cloud Run jobs from a second app's Home tab.
 
-Everything runs over **Socket Mode** (outbound websocket; no public endpoint),
-using `slack-bolt`'s async API. App setup (scopes, events, interactivity) is
-covered in [setup.md](/guides/setup); channel/token configuration in
-[configuration.md](/guides/configuration).
+The first three run over **Socket Mode** (outbound websocket; no public
+endpoint), using `slack-bolt`'s async API. App setup (scopes, events,
+interactivity) is covered in [setup.md](/guides/setup); channel/token
+configuration in [configuration.md](/guides/configuration). The Home tab is a
+separate app that Slack calls over HTTP on `shoebox-api`
+([below](#app-home-buttons)).
 
 ## Module layout
 
@@ -20,6 +23,7 @@ covered in [setup.md](/guides/setup); channel/token configuration in
 | `utils/slack.py` | Core primitives: send, wait-for-reply, approval flow, command listener |
 | `utils/slack_formatting.py` | mrkdwn helpers: titles, bullets, tables, message chunking |
 | `services/slack_bot_service.py` | The command bot built on `listen_for_commands` |
+| `api/slack_home.py` | The Shoebox Commands app's Home tab: buttons that start Cloud Run jobs |
 | `utils/pricing.py` (`parse_price_reply`) | Tolerant parsing of human price replies |
 
 ## Core API (`utils/slack.py`)
@@ -199,6 +203,69 @@ themselves block on Slack approval prompts.
 - The whitelist means arbitrary shell/CLI input is never executed — commands
   and flags must match exactly.
 
+## App Home buttons
+
+The command bot only answers while `shoebox slack-bot` is running somewhere.
+For the cloud there's a second Slack app, **Shoebox Commands**
+(`deploy/slack-commands-app.yaml`). Its Home tab has one **Run** button per
+Cloud Run job, and `shoebox-api` serves it (`api/slack_home.py`). Open the
+app in Slack's sidebar to see it:
+
+| Button | Job | What happens |
+|---|---|---|
+| Orders awaiting shipment | `orders-awaiting-shipment` | `--pull-order --message`: the pull list, threaded under one message in `notify_channel` |
+| Sync orders | `sync-orders` | the nightly sync, now |
+| Sync active listings | `sync-active-listings` | the nightly sync, now |
+| Sync watch list | `sync-watch-list` | the nightly sync, now |
+| Send offers | `send-offers` | asks for confirmation, then one interactive run: prompts in `offers_channel`, 10-minute reply window |
+
+Under each button is that job's latest execution: never run, ⏳ starting or
+running, ✅ succeeded (with how long it took), ⚪ cancelled, or ❌ failed (with
+a link to the logs). **Refresh** re-reads them all.
+
+**How it works:**
+
+- Opening the tab sends `app_home_opened` to `POST /slack/events`. For an
+  allowed user, the API reads each job's newest execution from the Cloud Run
+  Admin API and publishes the tab (`views.publish`).
+- A click sends `block_actions` to `POST /slack/interactions`. The API reads
+  that one job's newest execution. If one is still pending or running, it
+  doesn't start another and says so at the top of the tab. Otherwise it runs
+  the job (`jobs.run`, with the args deployed in `deploy/jobs.yaml`; Slack
+  never supplies arguments), then republishes the tab. The other jobs'
+  statuses come from the tab's `private_metadata`, which keeps a click well
+  inside Slack's 3-second limit.
+- Every step happens before the response, because Cloud Run throttles the CPU
+  once a request returns. One lock serializes the Cloud Run calls, so a double
+  click can't start a job twice.
+
+**Security:**
+
+- Every `/slack` request must carry a valid `X-Slack-Signature` for the app's
+  signing secret, with a timestamp under 5 minutes old; anything else is a
+  `401`. These routes skip `X-API-Key`, because Slack can't send it.
+- Only `slack.allowed_user_ids` (in the uploaded `app.yaml`) get buttons or
+  can start a job. Unlike the command bot, an empty list means **nobody**.
+  Anyone else who opens the tab sees their own member ID, which is what goes
+  on the list. Clicks from them are ignored and logged at WARNING.
+- Each button maps to one named Cloud Run job with fixed args. Even a request
+  that somehow passed both checks could only run one of those jobs early.
+
+**Why a second app:** a Socket Mode app receives its clicks over the socket
+and never sends them to a URL. So the existing app can't feed an HTTP
+endpoint. Keeping its socket open from an always-on listener would also split
+send-offers' and the pricing flows' clicks between that listener and the job
+waiting for them.
+
+**Adding a button:** the job must exist in `deploy/jobs.yaml` (`schedule:
+manual` for one that only runs on request). Then add a `HomeCommand(job=…,
+label=…, description=…)` to `HOME_COMMANDS`, with `confirm=` for anything
+that changes eBay. `tests/test_slack_home.py` checks that every button names
+a deployed job.
+
+Setup (app manifest, secrets, allowlist, deploy, events) is in
+[deployment.md](/guides/deployment#slack-home-tab-buttons).
+
 ## Threaded order summaries
 
 `orders-awaiting-shipment --message` posts a single parent line
@@ -259,5 +326,9 @@ A search with no new listings posts nothing at all: at ten searches on a
 | Button does nothing | Interactivity toggle off in the app config |
 | Replies ignored | Reply wasn't threaded (must reply *in the thread*, not the channel), or it came from the bot itself |
 | Command bot silent for a user | `allowed_user_ids` is set and doesn't include them (check service logs for the WARNING) |
+| Shoebox Commands Home tab is blank | Event Subscriptions not on, or not subscribed to `app_home_opened` (setup step S5) |
+| Home tab shows "Nobody can run commands yet" or "You aren't in…" | Add the member ID it shows to `slack.allowed_user_ids` in the cloud `app.yaml`, then upload a new version |
+| Timeout warning on the first click after a quiet spell | `shoebox-api` cold start (~10 s). Press Refresh to see whether the job started; clicking again won't start a duplicate |
+| "Couldn't start …: 404" | The job isn't deployed yet (`deploy_cloud_run.py --only <job>`) |
 | `invalid_auth` / `not_in_channel` errors | Wrong token in `app.yaml`, or bot not invited |
 | Messages dropped during bursts | Shouldn't happen (rate-limit retries); if it does, check for `SlackApiError` after 3 retries in logs |
