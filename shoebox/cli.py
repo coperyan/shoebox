@@ -427,6 +427,25 @@ def main() -> None:
     )
     p_twant.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
 
+    # Remove cards sold on eBay from the TCDB collection, one by one (real browser, manual login)
+    p_trec = sub.add_parser(
+        "tcdb-reconcile",
+        help="Remove cards sold on eBay from your tcdb.com collection, one by one",
+    )
+    p_trec.add_argument(
+        "--since",
+        help="Reconcile sales created on/after this date (YYYY-MM-DD). Default: the day "
+        "after the stored reconciled-through date; required on the first run",
+    )
+    p_trec.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="List the sales that would be reconciled; no browser, nothing saved",
+    )
+    p_trec.add_argument("--limit", type=int, help="Stop after N cards")
+    p_trec.add_argument("--category", help="Sport/category (default Baseball or config)")
+    p_trec.add_argument("--profile-dir", help="Chrome profile dir (overrides tcdb.profile_dir)")
+
     args = parser.parse_args()
 
     # Argument parsing (incl. --help) never touches config; do config-dependent
@@ -745,6 +764,19 @@ def main() -> None:
                 category=args.category,
                 dry_run=args.dry_run,
                 allow_duplicates=args.allow_duplicates,
+                profile_dir=args.profile_dir,
+            )
+        )
+
+    if args.cmd == "tcdb-reconcile":
+        from shoebox.pipelines.tcdb_reconcile import run_tcdb_reconcile
+
+        raise SystemExit(
+            run_tcdb_reconcile(
+                since=args.since,
+                dry_run=args.dry_run,
+                limit=args.limit,
+                category=args.category,
                 profile_dir=args.profile_dir,
             )
         )

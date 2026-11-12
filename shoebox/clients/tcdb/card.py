@@ -29,6 +29,8 @@ _VIEWCARD_URL_RE = re.compile(
     r"^https?://(?:www\.)?tcdb\.com/ViewCard\.cfm/sid/(?P<sid>\d+)/cid/(?P<cid>\d+)", re.IGNORECASE
 )
 _TITLE_SUFFIX = " | Trading Card Database"
+# "You have 2", "Qty: 2", "Quantity 2" somewhere in the collection box's text.
+_WIDGET_QTY_RE = re.compile(r"(?:you (?:have|own)|qty|quantity)\s*:?\s*(\d+)", re.IGNORECASE)
 
 
 def parse_card_spec(text: str) -> CardSpec:
@@ -106,4 +108,21 @@ def parse_collection_widget(html: str) -> CollectionWidget:
         quick_add=soup.select_one("#quickAddBtn") is not None,
         add_another=soup.select_one(".addAnotherBtn") is not None,
         remove=soup.select_one(".removeBtn") is not None,
+        quantity=_widget_quantity(soup),
     )
+
+
+def _widget_quantity(soup: BeautifulSoup) -> int | None:
+    """Copies owned, from the quantity badge TCDB puts on collection rows, a
+    "You have N" line, or failing that a lone numeric badge. None when the box
+    does not say (or the card is not owned)."""
+    badge = soup.select_one('.badge[title="Quantity"]')
+    candidates = [badge.get_text(strip=True)] if badge is not None else []
+    m = _WIDGET_QTY_RE.search(soup.get_text(" ", strip=True))
+    if m:
+        candidates.append(m.group(1))
+    candidates.extend(b.get_text(strip=True) for b in soup.select(".badge"))
+    for text in candidates:
+        if text.isdigit():
+            return int(text)
+    return None
