@@ -178,6 +178,10 @@ def test_home_commands_are_deployed_jobs():
     assert (
         jobs["orders-awaiting-shipment"]["run"] == "orders-awaiting-shipment --pull-order --message"
     )
+    assert (
+        jobs["orders-awaiting-shipment-buyer"]["run"]
+        == "orders-awaiting-shipment --buyer-order --message"
+    )
     api = next(svc for svc in raw["services"] if svc["name"] == "shoebox-api")
     assert {SLACK_SIGNING_SECRET_ENV, SLACK_BOT_TOKEN_ENV} <= set(api["env_secrets"])
 
@@ -216,8 +220,13 @@ def test_home_tab_lists_every_command_with_its_last_run(slack_env):
     assert user == ME and view["type"] == "home"
     assert action_ids(view) == [f"run:{job}" for job in JOBS] + ["refresh"]
 
-    assert "<#C0NOTIFY>" in line_for(view, "Orders awaiting shipment")
-    assert "_Never run_" in line_for(view, "Orders awaiting shipment")
+    for label in ("Orders awaiting shipment (pull order)", "Orders awaiting shipment (by buyer)"):
+        assert "<#C0NOTIFY>" in line_for(view, label)
+        assert "_Never run_" in line_for(view, label)
+    assert action_ids(view)[:2] == [
+        "run:orders-awaiting-shipment",
+        "run:orders-awaiting-shipment-buyer",
+    ]
     assert "✅ Succeeded" in line_for(view, "Sync orders")
     assert "took 2m 13s" in line_for(view, "Sync orders")
     assert "Status unavailable" in line_for(view, "Sync active listings")

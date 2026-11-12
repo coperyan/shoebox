@@ -63,8 +63,13 @@ class HomeCommand:
 HOME_COMMANDS: tuple[HomeCommand, ...] = (
     HomeCommand(
         job="orders-awaiting-shipment",
-        label="Orders awaiting shipment",
-        description="Posts the pull list to {notify_channel}.",
+        label="Orders awaiting shipment (pull order)",
+        description="Posts the pull list, card by card, to {notify_channel}.",
+    ),
+    HomeCommand(
+        job="orders-awaiting-shipment-buyer",
+        label="Orders awaiting shipment (by buyer)",
+        description="Posts each buyer's items, one section per buyer, to {notify_channel}.",
     ),
     HomeCommand(
         job="sync-orders",

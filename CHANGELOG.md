@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Shoebox Commands (`deploy/slack-commands-app.yaml`), calls `shoebox-api`
   over HTTP: `POST /slack/events` publishes its Home tab on `app_home_opened`,
   and `POST /slack/interactions` takes the clicks. There's a Run button for
-  `orders-awaiting-shipment`, `sync-orders`, `sync-active-listings`,
+  `orders-awaiting-shipment` (pull order), `orders-awaiting-shipment-buyer`,
+  `sync-orders`, `sync-active-listings`,
   `sync-watch-list` and `send-offers` (`HOME_COMMANDS` in
   `api/slack_home.py`), each showing the job's latest execution. A click runs
   the job as deployed, unless an execution is still pending or running. Every
@@ -22,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nobody. The routes exist only when the new
   `SHOEBOX_SLACK_COMMANDS_SIGNING_SECRET` / `SHOEBOX_SLACK_COMMANDS_BOT_TOKEN`
   secrets are set, so create them before deploying. New manual
-  `orders-awaiting-shipment` job (`--pull-order --message`).
+  `orders-awaiting-shipment` (`--pull-order --message`) and
+  `orders-awaiting-shipment-buyer` (`--buyer-order --message`) jobs.
   `CloudRunJobs.latest_execution` returns an `Execution` (pending, running,
   succeeded, failed or cancelled). Setup in the deployment guide.
 
