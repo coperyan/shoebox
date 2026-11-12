@@ -185,14 +185,21 @@ jobs:
       - member: "serviceAccount:{runner_service_account}"
         role: roles/run.invoker
 
-  # The pull list for orders awaiting shipment, posted to slack.notify_channel
-  # (one parent message, each section in its thread). No schedule: the Slack
-  # Commands app's Home-tab button starts it (shoebox-api /slack/*, see
-  # docs/content/guides/slack.mdx). Talks to nothing but the eBay Fulfillment
-  # API and Slack.
+  # Orders awaiting shipment, posted to slack.notify_channel (one parent
+  # message, each section in its thread): the pull list, and the same orders
+  # grouped by buyer. No schedule: the Slack Commands app's Home-tab buttons
+  # start them (shoebox-api /slack/*, see docs/content/guides/slack.mdx). Talk
+  # to nothing but the eBay Fulfillment API and Slack.
   - name: orders-awaiting-shipment
     run: orders-awaiting-shipment --pull-order --message
     description: Post the pull list for orders awaiting shipment to Slack.
+    schedule: manual
+    timeout: 600s
+    memory: 512Mi
+
+  - name: orders-awaiting-shipment-buyer
+    run: orders-awaiting-shipment --buyer-order --message
+    description: Post orders awaiting shipment, grouped by buyer, to Slack.
     schedule: manual
     timeout: 600s
     memory: 512Mi
