@@ -92,7 +92,10 @@ def get_orders() -> pd.DataFrame:
         end_date=None,
         status="NOT_STARTED",
     )
-    df = pd.json_normalize(np.concatenate([o.flattened_line_items for o in orders]), sep="_")
+    line_items = [item for o in orders for item in o.flattened_line_items]
+    if not line_items:
+        return pd.DataFrame()
+    df = pd.json_normalize(line_items, sep="_")
     return df
 
 
@@ -258,6 +261,16 @@ def display_orders(
 ):
 
     df = get_orders()
+    if df.empty:
+        # Still say so: from the Slack button, silence would look like a failure.
+        if message:
+            notify(
+                channel=get_settings().slack.notify_channel,
+                message="📦 *Orders Awaiting Shipment* — nothing to ship",
+            )
+        if display:
+            Console().print("No orders awaiting shipment.")
+        return
     df = transform_df(df)
     if message:
         message_df(df=df, pull_order=pull_order, buyer_order=buyer_order)

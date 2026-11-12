@@ -144,6 +144,8 @@ class SlackSettings(BaseModel):
     offers_channel: str = ""
     # Slack user IDs allowed to run commands in command_channel.
     # Empty list = anyone in the channel may run commands.
+    # Also the only users who see buttons on the Slack Commands app's Home tab
+    # (api/slack_home.py), which fails closed: empty = nobody.
     allowed_user_ids: list[str] = []
 
 
