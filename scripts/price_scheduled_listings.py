@@ -77,7 +77,8 @@ _FINISH_WORDS = {
     "logofractor", "fuchsia", "rose", "leather", "lightboard", "logo", "apple", "hongbao",
     "mini", "white", "holiday", "golden", "mirror", "statue", "liberty", "hotdog", "hotdogs",
     "dog", "dogs", "color", "photo", "boxing", "gloves", "fireworks", "umbrella", "foilboard",
-    "lunar", "glow", "issue",
+    "lunar", "glow", "issue", "diamante", "tipoff", "sandglitter", "victory", "net",
+    "pattern", "checkerboard", "storm", "fanfare", "voltage", "propulsion",
 }  # fmt: skip
 
 # Used too loosely by sellers to decide on either way.
@@ -97,10 +98,12 @@ _PRODUCT_WORDS = {
     "platinum",
     "cosmic",
     "high",
+    "hoops",
+    "now",
 }
 
 # Team names with a finish word in them, removed before finish words are read.
-_TEAM_NAMES = ["red sox", "white sox", "blue jays", "green bay"]
+_TEAM_NAMES = ["red sox", "white sox", "blue jays", "green bay", "golden state"]
 
 # Words in an insert's name that don't tell one insert from another.
 _INSERT_STOP_WORDS = {
@@ -118,10 +121,15 @@ def last_name(player: str) -> str:
 def tokens(text: str) -> set[str]:
     """Lowercased words and print runs (``/299``) in ``text``, minus team names.
 
-    Accents are dropped (``Acuña`` -> ``acuna``) and ``X-Fractor`` is one word.
+    Accents are dropped (``Acuña`` -> ``acuna``) and ``X-Fractor`` and
+    ``Tip-Off`` are one word.
     """
     t = unicodedata.normalize("NFKD", f" {text.lower()} ").encode("ascii", "ignore").decode()
     t = re.sub(r"\bx[\s-]?fractor", "xfractor", t)
+    t = re.sub(r"\btip[\s-]?off\b", "tipoff", t)
+    t = re.sub(r"\bsand[\s-]?glitter\b", "sandglitter", t)
+    # "2026/27" is a season, not a /27 print run.
+    t = re.sub(r"\b(20\d\d)/(\d\d)\b", r"\1-\2", t)
     # "Series 1", "Series One" and "S1" are one product word, so Series 1 and
     # Series 2 comps don't price each other's cards.
     t = re.sub(r"\b(?:series\s*(?:1|one)|s1)\b", "series1", t)
@@ -326,7 +334,8 @@ class _Card:
             return "other card"
         elif not self.insert and any(s <= words for s in other_inserts):
             return "other card"
-        if finish(words - self.search_words) != self.finish:
+        # The player's own name can be a finish word (Derrick White).
+        if finish(words - self.search_words - self.last - self.first) != self.finish:
             return "other parallel"
         return None
 
