@@ -78,13 +78,23 @@ _FINISH_WORDS = {
     "mini", "white", "holiday", "golden", "mirror", "statue", "liberty", "hotdog", "hotdogs",
     "dog", "dogs", "color", "photo", "boxing", "gloves", "fireworks", "umbrella", "foilboard",
     "lunar", "glow", "issue", "diamante", "tipoff", "sandglitter", "victory", "net",
-    "pattern", "checkerboard", "storm", "fanfare", "voltage", "propulsion",
+    "pattern", "checkerboard", "storm", "fanfare", "voltage", "propulsion", "lantern",
+    "pumpkin", "pumpkins", "ghost", "ghosts", "skeleton", "skeletons",
 }  # fmt: skip
 
 # Used too loosely by sellers to decide on either way.
 _WEAK_WORDS = {"foil", "sp", "ssp", "short", "print", "parallel", "image", "printing"}
 
-_SYNONYMS = {"back": "backs"}
+# Update's Holiday parallels are Halloween ones; "O'Lantern" loses its
+# apostrophe to the accent strip and arrives as "olantern".
+_SYNONYMS = {
+    "back": "backs",
+    "holofoil": "holo",
+    "halloween": "holiday",
+    "lanterns": "lantern",
+    "olantern": "lantern",
+    "olanterns": "lantern",
+}
 
 # Releases that share a year and a card-number scheme (Series 1's holiday
 # variations, Chrome vs Chrome Update). A comp must name the same ones the
@@ -134,6 +144,8 @@ def tokens(text: str) -> set[str]:
     # Series 2 comps don't price each other's cards.
     t = re.sub(r"\b(?:series\s*(?:1|one)|s1)\b", "series1", t)
     t = re.sub(r"\b(?:series\s*(?:2|two)|s2)\b", "series2", t)
+    # "Update Series" is Update itself, not another Series.
+    t = re.sub(r"\bupdate series\b", "update", t)
     for team in _TEAM_NAMES:
         t = t.replace(team, " ")
     return {_SYNONYMS.get(w, w) for w in re.findall(r"/\d+|[a-z0-9]+", t)}
